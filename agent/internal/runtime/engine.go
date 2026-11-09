@@ -146,9 +146,10 @@ func (e *engine) Remove(ctx context.Context, idOrName string, force bool) error 
 
 // Logs 实现 Runtime。
 //
-// 运行时对 logs 的响应可能是多路复用帧（stdout/stderr 交错，带 8 字节头），
-// 但本方法只取「非 follow 的末尾若干行」给人阅读，按文本处理即可；TTY 容器
-// 本就是纯文本。行数上限由调用方决定，运行时不扩大它。
+// 运行时的 logs 响应有两种格式：非 TTY 容器是多路复用帧（stdout/stderr 交错，
+// 每帧 8 字节头），TTY 容器是纯文本。这里先用 decodeLogPayload 统一解帧，
+// 再按行切分——直接把响应当字符串会把帧头字节混进输出，前端会看到乱码。
+// 行数上限由调用方决定，运行时不扩大它。
 func (e *engine) Logs(ctx context.Context, idOrName string, opts LogOptions) (LogResult, error) {
 	if err := validateRef(idOrName); err != nil {
 		return LogResult{}, err
@@ -174,7 +175,7 @@ func (e *engine) Logs(ctx context.Context, idOrName string, opts LogOptions) (Lo
 	if err != nil {
 		return LogResult{}, e.translate(err)
 	}
-	lines := splitLogLines(string(data))
+	lines := splitLogLines(decodeLogPayload(data))
 	lines, truncated := trimTail(lines, tail)
 	return LogResult{Lines: lines, Truncated: truncated}, nil
 }

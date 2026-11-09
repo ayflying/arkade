@@ -1,0 +1,26 @@
+# Arkade Agent 调试配置（容器内路径）
+#
+# 关键点：hub_url 必须用**服务名** hub，而不是 127.0.0.1。
+# 在 compose 网络里 127.0.0.1 指的是 Agent 自己的容器，连不上 Hub。
+
+hub_url = "ws://hub:8080/agent/connect"
+# 令牌留空：由环境变量 ARKADE_AGENT_TOKEN 注入（见 agent/internal/config.applyEnvOverrides）。
+token = ""
+
+# 服务器显示名。**容器部署必须显式配置**：
+# 不写时 Agent 会用 os.Hostname()，而容器的 hostname 默认就是容器 ID，
+# 每次重建容器名字都会变，Hub 上同一台服务器的名称就会不断漂移，无法辨识。
+# 也可以用环境变量 ARKADE_AGENT_NAME 覆盖。
+name = "arkade-debug-node"
+
+# Agent 身份与数据目录（挂卷持久化，重启后复用同一个 agent_id）
+data_dir = "/opt/arkade/agent"
+
+# 运行时自动发现：容器内挂载了 /var/run/docker.sock，会被识别为 Docker。
+# 留空即自动探测，无需写死。
+runtime_kind = "auto"
+
+heartbeat_sec = 15
+log_level = "info"
+log_format = "text"
+insecure_tls = false

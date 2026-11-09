@@ -69,7 +69,18 @@ func newClient(endpoint string) (*client, error) {
 		c.network = "unix"
 		c.address = u.Path
 		c.host = "docker" // 走套接字时 Host 头无实际意义，固定值便于日志识别
-		transport.DialContext = (&net.Dialer{Timeout: 5 * time.Second}).DialContext
+		// 关键：DialContext 必须显式指定 network="unix" 并按套接字路径拨号。
+		//
+		// 这里踩过一个真实缺陷：原先直接复用 net.Dialer.DialContext，它按 addr 的
+		// 形式推断网络——而 http.Transport 传给 DialContext 的 addr 是 "docker:80"
+		// （即上面的 c.host + 端口），会被当成 TCP 地址去解析，结果连接必然失败，
+		// 表现为「挂载了 docker.sock 却始终探测不到引擎」。
+		// 正确的做法是自己闭合 network 与 address，忽略 Transport 传来的 addr。
+		socketPath := u.Path
+		dialer := &net.Dialer{Timeout: 5 * time.Second}
+		transport.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return dialer.DialContext(ctx, "unix", socketPath)
+		}
 	case "tcp", "http":
 		if u.Host == "" {
 			return nil, fmt.Errorf("tcp/http 端点缺少主机地址: %s", ep)

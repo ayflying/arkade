@@ -192,6 +192,7 @@ func buildLinkAgent(cfg config.Config, log *slog.Logger, rt runtime.Runtime, reg
 		Token:        cfg.Token,
 		AgentID:      agentID,
 		DataDir:      cfg.DataDir,
+		Name:         cfg.Name,
 		AgentVersion: Version,
 		HeartbeatSec: cfg.HeartbeatSec,
 		InsecureTLS:  cfg.InsecureTLS,

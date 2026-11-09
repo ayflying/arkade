@@ -1,0 +1,26 @@
+# Arkade Hub 调试配置（容器内路径）
+#
+# 注意：路径都是**容器内**路径，不是宿主机路径。
+# 数据库放在 /data 卷上，容器重建后数据仍在。
+
+[server]
+# 容器内必须监听 0.0.0.0，否则端口映射进不来。
+# 这里不写死也可以，docker-compose 里用 ARKADE_LISTEN 覆盖，两者等效。
+addr = "0.0.0.0:8080"
+base_url = "http://127.0.0.1:8080"
+timeout = "30s"
+
+[database]
+path = "/data/hub.db"
+
+[auth]
+session_ttl = "24h"
+# 令牌与初始密码留空：由环境变量 ARKADE_AGENT_TOKEN / ARKADE_INITIAL_PASS 注入，
+# 避免凭据写到磁盘上。
+agent_token = ""
+initial_user = "admin"
+initial_pass = ""
+
+[web]
+# 镜像构建阶段已把前端产物放在 /app/web/dist
+dist = "/app/web/dist"

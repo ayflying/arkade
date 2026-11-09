@@ -25,6 +25,7 @@ type Config struct {
 	Token        string `toml:"token"`         // 注册时由 Hub 下发的访问令牌
 	AgentID      string `toml:"agent_id"`      // Hub 分配的 Agent ID，首次连接后落盘
 	DataDir      string `toml:"data_dir"`      // 数据目录：persist 的 agent_id、后续编排文件与队列
+	Name         string `toml:"name"`          // 服务器显示名，留空则用 os.Hostname()
 	Socket       string `toml:"socket"`        // 运行时套接字覆盖，留空则自动发现
 	RuntimeKind  string `toml:"runtime_kind"`  // 可选：docker / podman / auto（仅影响探测顺序）
 	PreferPodman bool   `toml:"prefer_podman"` // 自动发现时优先 Podman
@@ -45,10 +46,13 @@ const (
 )
 
 // Load 从文件读取配置。路径为空时返回默认配置（便于本机 `ps` 这类纯本地命令零配置运行）。
+//
+// 无论走哪条路径，最后都会应用环境变量覆盖敏感字段（见 applyEnvOverrides）。
 func Load(path string) (Config, error) {
 	cfg := Config{}
 	if strings.TrimSpace(path) == "" {
 		cfg.applyDefaults()
+		applyEnvOverrides(&cfg)
 		return cfg, nil
 	}
 
@@ -77,7 +81,33 @@ func Load(path string) (Config, error) {
 	}
 
 	cfg.applyDefaults()
+	applyEnvOverrides(&cfg)
 	return cfg, nil
+}
+
+// applyEnvOverrides 用环境变量覆盖敏感或按机器不同的字段。
+//
+// 为什么需要：token 属于凭据，明文写进配置文件意味着它会随配置文件一起
+// 被备份、被提交、被镜像层缓存。容器与 systemd 部署的通行做法都是走环境变量注入。
+//
+// 优先级：环境变量 > 配置文件。这样同一份配置可以部署到多台机器，
+// 各自的令牌通过环境变量区分。
+//
+// 必须在 applyDefaults 之后调用（否则空值会被默认值覆盖回），
+// 且在 Validate 之前（否则空 token 会被误判为配置错误）。
+func applyEnvOverrides(c *Config) {
+	if v := strings.TrimSpace(os.Getenv("ARKADE_AGENT_TOKEN")); v != "" {
+		c.Token = v
+	}
+	if v := strings.TrimSpace(os.Getenv("ARKADE_HUB_URL")); v != "" {
+		c.HubURL = v
+	}
+	if v := strings.TrimSpace(os.Getenv("ARKADE_DATA_DIR")); v != "" {
+		c.DataDir = v
+	}
+	if v := strings.TrimSpace(os.Getenv("ARKADE_AGENT_NAME")); v != "" {
+		c.Name = v
+	}
 }
 
 // applyDefaults 填充默认值。数据目录还要展开 ~ 与环境变量，方便运维手写。

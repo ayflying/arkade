@@ -10,7 +10,7 @@
 // 见 internal/runtime/client.go 的说明。
 module arkade/agent
 
-go 1.26.3
+go 1.24
 
 require (
 	arkade/protocol v0.0.0

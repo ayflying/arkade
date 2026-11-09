@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	goruntime "runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,6 +29,7 @@ type Options struct {
 	Token        string
 	AgentID      string // 可能为空：首连时由 Hub 在 HelloAck 下发
 	DataDir      string // 用于持久化 Hub 下发的 agent_id
+	Name         string // 服务器显示名；留空则用 os.Hostname()（容器里会变成容器 ID，建议显式配置）
 	AgentVersion string
 	HeartbeatSec int  // 兜底心跳间隔；Hub 在 HelloAck 里给出后以其为准
 	InsecureTLS  bool // 跳过 TLS 校验（仅测试环境）
@@ -220,6 +222,13 @@ func (a *Agent) handshake(sess *session) error {
 		if err := envelope.DecodePayload(&env, &ack); err != nil {
 			return fmt.Errorf("解析握手应答失败: %w", err)
 		}
+		// 握手结束后必须立刻恢复正常读超时。
+		//
+		// 这里踩过一个真实缺陷：握手期间把读超时压到 handshakeWait（10 秒），
+		// 之后如果不还原，读循环会在 10 秒后必然 ReadJSON 超时，
+		// 表现为「刚连上就断开、每 10 秒重连一次」——心跳（20 秒）甚至一次都发不出去。
+		// 恢复成 pongWait 后，存活判断重新交给 ping/pong。
+		_ = sess.conn.SetReadDeadline(time.Now().Add(pongWait))
 		return a.applyHelloAck(sess, ack)
 	}
 }
@@ -262,7 +271,15 @@ func (a *Agent) applyHelloAck(sess *session, ack envelope.HelloAckPayload) error
 
 // buildHello 组装 hello 载荷。
 func (a *Agent) buildHello(ctx context.Context) (envelope.HelloPayload, error) {
+	// 显示名优先取配置里的 name。
+	//
+	// 为什么不能只依赖 os.Hostname()：容器化部署时 Hostname 默认就是容器 ID，
+	// 每次重建容器都会变，Hub 上的服务器名就会随之漂移（同一个 agent_id 下名字不断变），
+	// 运维根本认不出哪台是哪台。配置里显式写死 name 才能稳定。
 	hostname, _ := hostname()
+	if configured := strings.TrimSpace(a.opts.Name); configured != "" {
+		hostname = configured
+	}
 	info, err := a.opts.Runtime.Info(ctx)
 	if err != nil {
 		// 运行时信息取不到不应阻止上线：Hub 需要知道"这台机器连上了，但引擎异常"。

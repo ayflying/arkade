@@ -1,0 +1,82 @@
+# Arkade 调试环境编排（Hub + Agent 同机）
+#
+# 用途：在一台装有 Docker 的机器上，把控制面（Hub）与被管代理（Agent）一起跑起来，
+# 用于验证「Hub → Agent → 本机容器」整条链路。**这不是生产部署模板**：
+#   - 生产环境下 Agent 部署在各自被管的服务器上，Hub 单独一台；
+#   - 这里的 Agent 挂载了宿主机 docker.sock，仅用于本机自测。
+#
+# 用法（仓库根目录）：
+#   cp deploy/docker/.env.example deploy/docker/.env    # 改掉两个密码/令牌
+#   docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/.env up -d --build
+#   浏览器打开 http://<机器IP>:8080
+#
+# 清理：
+#   docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/.env down -v --rmi local
+
+name: arkade-debug
+
+services:
+  hub:
+    build:
+      # 构建上下文是仓库根目录：hub 依赖共享的 protocol 模块，且要打包前端产物。
+      context: ../..
+      dockerfile: hub/Dockerfile
+      args:
+        VERSION: ${ARKADE_VERSION:-0.1.0}
+    image: arkade-hub:debug
+    container_name: arkade-hub-debug
+    restart: unless-stopped
+    ports:
+      - "${ARKADE_HUB_PORT:-8080}:8080"
+    environment:
+      # 密码与令牌只从环境变量注入，不写进配置文件——配置文件会被挂载到卷里，
+      # 明文落盘等于把凭据留在磁盘上。
+      ARKADE_INITIAL_PASS: ${ARKADE_INITIAL_PASS:?必须设置 AKRADE_INITIAL_PASS}
+      ARKADE_AGENT_TOKEN: ${ARKADE_AGENT_TOKEN:?必须设置 ARKADE_AGENT_TOKEN}
+      # 覆盖配置里的监听地址，容器内必须监听 0.0.0.0 才能被端口映射访问。
+      ARKADE_LISTEN: 0.0.0.0:8080
+    volumes:
+      - hub-data:/data
+      - ./hub.config.toml:/data/config.toml:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      retries: 5
+    networks:
+      - arkade
+
+  agent:
+    build:
+      context: ../..
+      dockerfile: agent/Dockerfile
+      args:
+        VERSION: ${ARKADE_VERSION:-0.1.0}
+    image: arkade-agent:debug
+    container_name: arkade-agent-debug
+    restart: unless-stopped
+    depends_on:
+      hub:
+        # 等 Hub 真正健康再起 Agent，避免开局就进入重连退避循环刷日志。
+        condition: service_healthy
+    environment:
+      ARKADE_AGENT_TOKEN: ${ARKADE_AGENT_TOKEN:?必须设置 ARKADE_AGENT_TOKEN}
+    volumes:
+      - agent-data:/opt/arkade/agent
+      - ./agent.config.toml:/opt/arkade/agent/agent.toml:ro
+      # 挂载宿主机 Docker 套接字：Agent 必须通过它操作本机容器。
+      # 这是调试专用的「同机自管」形态，生产环境不会这样部署。
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - arkade
+
+volumes:
+  hub-data:
+    name: arkade-debug-hub-data
+  agent-data:
+    name: arkade-debug-agent-data
+
+networks:
+  arkade:
+    name: arkade-debug-net
