@@ -45,3 +45,6 @@ data/
 *.pem
 *.key
 config.local.*
+
+# 工具生成的本地索引
+.cg/

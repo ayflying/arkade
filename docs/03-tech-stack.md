@@ -20,13 +20,12 @@ Rust 的最佳用武之地：未来的高频指标采集 sidecar、加密与内�
 
 ## 主程序框架
 
-**建议：标准库 `net/http` + `chi` 路由 + `gorilla/websocket`（或 `nhooyr/websocket`），不用 GoFrame。**
+**已定：标准库 `net/http` + `chi` 路由 + `gorilla/websocket`，不用 GoFrame。**（决策 D-08）
 
 理由：
 
 - 本项目是**网关型控制面**，核心是长连接管理与消息路由，不是 CRUD 业务系统。
 - GoFrame 的价值在 ORM、代码生成、规范的业务分层，对这类控制面收益不大，反而让请求链路变厚、排障变难。
-- 但若用户坚持沿用 GoFrame（熟悉度/既有经验），**需明确：只在业务 CRUD 层使用，WebSocket 与 Agent 连接层保持标准库**。两者可共存。
 
 ## 代理程序
 
@@ -40,7 +39,7 @@ Rust 的最佳用武之地：未来的高频指标采集 sidecar、加密与内�
 - Vue 3 + `<script setup>` + TypeScript
 - Vite 构建
 - Pinia 状态管理
-- 组件库待定（Element Plus / Naive UI / 自研，后续对话确认）
+- 组件库：Naive UI（按需引入，首期）
 - 实时数据经 WebSocket 推送，不靠轮询
 
 ## 通信协议
