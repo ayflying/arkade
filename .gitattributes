@@ -1,0 +1,13 @@
+# 统一换行符：文本文件入库统一 LF，检出时按平台
+* text=auto eol=lf
+
+# 二进制
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.zip binary
+*.exe binary
+*.so binary
+*.dll binary
