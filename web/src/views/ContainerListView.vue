@@ -24,10 +24,11 @@ import ContainerStateTag from '@/components/container/ContainerStateTag.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import { useContainers } from '@/composables/useContainers'
+import { usePolling } from '@/composables/usePolling'
 import { useAgentsStore } from '@/stores/agents'
 import type { Container } from '@/types/container'
-import { isAgentOnline } from '@/utils/agentAction'
-import { confirmAction } from '@/utils/confirm'
+import { isAgentOnline, needsForceDelete } from '@/utils/agentAction'
+import { confirmAction, confirmWithOption } from '@/utils/confirm'
 import { toastError, toastSuccess } from '@/utils/feedback'
 import { formatAbsoluteTime, formatRelativeTime } from '@/utils/formatTime'
 import { mapRuntime } from '@/utils/statusMap'
@@ -42,7 +43,7 @@ const agentId = computed<string>(() => String(route.params.id ?? ''))
 /** 当前服务器对象；可能为 undefined（直接刷新本页且 store 尚未加载时） */
 const agent = computed(() => agentsStore.findById(agentId.value))
 
-const { containers, loading, errorText, loaded, busy, load, runAction } = useContainers(
+const { containers, loading, errorText, loaded, busy, load, runAction, removeContainer } = useContainers(
   () => agentId.value
 )
 
@@ -120,8 +121,9 @@ const columns = computed<DataTableColumns<Container>>(() => [
   {
     title: '操作',
     key: 'actions',
-    width: 210,
-    align: 'right',
+    // 5 个按钮横排需要更大宽度；窄屏由 scroll-x 横向滚动兜底
+    width: 300,
+    fixed: 'right',
     render: (row) =>
       h(ContainerRowActions, {
         agent: agent.value,
@@ -129,7 +131,9 @@ const columns = computed<DataTableColumns<Container>>(() => [
         busy: busy.value[row.id] === true,
         onStart: () => void handleStart(row),
         onStop: () => void handleStop(row),
-        onLogs: () => openLogs(row)
+        onRestart: () => void handleRestart(row),
+        onLogs: () => openLogs(row),
+        onDelete: () => void handleDelete(row)
       })
   }
 ])
@@ -186,9 +190,63 @@ async function handleStop(container: Container): Promise<void> {
   }
 }
 
+/**
+ * 重启容器。
+ *
+ * 不弹确认：重启是「恢复性」操作且可重复执行，误点代价低（服务会短暂中断）；
+ * 相比之下停止/删除才需要二次确认。若这里也弹窗，常用操作会被打断得很难受。
+ */
+async function handleRestart(container: Container): Promise<void> {
+  if (!online.value) return
+  const result = await runAction(container, 'restart')
+  if (result.ok) {
+    toastSuccess(result.message)
+  } else {
+    toastError(result.message)
+  }
+}
+
+/**
+ * 删除容器。
+ *
+ * 三个必须讲清的点：
+ * 1. **不可恢复**：容器删掉就没了，不能像停止那样再启动回来；
+ * 2. **运行中的容器要强制停止**：不说明的话用户会奇怪「为什么还能删正在跑的」；
+ * 3. **匿名数据卷默认保留**：删卷是数据丢失，必须由用户主动勾选。
+ *    这与编排删除、存储卷删除遵循同一条原则：危险默认关闭。
+ */
+async function handleDelete(container: Container): Promise<void> {
+  if (!online.value) return
+  const running = needsForceDelete(container.state)
+
+  const result = await confirmWithOption({
+    title: `确认删除容器「${container.name}」？`,
+    content: running
+      ? '该容器正在运行，将强制停止并删除。\n\n删除后容器无法恢复。'
+      : '删除后容器无法恢复。',
+    optionLabel: '同时删除匿名数据卷（数据将永久丢失）',
+    optionDefault: false,
+    optionHint: '⚠️ 容器使用的匿名数据卷将一并删除，卷内数据永久丢失且无法恢复。',
+    positiveText: '删除',
+    negativeText: '取消',
+    danger: true
+  })
+  if (!result.confirmed) return
+
+  const res = await removeContainer(container, {
+    // 运行中的容器必须 force，否则后端会拒绝
+    force: running,
+    removeVolumes: result.optionChecked
+  })
+  if (res.ok) {
+    toastSuccess(res.message)
+  } else {
+    toastError(res.message)
+  }
+}
+
 /** 手动刷新容器列表 */
-async function handleRefresh(showToast: boolean): Promise<void> {
-  // 顺带刷新服务器状态：用户可能在别处把服务器重启/下线了
+async function handleRefresh(showToast: boolean): Promise<void> {  // 顺带刷新服务器状态：用户可能在别处把服务器重启/下线了
   void agentsStore.refresh()
   const ok = await load()
   if (ok && showToast) {
@@ -200,6 +258,29 @@ async function handleRefresh(showToast: boolean): Promise<void> {
 function goBack(): void {
   void router.push({ name: 'agents' })
 }
+
+/**
+ * 状态自动刷新：每 5 秒静默拉一次容器列表。
+ *
+ * 为什么 5 秒：容器启停/退出是用户最关心的变化，间隔太长会觉得「没反应」；
+ * 5 秒既够及时，单台服务器一次列表请求的开销也很小。
+ *
+ * 静默模式（load(true)）不显示骨架，避免页面每 5 秒闪一次。
+ * 暂停条件（页面隐藏、全局开关关闭）都由 usePolling 统一处理。
+ */
+usePolling(
+  async () => {
+    // 服务器离线时拉列表必然失败，白费一次请求还会累积失败计数
+    if (!online.value) return
+    await load(true)
+  },
+  {
+    name: 'container-list',
+    interval: 5000,
+    // 首屏由 onMounted 的 load() 负责，这里不重复拉
+    immediate: false
+  }
+)
 
 onMounted(async () => {
   // 直接刷新本页时 store 为空：先补一次服务器列表，否则无法知道是否在线

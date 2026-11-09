@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -23,11 +24,29 @@ import (
 // agentView 是返回给前端的 Agent 视图。
 // 字段名与前端契约严格一致，last_seen 单位为 Unix 秒。
 type agentView struct {
-	ID             string            `json:"id"`
-	Name           string            `json:"name"`
-	Status         string            `json:"status"`
-	Version        string            `json:"version"`
-	Runtime        string            `json:"runtime"`
+	ID string `json:"id"`
+	// Name 是 Agent 上报的主机名，属于机器属性，用户改不了。
+	Name string `json:"name"`
+	// DisplayName 是用户可编辑的显示名。**已做空值回落**：
+	// 未设置时这里返回 Name，前端不需要再判空。
+	// 回落放在后端而不是前端，是因为"没设置显示名"和"显示名为空"
+	// 在界面上只该有一种表现——显示点什么，而不是一行空白。
+	DisplayName string `json:"display_name"`
+	// Note 是自由备注。
+	Note string `json:"note"`
+	// Disabled 表示该服务器被管理员禁用（连接会在握手阶段被拒）。
+	// 前端需要它来区分"离线"和"被禁用"——两者都连不上，
+	// 但处置方式完全不同（前者等它恢复，后者要去启用）。
+	Disabled bool   `json:"disabled"`
+	Status   string `json:"status"`
+	Version  string `json:"version"`
+	Runtime  string `json:"runtime"`
+	// RuntimeVersion 的 JSON 名是 runtime_version。
+	//
+	// 这里必须与列表保持一致：曾经 PATCH 响应用的是 agent_id / runtime_ver，
+	// 而列表用 id / runtime_version。前端拿到 PATCH 响应后调用
+	// store.replace(updated) 会因为找不到 id 字段而静默失败——
+	// 没有报错，只是界面上没更新，用户以为操作没生效。
 	RuntimeVersion string            `json:"runtime_version"`
 	LastSeen       int64             `json:"last_seen"`
 	Labels         map[string]string `json:"labels"`
@@ -80,8 +99,12 @@ func toAgentView(rec store.AgentRecord, online map[string]struct{}) agentView {
 		labels = map[string]string{}
 	}
 	return agentView{
-		ID:             rec.ID,
-		Name:           rec.Name,
+		ID:   rec.ID,
+		Name: rec.Name,
+		// 显示名未设置时回落到主机名，前端无需判空。
+		DisplayName:    displayNameOf(rec),
+		Note:           rec.Note,
+		Disabled:       rec.Disabled,
 		Status:         status,
 		Version:        rec.Version,
 		Runtime:        rec.Runtime,
@@ -89,6 +112,18 @@ func toAgentView(rec store.AgentRecord, online map[string]struct{}) agentView {
 		LastSeen:       rec.LastSeen,
 		Labels:         labels,
 	}
+}
+
+// displayNameOf 返回展示用的名称：优先显示名，未设置则用主机名。
+//
+// 集中成一处是因为列表、PATCH、启用/禁用等多个响应都要用它。
+// 各处各写一遍的话，很容易在新增接口时忘了回落，
+// 出现"列表里显示名字、详情里显示空白"的不一致。
+func displayNameOf(rec store.AgentRecord) string {
+	if name := strings.TrimSpace(rec.DisplayName); name != "" {
+		return name
+	}
+	return rec.Name
 }
 
 // handleListContainers 处理 GET /api/agents/{agentID}/containers。

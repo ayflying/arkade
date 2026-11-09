@@ -132,8 +132,13 @@ func (n *noneRuntime) Start(_ context.Context, _ string) error { return ErrNone 
 // Stop 返回 ErrNone。
 func (n *noneRuntime) Stop(_ context.Context, _ string, _ bool) error { return ErrNone }
 
-// Remove 返回 ErrNone。
-func (n *noneRuntime) Remove(_ context.Context, _ string, _ bool) error { return ErrNone }
+// Restart 返回 ErrNone。
+func (n *noneRuntime) Restart(_ context.Context, _ string) error { return ErrNone }
+
+// RemoveContainer 返回 ErrNone。
+func (n *noneRuntime) RemoveContainer(_ context.Context, _ string, _, _ bool) error {
+	return ErrNone
+}
 
 // Logs 返回 ErrNone。
 func (n *noneRuntime) Logs(_ context.Context, _ string, _ LogOptions) (LogResult, error) {

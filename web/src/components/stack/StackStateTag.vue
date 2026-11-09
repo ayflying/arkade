@@ -8,10 +8,17 @@
  */
 import { computed } from 'vue'
 import { NTag } from 'naive-ui'
-import type { StackState } from '@/types/stack'
 
 interface Props {
-  state: StackState
+  /**
+   * 状态值。
+   *
+   * 声明为 string 而不是 StackState：除了纳管编排的已知状态，
+   * 还要用于展示服务器上**外部 compose 项目**的状态
+   * （后端给的是 compose 原始状态文本，取值集合不保证与 StackState 一致）。
+   * 下方 STATE_MAP 自带兜底，未知值原样展示。
+   */
+  state: string
 }
 
 const props = defineProps<Props>()

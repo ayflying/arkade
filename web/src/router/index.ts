@@ -81,14 +81,39 @@ const agentChildRoutes: RouteRecordRaw[] = [
 const routes: RouteRecordRaw[] = [
   {
     path: '/',
-    // 根路径不单独做页面，直接重定向到服务器列表
-    redirect: '/agents'
+    // 根路径不单独做页面，直接去概览（登录后的首页）
+    redirect: '/overview'
   },
   {
     path: '/login',
     name: 'login',
     component: () => import('@/views/LoginView.vue'),
     meta: { public: true, title: '登录' }
+  },
+  {
+    // 需登录的页面统一挂在布局组件下
+    path: '/overview',
+    component: () => import('@/layouts/AppLayout.vue'),
+    children: [
+      {
+        path: '',
+        name: 'overview',
+        component: () => import('@/views/OverviewView.vue'),
+        meta: { title: '概览' }
+      }
+    ]
+  },
+  {
+    path: '/audit',
+    component: () => import('@/layouts/AppLayout.vue'),
+    children: [
+      {
+        path: '',
+        name: 'audit',
+        component: () => import('@/views/AuditView.vue'),
+        meta: { title: '操作审计' }
+      }
+    ]
   },
   {
     path: '/agents',
@@ -115,9 +140,9 @@ const routes: RouteRecordRaw[] = [
     ]
   },
   {
-    // 兜底：未知路径回到服务器列表，避免白屏
+    // 兜底：未知路径回到概览，避免白屏
     path: '/:pathMatch(.*)*',
-    redirect: '/agents'
+    redirect: '/overview'
   }
 ]
 
@@ -128,3 +153,11 @@ export const router = createRouter({
 
 /** 登录页路径常量：守卫与退出登录后跳转共用，避免字符串写错 */
 export const LOGIN_PATH = '/login'
+
+/**
+ * 业务首页路径：登录成功后的落地页。
+ *
+ * 从服务器列表改成概览页——用户登录后最先要知道的是「整体有没有问题」，
+ * 而不是某台机器的容器列表。
+ */
+export const HOME_PATH = '/overview'

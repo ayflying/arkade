@@ -109,10 +109,13 @@ export function httpPatch<T>(path: string, body?: unknown): Promise<T> {
 /**
  * DELETE 请求。
  *
- * 注意：契约里删除类接口返回 204 无响应体，
- * request() 已在 204 分支返回 undefined，因此这里把返回类型定为 void，
- * 避免调用方误以为还能拿到被删除的对象。
+ * 返回类型默认 void：契约里多数删除类接口返回 204 无响应体，
+ * request() 已在 204 分支返回 undefined，避免调用方误以为还能拿到被删除的对象。
+ *
+ * 但**部分删除接口是有响应体的**（例如 DELETE /api/agents/{id} 会返回
+ * { orphan_stacks, message } 告诉调用方「顺带产生了什么后果」）。
+ * 因此这里允许显式指定 T；传了 T 就说明调用方确认该接口有响应体。
  */
-export function httpDelete(path: string): Promise<void> {
-  return request<void>(path, { method: 'DELETE' })
+export function httpDelete<T = void>(path: string): Promise<T> {
+  return request<T>(path, { method: 'DELETE' })
 }

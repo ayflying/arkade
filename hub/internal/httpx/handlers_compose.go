@@ -22,6 +22,7 @@ package httpx
 import (
 	"context"
 	"net/http"
+	"sort"
 	"strconv"
 	"time"
 
@@ -208,6 +209,13 @@ func handleListStacks(d Deps) http.HandlerFunc {
 
 		// 拉 Agent 实时状态。失败（离线）不是错误：降级为 offline 继续返回 Hub 记录。
 		remote := map[string]envelope.ComposeProjectSummary{}
+		// externals 是 Agent 上报的「机器上已有、Arkade 未纳管」项目。
+		//
+		// 与 remote 分开存：remote 是"工作区里的项目"，用来给 Hub 记录补实时状态；
+		// externals 是"根本不属于 Arkade 的项目"，只能展示、不能管理。
+		// 混在一张表里会导致前端给外部项目渲染编辑/删除按钮——
+		// 点下去就是对外部生产环境动手，必须避免。
+		externals := make([]envelope.ComposeProjectSummary, 0)
 		agentOnline := true
 		list, cerr := d.Ops.ComposeList(r.Context(), agentID)
 		if cerr != nil {
@@ -216,6 +224,7 @@ func handleListStacks(d Deps) http.HandlerFunc {
 			for _, p := range list.Projects {
 				remote[p.Name] = p
 			}
+			externals = list.External
 		}
 
 		views := make([]composeStackView, 0, len(records))
@@ -240,15 +249,78 @@ func handleListStacks(d Deps) http.HandlerFunc {
 			for _, rec := range records {
 				known[rec.Name] = struct{}{}
 			}
+			// 工作区里但 Hub 未登记的项 → orphans（保持原有语义与类型）。
 			for name := range remote {
 				if _, ok := known[name]; !ok {
 					orphans = append(orphans, name)
 				}
 			}
 			resp["orphans"] = orphans
+			// external_stacks 给完整状态，供前端渲染「服务器已有编排（未纳管）」表格。
+			//
+			// 为什么 orphans 不直接改成对象数组：它已是既有的字符串数组契约，
+			// 改动会让已发布的前端解析失败。新增字段而不是改旧字段。
+			resp["external_stacks"] = toExternalStackViews(externals, known)
 		}
 		respondJSON(w, d.Log, http.StatusOK, resp)
 	}
+}
+
+// externalStackView 是「服务器已有编排（未纳管）」的展示模型。
+//
+// 字段刻意只读：没有 id、没有 hash、没有 editable。
+// 这不是漏写——外部项目没有可编辑的对象，前端也就不可能拼出
+// 「保存/删除」请求。**用类型本身堵住误操作的入口**，
+// 比在前端加个 if 判断可靠得多。
+type externalStackView struct {
+	Name string `json:"name"`
+	// Status ∈ running / partial / stopped / unknown，与已纳管项目同一套取值。
+	Status string `json:"status"`
+	// Services 是服务名（已排序，顺序稳定）。
+	Services []string `json:"services"`
+	// Running / Total 让前端能显示「2/3 运行中」这类状态数量。
+	Running int `json:"running"`
+	Total   int `json:"total"`
+	// Managed 恒为 false，且**显式给出**而不是省略。
+	//
+	// 前端可以据此统一走一套渲染逻辑（managed=false 就不显示操作按钮），
+	// 而不是靠"这个对象没有 id"来推断——那种隐式判断在新增字段时极易失效。
+	Managed bool `json:"managed"`
+}
+
+// toExternalStackViews 把 Agent 上报的外部项目转成展示模型。
+//
+// 会剔除与 Hub 已登记项目重名的项：同一个名字不可能既是"我们管理的"
+// 又是"未纳管的"。若两侧都有，以已登记为准——否则用户会看到两条同名行，
+// 一条能编辑一条不能，根本无法判断该点哪个。
+//
+// 按名称排序：Agent 侧已排过序，但这里仍显式再排一次，
+// 因为去重后无法假设顺序，且前端可能只取部分列表做展示。
+func toExternalStackViews(externals []envelope.ComposeProjectSummary, known map[string]struct{}) []externalStackView {
+	out := make([]externalStackView, 0, len(externals))
+	for _, p := range externals {
+		if _, ok := known[p.Name]; ok {
+			continue
+		}
+		services := p.Services
+		if services == nil {
+			services = []string{}
+		}
+		status := p.Status
+		if status == "" {
+			status = "unknown"
+		}
+		out = append(out, externalStackView{
+			Name:     p.Name,
+			Status:   status,
+			Services: services,
+			Running:  p.Running,
+			Total:    p.Total,
+			Managed:  false,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
 }
 
 // toStackView 把 Hub 记录与 Agent 状态合并成视图。remote 为 nil 表示 Agent 离线或该项目在 Agent 上不存在。

@@ -274,8 +274,11 @@ func TestNoneRuntime(t *testing.T) {
 	if err := rt.Stop(context.Background(), "x", true); !errors.Is(err, ErrNone) {
 		t.Fatalf("Stop 应返回 ErrNone，实际: %v", err)
 	}
-	if err := rt.Remove(context.Background(), "x", false); !errors.Is(err, ErrNone) {
-		t.Fatalf("Remove 应返回 ErrNone，实际: %v", err)
+	if err := rt.Restart(context.Background(), "x"); !errors.Is(err, ErrNone) {
+		t.Fatalf("Restart 应返回 ErrNone，实际: %v", err)
+	}
+	if err := rt.RemoveContainer(context.Background(), "x", false, false); !errors.Is(err, ErrNone) {
+		t.Fatalf("RemoveContainer 应返回 ErrNone，实际: %v", err)
 	}
 	if _, err := rt.Logs(context.Background(), "x", LogOptions{}); !errors.Is(err, ErrNone) {
 		t.Fatalf("Logs 应返回 ErrNone，实际: %v", err)

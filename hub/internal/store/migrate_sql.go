@@ -128,4 +128,66 @@ var migrations = []migration{
 			`ALTER TABLE compose_stacks ADD COLUMN synced_at INTEGER NOT NULL DEFAULT 0`,
 		},
 	},
+	{
+		version: 4,
+		name:    "Agent 表补记显示名、备注与禁用状态",
+		stmts: []string{
+			// display_name 是用户可编辑的显示名，空串表示"未设置"。
+			//
+			// 为什么不复用 name：name 是 Agent 首次上线时自报的主机名，
+			// 属于机器属性，用户改不了；而显示名是"人给这台服务器起的名字"
+			// （如「生产-东京」）。两者来源不同，混在一列会导致
+			// Agent 重连上报主机名时把用户改的名字覆盖掉。
+			// 空串时由应用层回落到 name，界面上不会出现空白行。
+			`ALTER TABLE agents ADD COLUMN display_name TEXT NOT NULL DEFAULT ''`,
+			// note 是自由备注（如「生产环境-东京机房，负责商品服务」）。
+			// 单独一列而不是塞进 labels：labels 是结构化的键值对，用于筛选与
+			// 权限匹配；note 是给人读的自由文本，两者语义不同，
+			// 放进 labels 会让"按 label 筛选"的结果里混入无法预期的自由文本。
+			`ALTER TABLE agents ADD COLUMN note TEXT NOT NULL DEFAULT ''`,
+			// disabled 表示该 Agent 被管理员禁用：连接请求在握手阶段就会被
+			// 拒绝并给出明确原因。
+			//
+			// 为什么用禁用而不是直接删除记录：删除会连同纳管关系一起消失，
+			// 而禁用保留全部历史（谁在被禁之前连过、有哪些编排挂在它上面）。
+			// 运维场景里"先禁用观察"远比"直接删除"可控。
+			`ALTER TABLE agents ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0`,
+		},
+	},
+	{
+		version: 5,
+		name:    "操作审计日志表",
+		stmts: []string{
+			// id 用应用层生成的随机串（见 audit.NewID），不用自增：
+			// 审计数据需要能跨库合并/导入，自增 ID 会撞号。
+			//
+			// 注意 TEXT PRIMARY KEY 在 SQLite 里**不蕴含 NOT NULL**
+			// （只有 INTEGER PRIMARY KEY 才是 rowid 的别名并隐含非空），
+			// 所以这里必须显式写 NOT NULL，否则能插进一条 NULL 主键的记录。
+			`CREATE TABLE IF NOT EXISTS audit_logs (
+				id TEXT NOT NULL PRIMARY KEY,
+				user_id TEXT NOT NULL,
+				username TEXT NOT NULL,
+				agent_id TEXT NOT NULL DEFAULT '',
+				agent_name TEXT NOT NULL DEFAULT '',
+				action TEXT NOT NULL,
+				target TEXT NOT NULL DEFAULT '',
+				detail TEXT NOT NULL DEFAULT '',
+				result TEXT NOT NULL,
+				error TEXT NOT NULL DEFAULT '',
+				duration_ms INTEGER NOT NULL DEFAULT 0,
+				created_at INTEGER NOT NULL
+			)`,
+			// username / agent_name 是写入当时的名字快照，不是外键。
+			// 用户或服务器被删掉之后，「谁删了什么」的答案恰恰最被需要，
+			// 此时若靠 JOIN 取名字，审计列表会变成一片空白——那就成了废数据。
+			//
+			// 主查询是"按时间倒序列出全部"，因此 created_at 降序索引最关键。
+			`CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs (created_at DESC)`,
+			// 以下三个索引对应筛选条件：谁做的、哪台服务器、什么动作。
+			`CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_logs (user_id)`,
+			`CREATE INDEX IF NOT EXISTS idx_audit_agent ON audit_logs (agent_id)`,
+			`CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_logs (action)`,
+		},
+	},
 }

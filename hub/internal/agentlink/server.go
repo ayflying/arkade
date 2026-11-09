@@ -111,6 +111,33 @@ func (s *Server) authorize(r *http.Request) error {
 	return nil
 }
 
+// refuseHandshake 把握手被拒的原因回给 Agent，然后关闭连接。
+//
+// 为什么要专门做这一步：握手阶段的拒绝如果用"直接断开"表达，
+// Agent 侧看到的只是 WebSocket 被关闭，与网络故障、Hub 重启、
+// 反向代理超时完全无法区分。Agent 的合理反应只能是不断重连，
+// 而真正的答案（"你被禁用了"）永远在 Hub 日志里，运维不看服务器就无从得知。
+//
+// 回一条带 code/message 的响应信封，Agent 就能打印出准确原因
+// 并在 UI 上提示"请联系管理员"，避免无意义的重连风暴。
+func refuseHandshake(ws *websocket.Conn, req *envelope.Envelope, agentID string, cause error) {
+	env := envelope.NewErrorResponse(req, &envelope.Error{
+		Code:    envelope.CodeForbidden,
+		Message: cause.Error(),
+	})
+	// 短暂延长写超时：此时读 deadline 还是握手时的 10 秒，
+	// 若对端网络慢，写可能失败，但失败也无所谓——反正要断开了。
+	_ = ws.SetWriteDeadline(time.Now().Add(3 * time.Second))
+	if werr := ws.WriteJSON(env); werr != nil {
+		_ = ws.Close()
+		return
+	}
+	// 给对方一点时间把这条消息读走再关闭。
+	// 不等的话，TCP 连接可能在数据刷出前就被 RST，对端收不到原因。
+	_ = ws.SetWriteDeadline(time.Now().Add(time.Second))
+	_ = ws.Close()
+}
+
 // serve 完成握手并驱动连接生命周期。
 func (s *Server) serve(ws *websocket.Conn, r *http.Request) {
 	// 握手超时：Agent 必须在限定时间内发出 hello，否则断开，
@@ -148,9 +175,13 @@ func (s *Server) serve(ws *websocket.Conn, r *http.Request) {
 
 	// 先落库再进在线表：若写库失败则不接受该连接，
 	// 避免出现「在线表里有、列表里没有」的幽灵在线状态。
+	//
+	// 握手被拒（含"该服务器已被禁用"）时，必须把原因回给 Agent 再关闭。
+	// 直接关连接的话，Agent 侧只能看到"连接断了"，会当成网络故障
+	// 无限重连，运维也无从知道是被人为禁用的。
 	if err := s.handler.OnAgentHello(ctx, agentID, hello); err != nil {
 		s.log.Error("处理握手失败", "err", err, "host", hello.Hostname)
-		_ = ws.Close()
+		refuseHandshake(ws, &helloEnv, agentID, err)
 		return
 	}
 

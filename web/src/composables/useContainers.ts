@@ -3,16 +3,25 @@
  *
  * 为什么不放进全局 store：容器状态变化频繁、只在容器页使用，
  * 放进全局会带来「什么时候失效」的额外复杂度，而页面卸载后就没用了。
- * 因此用一个组合式函数封装「加载 / 局部更新 / 启停」，视图只负责渲染。
+ * 因此用一个组合式函数封装「加载 / 局部更新 / 启停 / 重启 / 删除」，视图只负责渲染。
  */
 
 import { ref } from 'vue'
-import { listContainers, startContainer, stopContainer } from '@/api/containers'
+import {
+  deleteContainer,
+  listContainers,
+  restartContainer,
+  startContainer,
+  stopContainer
+} from '@/api/containers'
 import { ApiError } from '@/types/api'
 import type { Container } from '@/types/container'
 
 /** 单行操作的进行中标记：key 为容器 id，用于按钮 loading 与防连点 */
 export type BusyMap = Record<string, boolean>
+
+/** 可执行的容器操作 */
+export type ContainerOperation = 'start' | 'stop' | 'restart'
 
 export function useContainers(agentId: () => string) {
   const containers = ref<Container[]>([])
@@ -21,26 +30,37 @@ export function useContainers(agentId: () => string) {
   const errorText = ref('')
   /** 是否已成功加载过，用于区分「没加载完」与「确实没有容器」 */
   const loaded = ref(false)
-  /** 容器 id → 是否正在启停 */
+  /** 容器 id → 是否正在执行操作 */
   const busy = ref<BusyMap>({})
 
   /**
    * 全量加载容器列表。
    *
+   * @param silent 静默刷新：不显示 loading 骨架。
+   *               自动轮询走这个模式——每 5 秒闪一次骨架会让页面看起来一直在抽搐，
+   *               而且会把用户的滚动位置和交互打断。
+   *
    * 边界：失败时保留旧数据，只设 errorText，避免刷新失败把页面刷成空白。
+   * 静默模式下失败**不改 errorText**：自动刷新偶发失败不该在页面上弹错误，
+   * 用户可能正在看别的；连续失败由 usePolling 的退避与全局提示承担。
    */
-  async function load(): Promise<boolean> {
-    loading.value = true
-    errorText.value = ''
+  async function load(silent = false): Promise<boolean> {
+    if (!silent) loading.value = true
+    if (!silent) errorText.value = ''
     try {
       containers.value = await listContainers(agentId())
       loaded.value = true
+      if (silent) errorText.value = ''
       return true
     } catch (err) {
-      errorText.value = err instanceof ApiError ? err.message : '加载容器列表失败'
+      if (!silent) {
+        errorText.value = err instanceof ApiError ? err.message : '加载容器列表失败'
+      }
+      // 静默失败向上抛，让 usePolling 计入连续失败并触发退避
+      if (silent) throw err
       return false
     } finally {
-      loading.value = false
+      if (!silent) loading.value = false
     }
   }
 
@@ -60,13 +80,13 @@ export function useContainers(agentId: () => string) {
   }
 
   /**
-   * 启停统一入口：设置 busy → 调接口 → 局部更新 → 清 busy。
+   * 启停/重启统一入口：设置 busy → 调接口 → 局部更新 → 清 busy。
    *
    * 返回 { ok, message }，由页面决定如何提示，避免把 UI 反馈耦合进数据层。
    */
   async function runAction(
     container: Container,
-    action: 'start' | 'stop'
+    action: ContainerOperation
   ): Promise<{ ok: boolean; message: string }> {
     // 防连点：同一容器已有操作在跑时直接拒绝
     if (busy.value[container.id] === true) {
@@ -77,11 +97,13 @@ export function useContainers(agentId: () => string) {
       const res =
         action === 'start'
           ? await startContainer(agentId(), container.id)
-          : await stopContainer(agentId(), container.id)
+          : action === 'stop'
+            ? await stopContainer(agentId(), container.id)
+            : await restartContainer(agentId(), container.id)
       patchContainerState(container.id, res.state)
       return {
         ok: true,
-        message: `${container.name} 已${action === 'start' ? '启动' : '停止'}`
+        message: `${container.name} 已${ACTION_LABELS[action]}`
       }
     } catch (err) {
       // 失败时给出中文原因（离线/超时/运行时失败等都由 request 层翻译好）
@@ -93,7 +115,54 @@ export function useContainers(agentId: () => string) {
     }
   }
 
-  return { containers, loading, errorText, loaded, busy, load, runAction }
+  /**
+   * 删除容器。
+   *
+   * 与启停的区别：删除成功后该行**不复存在**，无法局部更新，
+   * 只能把这条从列表里移除（或整表重刷）。这里选择从本地数组移除，
+   * 理由与启停保持一致：不整表重刷，用户不会丢失滚动位置。
+   *
+   * @param force         运行中的容器必须为 true（后端会先强制停止再删）
+   * @param removeVolumes 是否连带删除匿名数据卷，默认 false
+   */
+  async function removeContainer(
+    container: Container,
+    options: { force: boolean; removeVolumes: boolean }
+  ): Promise<{ ok: boolean; message: string }> {
+    if (busy.value[container.id] === true) {
+      return { ok: false, message: '该容器正在执行操作，请稍候' }
+    }
+    busy.value = { ...busy.value, [container.id]: true }
+    try {
+      await deleteContainer(agentId(), container.id, {
+        force: options.force,
+        removeVolumes: options.removeVolumes
+      })
+      containers.value = containers.value.filter((c) => c.id !== container.id)
+      return {
+        ok: true,
+        message:
+          options.removeVolumes
+            ? `${container.name} 已删除（含匿名数据卷）`
+            : `${container.name} 已删除`
+      }
+    } catch (err) {
+      return { ok: false, message: err instanceof ApiError ? err.message : '删除容器失败' }
+    } finally {
+      const next = { ...busy.value }
+      delete next[container.id]
+      busy.value = next
+    }
+  }
+
+  return { containers, loading, errorText, loaded, busy, load, runAction, removeContainer }
+}
+
+/** 操作 → 完成提示里的动词 */
+const ACTION_LABELS: Record<ContainerOperation, string> = {
+  start: '启动',
+  stop: '停止',
+  restart: '重启'
 }
 
 /**

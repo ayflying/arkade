@@ -353,7 +353,7 @@ onMounted(async () => {
         -->
         <n-alert v-if="!isOnline" type="warning" :bordered="false" class="stack-detail__drift">
           服务器离线，启动/停止等操作暂时不可用，也无法获取容器列表。
-          但配置仍可编辑并保存，会先存入 Hub，等服务器恢复在线后自动同步。
+          但配置仍可编辑并保存，会先存入 Hub；服务器上线后需要手动重新下发才能生效。
         </n-alert>
 
         <stack-action-bar

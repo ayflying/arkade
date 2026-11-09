@@ -157,14 +157,14 @@ function goBack(): void {
     </page-header>
 
     <!--
-      离线也能创建：后端支持「先写 Hub、等 Agent 上线再同步」，
-      返回 200 + sync_ok:false + sync_hint 而不是报错。
-      因此这里不禁用创建按钮，只提示用户「现在创建的会在上线后同步」，
-      否则就白白堵死了后端特意提供的离线编辑能力。
+      离线也能创建：后端支持「先写 Hub」，返回 200 + sync_ok:false + sync_hint 而不是报错。
+      因此这里不禁用创建按钮，只提示用户「现在创建的会存进 Hub，上线后需手动重新下发」。
+      注意不能写成「自动同步」——目前没有自动上线同步机制，
+      承诺了却没有发生，用户会发现服务器上跑的还是旧配置。
     -->
     <div v-if="!isOnline" class="stack-create__alert">
       <n-alert type="warning" :bordered="false" title="服务器当前离线">
-        你仍可以创建编排：内容会先保存到 Hub，等服务器恢复在线后自动同步，不会丢失。
+        你仍可以创建编排：内容会先保存到 Hub，不会丢失。服务器上线后需要手动重新下发才会生效。
       </n-alert>
     </div>
 

@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -257,18 +258,81 @@ func newComposePSHandler(mgr *compose.Manager) Handler {
 //
 // 一次返回本机全部项目及其状态。Hub 用它和数据库记录做合并，
 // 因此**必须包含本机实际算出的哈希**——那是 drift 判定的依据。
-func newComposeListHandler(mgr *compose.Manager) Handler {
+//
+// 另返回「引擎里有、但 Arkade 工作区没有」的外部项目（External）。
+// 这些项目只能看不能改：不读它们的配置文件、不执行任何 up/down、
+// 不导入、不接管。见 compose/external.go 的设计边界说明。
+//
+// 外部发现失败**不能**让整个列表失败：用户要的首先是"我管理的编排"，
+// 那部分数据是好的，不该因为另一个查询出错就整体消失。
+// 因此外部发现失败时降级为空列表并记日志——但**不能假装机器上真的没有**
+// （那正是本次 bug 的同类错误），所以把错误写进日志让运维能查到。
+func newComposeListHandler(mgr *compose.Manager, src containerLabelLister, log *slog.Logger) Handler {
 	return func(ctx context.Context, _ []byte) (any, error) {
 		projects, err := mgr.List(ctx)
 		if err != nil {
 			return nil, badRequestf("%v", err)
 		}
-		out := make([]envelope.ComposeProjectSummary, 0, len(projects))
+		managed := make([]envelope.ComposeProjectSummary, 0, len(projects))
+		managedNames := make(map[string]struct{}, len(projects))
 		for _, p := range projects {
-			out = append(out, toProjectSummary(p))
+			managed = append(managed, toProjectSummary(p))
+			managedNames[p.Name] = struct{}{}
 		}
-		return envelope.ComposeListResult{Projects: out}, nil
+
+		// 外部项目：只读标签发现。
+		var external []envelope.ComposeProjectSummary
+		if src != nil {
+			found, derr := compose.DiscoverExternal(ctx, src)
+			if derr != nil {
+				// 降级但不掩埋：日志里留痕，便于运维发现"引擎探测失败"。
+				log.Warn("发现外部编排项目失败，本次只返回已纳管的编排", "err", derr)
+			} else {
+				external = toExternalSummaries(found, managedNames)
+			}
+		}
+
+		return envelope.ComposeListResult{Projects: managed, External: external}, nil
 	}
+}
+
+// containerLabelLister 是发现外部项目所需的最小能力。
+//
+// 用窄接口而不是 *runtime.Engine：这个 handler 只读容器标签，
+// 不该依赖整个引擎接口，测试里也只需要一个假实现。
+type containerLabelLister interface {
+	ListContainerLabels(ctx context.Context) ([]compose.ContainerLabels, error)
+}
+
+// toExternalSummaries 把外部项目转成摘要，并剔除与已纳管项目重名的项。
+//
+// 为什么要去重：如果某个项目既是 Arkade 工作区里的（有目录），
+// 又在引擎里有容器，它会同时出现在两侧。**必须以已纳管为准**——
+// 否则界面会显示两条同名项目，一条能编辑一条不能，
+// 用户完全无法判断该点哪一个，而且容易对生产环境误操作。
+func toExternalSummaries(found []compose.ExternalProject, managed map[string]struct{}) []envelope.ComposeProjectSummary {
+	out := make([]envelope.ComposeProjectSummary, 0, len(found))
+	for _, p := range found {
+		if _, ok := managed[p.Name]; ok {
+			continue
+		}
+		out = append(out, envelope.ComposeProjectSummary{
+			Name: p.Name,
+			// Status 与已纳管项目同一套取值，前端可复用渲染逻辑。
+			Status: p.Status(),
+			// Hash 恒空：外部项目没有我们能算的配置，
+			// 而且**不能拿它参与 drift 判定**——空哈希与任何值比较
+			// 都只会产生误报。Hub 侧据此跳过 drift 检查。
+			ConfigHash: "",
+			Services:   p.Services,
+			Running:    p.Running,
+			Total:      p.Total,
+			// UpdatedAt 为 0：我们没读过它的文件，不该编造时间。
+			UpdatedAt: 0,
+			Managed:   false,
+		})
+	}
+	return out
 }
 
 // newComposeBackupHandler 处理 compose.backup。
@@ -384,6 +448,9 @@ func toProjectSummary(p compose.ProjectStatus) envelope.ComposeProjectSummary {
 		Running:    p.Running,
 		Total:      p.Total,
 		UpdatedAt:  p.UpdatedAt.Unix(),
+		// 工作区里的项目都由 Arkade 管理：有目录、配置由 Hub 下发、
+		// 可编辑可删除。
+		Managed: true,
 	}
 }
 

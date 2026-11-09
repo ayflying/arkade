@@ -66,10 +66,20 @@ type ContainerListResult struct {
 	Containers []ContainerSummary `json:"containers"`
 }
 
-// ContainerOpPayload 是启停、删除等针对单个容器的操作请求。
+// ContainerOpPayload 是启停、重启、删除等针对单个容器的操作请求。
 type ContainerOpPayload struct {
 	ContainerID string `json:"container_id"`
-	Force       bool   `json:"force"` // 删除时强制、停止时忽略优雅退出
+	// Force 在删除时表示强制（连运行中的容器一起删），在停止时表示不等待优雅退出。
+	Force bool `json:"force"`
+	// RemoveVolumes 仅对删除有效：是否同时删除容器的匿名数据卷。
+	//
+	// 放在协议层而不是 Hub 与 Agent 各写一份，是因为这是一个跨模块契约：
+	// 两边字段名一旦不一致（比如一边写 remove_volumes、另一边写 remove_volume），
+	// 解码会静默取到零值 false，用户以为删了卷其实没删——这种失败没有任何报错，
+	// 只能靠人工发现数据还在。共享结构体让编译期就暴露不一致。
+	//
+	// 默认 false 是刻意的：删卷是数据丢失操作，必须由调用方显式要求。
+	RemoveVolumes bool `json:"remove_volumes"`
 }
 
 // ContainerLogsPayload 是日志请求。行数必须有上限：日志是无界数据，

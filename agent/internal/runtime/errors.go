@@ -21,6 +21,13 @@ var ErrNotFound = errors.New("容器不存在")
 // 两者在界面上的提示文案完全不同，不能合并。
 var ErrUnsupported = errors.New("运行时不支持该操作")
 
+// ErrContainerConflict 表示容器当前状态不允许该操作（最常见的是删除运行中的容器）。
+//
+// 与 ErrNotFound 分开是有意义的：前者提示用户"先停容器或强制删除"，
+// 后者提示"这东西已经不在了"。前端对两者的引导完全不同——
+// 冲突应该给一个可操作的按钮，不存在则应该刷新列表。
+var ErrContainerConflict = errors.New("容器当前状态不允许此操作")
+
 // Kind 是运行时类型。取值与协议层 envelope.RuntimeKind 一一对应，
 // 但这里保留独立类型：运行时层不应该为了一个字符串去依赖协议包。
 type Kind string

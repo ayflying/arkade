@@ -28,7 +28,8 @@ import PageHeader from '@/components/common/PageHeader.vue'
 import StackStateTag from '@/components/stack/StackStateTag.vue'
 import { listStacks } from '@/api/stacks'
 import { useCurrentAgent } from '@/composables/useCurrentAgent'
-import type { StackSummary } from '@/types/stack'
+import { usePolling } from '@/composables/usePolling'
+import type { ExternalStack, StackSummary } from '@/types/stack'
 import { ApiError } from '@/types/api'
 import { formatAbsoluteTime, formatRelativeTime } from '@/utils/formatTime'
 
@@ -36,8 +37,10 @@ const router = useRouter()
 const { agentId, isOnline: storeOnline, displayName } = useCurrentAgent()
 
 const stacks = ref<StackSummary[]>([])
-/** 未纳管编排：Agent 上有、Hub 里没有 */
+/** 未纳管编排：Agent 上有、Hub 里没有（只有名字，旧字段兼容） */
 const orphans = ref<string[]>([])
+/** 未纳管项目的详情（新字段，可用于画成表格）；后端未提供时为空 */
+const externalStacks = ref<ExternalStack[]>([])
 /** 后端告知的 Agent 在线状态（离线时接口仍返回 200） */
 const agentOnlineFromApi = ref(true)
 const loading = ref(false)
@@ -47,23 +50,32 @@ const loaded = ref(false)
 /**
  * 拉取编排列表；失败保留旧数据只置错误文案，避免刷新失败把表格清空。
  *
+ * @param silent 静默刷新：自动轮询用，不显示 loading（否则每 10 秒闪一次），
+ *               且失败不写 errorText——自动刷新偶发失败不该打断用户当前操作。
+ *
  * 注意 agent_online：后端在 Agent 离线时**仍然返回 200**，
  * 所以这里不能把「请求成功」等同于「服务器在线」。
  */
-async function refresh(): Promise<void> {
+async function refresh(silent = false): Promise<void> {
   if (agentId.value === null) return
-  loading.value = true
-  errorText.value = ''
+  if (!silent) loading.value = true
+  if (!silent) errorText.value = ''
   try {
     const res = await listStacks(agentId.value)
     stacks.value = res.stacks
-    orphans.value = res.orphans ?? []
+    orphans.value = Array.isArray(res.orphans) ? res.orphans : []
+    externalStacks.value = Array.isArray(res.external_stacks) ? res.external_stacks : []
     agentOnlineFromApi.value = res.agent_online
     loaded.value = true
+    if (silent) errorText.value = ''
   } catch (err) {
+    if (silent) {
+      // 交给 usePolling 计入连续失败并退避
+      throw err
+    }
     errorText.value = err instanceof ApiError ? err.message : '加载编排列表失败'
   } finally {
-    loading.value = false
+    if (!silent) loading.value = false
   }
 }
 
@@ -78,14 +90,76 @@ const isOnline = computed<boolean>(() => (loaded.value ? agentOnlineFromApi.valu
 /** 有漂移的编排数量：>0 时顶部给醒目汇总 */
 const driftCount = computed(() => stacks.value.filter((s) => s.drift).length)
 
+/**
+ * 未纳管项目名集合（优先用 external_stacks，缺字段时退回 orphans）。
+ *
+ * 两个字段来源相同（Agent 上有、Hub 里没有），但信息量不同：
+ * - external_stacks 带状态与服务数，可画表；
+ * - orphans 只有名字，只能列标签。
+ * 后端只要提供了 external_stacks 就用它，避免同一批项目出现两份。
+ */
+const unmanagedNames = computed<string[]>(() =>
+  externalStacks.value.length > 0
+    ? externalStacks.value.map((s) => s.name)
+    : orphans.value
+)
+
+/** 未纳管数量 */
+const unmanagedCount = computed(() => unmanagedNames.value.length)
+
+/**
+ * 已纳管数量：只算 Hub 里有记录的。
+ *
+ * 为什么分开统计：用户看到「编排数」时会把它当成「服务器上跑着的全部编排」，
+ * 而实际上 Arkade 只能管到纳管的那部分。混在一起报一个总数会误导——
+ * 用户会以为界面上列出了全部，然后对「为什么有的点不进去」感到困惑。
+ */
+const managedCount = computed(() => stacks.value.length)
+
 const subtitle = computed(() => {
   if (!loaded.value) return '正在加载编排…'
-  const total = stacks.value.length
   const running = stacks.value.filter((s) => s.status === 'running').length
   const driftText = driftCount.value > 0 ? `，${driftCount.value} 个存在配置漂移` : ''
-  const orphanText = orphans.value.length > 0 ? `，${orphans.value.length} 个未纳管` : ''
-  return `${displayName.value} · 共 ${total} 个编排，运行中 ${running} 个${driftText}${orphanText}`
+  // 未纳管单独加一句，且用「未纳管」而不是并入总数，让两个口径都清楚
+  const unmanagedText = unmanagedCount.value > 0 ? `，另有 ${unmanagedCount.value} 个未纳管` : ''
+  return `${displayName.value} · 已纳管 ${managedCount.value} 个（运行中 ${running} 个）${unmanagedText}${driftText}`
 })
+
+/**
+ * 未纳管项目表格列。
+ *
+ * 只有只读信息，**不放任何操作按钮**：
+ * 这些是用户自己在服务器上起的项目，Arkade 不该假装能编辑/启停它们
+ * （会读到不存在的接口，或者更糟——误伤线上服务）。
+ */
+const unmanagedColumns = computed<DataTableColumns<ExternalStack>>(() => [
+  {
+    title: '编排名',
+    key: 'name',
+    minWidth: 180,
+    render: (row) => h('span', { class: 'arkade-cell-mono' }, row.name)
+  },
+  {
+    title: '状态',
+    key: 'status',
+    width: 110,
+    render: (row) => h(StackStateTag, { state: row.status })
+  },
+  {
+    title: '服务数',
+    key: 'services',
+    width: 100,
+    render: (row) => (row.services > 0 ? String(row.services) : '—')
+  },
+  {
+    title: '容器数',
+    key: 'containers',
+    width: 110,
+    // 运行中/总数：只给总数看不出服务到底活没活
+    render: (row) =>
+      `${row.containers_running} / ${row.containers_total}`
+  }
+])
 
 /** 进入详情 */
 function goDetail(row: StackSummary): void {
@@ -185,6 +259,22 @@ const columns = computed<DataTableColumns<StackSummary>>(() => [
   }
 ])
 
+/**
+ * 状态自动刷新：每 10 秒静默拉一次编排列表。
+ *
+ * 比容器列表的 5 秒慢一倍，因为编排状态变化本就低频
+ * （启停整个编排是重操作，用户不会每秒都在做），没必要那么勤。
+ *
+ * 即使服务器离线也照样轮询：编排接口在离线时仍返回 200 且带 agent_online=false，
+ * 这个字段本身就是要被刷新的——用户可能正等着「服务器恢复在线」的信号。
+ */
+usePolling(() => refresh(true), {
+  name: 'stack-list',
+  interval: 10000,
+  // 首屏由 onMounted 的 refresh() 负责
+  immediate: false
+})
+
 onMounted(() => {
   void refresh()
 })
@@ -194,7 +284,7 @@ onMounted(() => {
   <div class="stack-page">
     <page-header title="容器编排" :subtitle="subtitle">
       <template #actions>
-        <n-button size="small" :disabled="!isOnline" :loading="loading" @click="refresh">
+        <n-button size="small" :disabled="!isOnline" :loading="loading" @click="refresh()">
           刷新
         </n-button>
         <n-button size="small" type="primary" @click="goCreate">新建编排</n-button>
@@ -220,32 +310,63 @@ onMounted(() => {
     </div>
 
     <!--
-      未纳管编排：Agent 本机有、Hub 数据库里没有。
-      这类编排无法通过本界面管理（界面数据来自 Hub），
-      不显示的话用户永远发现不了它们，所以单独列出来。
+      未纳管项目：Agent 扫描到、但 Hub 里没有登记。
+      这类项目无法通过本界面管理（界面数据来自 Hub），但**必须完整展示**：
+      用户反馈「编排列表是空的但设备上明明有很多编排」，真实原因就是
+      这些项目都在 Arkade 工作目录之外。只在顶部列几个标签、主表仍然空白，
+      用户会认为功能坏了。所以这里给它们一张真正的表。
     -->
-    <div v-if="orphans.length > 0" class="stack-page__alert">
-      <n-alert type="info" :bordered="false" title="存在未纳管的编排">
-        以下编排存在于服务器上，但未登记在 Hub 中，因此无法在此界面管理：
-        <div class="stack-page__orphans">
-          <n-tag
-            v-for="name in orphans"
-            :key="name"
-            size="small"
-            :bordered="false"
-            type="info"
-            class="stack-page__orphan-tag"
-          >
-            {{ name }}
-          </n-tag>
-        </div>
-        如需接管，请在服务器上确认其 compose.yml 后重新纳管。
-      </n-alert>
+    <div v-if="loaded && unmanagedCount > 0" class="stack-page__unmanaged">
+      <div class="stack-page__unmanaged-head">
+        <span class="stack-page__unmanaged-title">服务器已有编排（未纳管）</span>
+        <n-tag size="small" :bordered="false" type="info">{{ unmanagedCount }} 个</n-tag>
+      </div>
+
+      <!-- 说明为什么只读：不解释清楚，用户会一直找「为什么这些不能点」 -->
+      <p class="stack-page__unmanaged-desc">
+        这些是服务器上已存在、但未登记在 Arkade 中的 compose 项目，通常是你直接使用
+        <code>docker compose</code> 启动的。Arkade 只做展示，<strong>不会读取或修改它们的配置</strong>，
+        也不会对它们执行任何操作。
+      </p>
+
+      <!--
+        external_stacks 可用时画表（有状态/服务数/容器数，信息量大）；
+        只有旧的 orphans 名字列表时退化成标签云，不能因此什么都不显示。
+      -->
+      <div v-if="externalStacks.length > 0" class="arkade-table-scroll">
+        <n-data-table
+          :columns="unmanagedColumns"
+          :data="externalStacks"
+          :row-key="(row: ExternalStack) => row.name"
+          :bordered="false"
+          :single-line="false"
+          size="small"
+          :scroll-x="520"
+        />
+      </div>
+      <div v-else class="stack-page__orphans">
+        <n-tag
+          v-for="name in orphans"
+          :key="name"
+          size="small"
+          :bordered="false"
+          type="info"
+          class="stack-page__orphan-tag"
+        >
+          {{ name }}
+        </n-tag>
+      </div>
     </div>
 
     <div v-if="errorText !== ''" class="stack-page__alert stack-page__alert--row">
       <n-alert type="error" closable>{{ errorText }}</n-alert>
-      <n-button size="small" quaternary @click="refresh">重试</n-button>
+      <n-button size="small" quaternary @click="refresh()">重试</n-button>
+    </div>
+
+    <!-- 已纳管编排的标题：与未纳管表区分开，用户一眼看出哪些是能操作的 -->
+    <div v-if="loaded && unmanagedCount > 0 && stacks.length > 0" class="stack-page__section">
+      已纳管编排
+      <n-tag size="small" :bordered="false">{{ managedCount }} 个</n-tag>
     </div>
 
     <div class="table-card arkade-table-scroll">
@@ -260,6 +381,18 @@ onMounted(() => {
         size="medium"
         :scroll-x="900"
       />
+      <!--
+        空态分两种情况，否则会给出误导性的「还没有编排」：
+        服务器上明明有未纳管项目时，要说清「有，但不归 Arkade 管」。
+      -->
+      <empty-state
+        v-else-if="loaded && unmanagedCount > 0"
+        description="这台服务器上还没有被 Arkade 纳管的编排。上方列出的项目已存在于服务器，可以直接使用，但不受 Arkade 管理。"
+      >
+        <template #extra>
+          <n-button size="small" type="primary" @click="goCreate">新建编排</n-button>
+        </template>
+      </empty-state>
       <empty-state
         v-else-if="loaded"
         description="这台服务器上还没有容器编排。新建一个编排来批量管理多个容器。"
@@ -291,12 +424,61 @@ onMounted(() => {
   flex: 1;
 }
 
+/* 未纳管项目区块：视觉上与已纳管表格区分开，但不用告警色（不是错误） */
+.stack-page__unmanaged {
+  background: #f7f8fa;
+  border: 1px solid var(--arkade-border-color);
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin-bottom: 20px;
+  min-width: 0;
+}
+
+.stack-page__unmanaged-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.stack-page__unmanaged-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--arkade-text-primary);
+}
+
+.stack-page__unmanaged-desc {
+  margin: 0 0 12px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--arkade-text-tertiary);
+}
+
+/* 行内代码样式：项目名/命令用等宽字体，便于和技术术语区分 */
+.stack-page__unmanaged-desc code {
+  padding: 1px 4px;
+  font-family: var(--arkade-mono-font);
+  font-size: 11px;
+  background: #eceef1;
+  border-radius: 3px;
+}
+
+/* 已纳管区块标题：与未纳管表并列时出现，明确「这些才是能操作的」 */
+.stack-page__section {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--arkade-text-primary);
+}
+
 /* 未纳管编排的名字标签：换行排列，长名字不会撑破卡片 */
 .stack-page__orphans {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin: 8px 0;
 }
 
 .stack-page__orphan-tag {

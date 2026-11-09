@@ -25,6 +25,41 @@ type AgentRecord struct {
 	Labels         map[string]string
 	CreatedAt      int64
 	UpdatedAt      int64
+
+	// DisplayName 是用户可编辑的显示名，空串表示"未设置"。
+	//
+	// 与 Name 分开的原因见迁移版本 4 的注释：Name 是 Agent 自报的主机名，
+	// 每次重连都会被覆盖；DisplayName 是人起的名字，必须由用户独占修改权。
+	DisplayName string
+	// Note 是自由备注，给人读，不参与任何筛选或权限判断。
+	Note string
+	// Disabled 为真时，该 Agent 的握手请求会被拒绝。
+	Disabled bool
+}
+
+// 列清单常量：集中在一处，避免 List 与 Get 两处的列顺序不一致
+// 导致 Scan 参数错位（这类 bug 编译期发现不了，只在运行时把字段串到一起）。
+const agentColumns = `id, name, status, version, runtime, runtime_version, last_seen, labels,
+	created_at, updated_at, display_name, note, disabled`
+
+// scanAgent 把一行扫描进 AgentRecord。
+//
+// 抽出来是为了让 ListAgents 与 GetAgent 共用同一份列顺序，
+// 将来加字段只需改这一处。
+func scanAgent(sc interface {
+	Scan(dest ...any) error
+}) (AgentRecord, error) {
+	var rec AgentRecord
+	var labelsRaw string
+	var disabled int
+	if err := sc.Scan(&rec.ID, &rec.Name, &rec.Status, &rec.Version, &rec.Runtime,
+		&rec.RuntimeVersion, &rec.LastSeen, &labelsRaw, &rec.CreatedAt, &rec.UpdatedAt,
+		&rec.DisplayName, &rec.Note, &disabled); err != nil {
+		return AgentRecord{}, err
+	}
+	rec.Labels = parseLabels(labelsRaw)
+	rec.Disabled = disabled != 0
+	return rec, nil
 }
 
 // UpsertAgent 写入或更新 Agent 记录（握手与心跳时调用）。
@@ -74,8 +109,7 @@ func (d *DB) UpsertAgent(ctx context.Context, rec AgentRecord) error {
 // ListAgents 返回全部 Agent，按创建时间升序，保证界面顺序稳定。
 func (d *DB) ListAgents(ctx context.Context) ([]AgentRecord, error) {
 	rows, err := d.db.QueryContext(ctx,
-		`SELECT id, name, status, version, runtime, runtime_version, last_seen, labels, created_at, updated_at
-		 FROM agents ORDER BY created_at ASC, id ASC`)
+		`SELECT `+agentColumns+` FROM agents ORDER BY created_at ASC, id ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("查询 Agent 列表失败: %w", err)
 	}
@@ -83,13 +117,10 @@ func (d *DB) ListAgents(ctx context.Context) ([]AgentRecord, error) {
 
 	var out []AgentRecord
 	for rows.Next() {
-		var rec AgentRecord
-		var labelsRaw string
-		if err := rows.Scan(&rec.ID, &rec.Name, &rec.Status, &rec.Version, &rec.Runtime,
-			&rec.RuntimeVersion, &rec.LastSeen, &labelsRaw, &rec.CreatedAt, &rec.UpdatedAt); err != nil {
+		rec, err := scanAgent(rows)
+		if err != nil {
 			return nil, fmt.Errorf("扫描 Agent 记录失败: %w", err)
 		}
-		rec.Labels = parseLabels(labelsRaw)
 		out = append(out, rec)
 	}
 	return out, rows.Err()
@@ -97,20 +128,15 @@ func (d *DB) ListAgents(ctx context.Context) ([]AgentRecord, error) {
 
 // GetAgent 按 ID 查单个 Agent。
 func (d *DB) GetAgent(ctx context.Context, id string) (AgentRecord, error) {
-	var rec AgentRecord
-	var labelsRaw string
-	err := d.db.QueryRowContext(ctx,
-		`SELECT id, name, status, version, runtime, runtime_version, last_seen, labels, created_at, updated_at
-		 FROM agents WHERE id = ?`, id,
-	).Scan(&rec.ID, &rec.Name, &rec.Status, &rec.Version, &rec.Runtime,
-		&rec.RuntimeVersion, &rec.LastSeen, &labelsRaw, &rec.CreatedAt, &rec.UpdatedAt)
+	row := d.db.QueryRowContext(ctx,
+		`SELECT `+agentColumns+` FROM agents WHERE id = ?`, id)
+	rec, err := scanAgent(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return AgentRecord{}, ErrNotFound
 	}
 	if err != nil {
 		return AgentRecord{}, fmt.Errorf("查询 Agent 失败: %w", err)
 	}
-	rec.Labels = parseLabels(labelsRaw)
 	return rec, nil
 }
 

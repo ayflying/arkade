@@ -51,6 +51,12 @@ func Open(ctx context.Context, path string) (*DB, error) {
 // 避免各 service 各自持有 *sql.DB 导致事务边界散乱、连接管理失控。
 type DB struct {
 	db *sql.DB
+
+	// 审计过期清理的节流状态。
+	//
+	// 内嵌成结构体（而不是两个裸字段）是为了让"这两个值必须一起被锁保护"
+	// 在类型上就成立，后来人不容易只改一半。详见 audit.go 的注释。
+	auditPrune auditPruneState
 }
 
 // Close 关闭连接池。

@@ -46,6 +46,14 @@ func toEnvelopeError(err error) *envelope.Error {
 		return envelope.WrapError(envelope.CodeBadRequest, stripSentinel(err, errBadRequest), err)
 	case errors.Is(err, runtime.ErrUnsupported):
 		return envelope.WrapError(envelope.CodeUnsupported, err.Error(), err)
+	case errors.Is(err, runtime.ErrContainerConflict):
+		// 状态冲突（最常见：删除运行中的容器）映射成 conflict → Hub 返 409。
+		//
+		// 不能落到下面的 runtime_failed（→ 503）：503 的语义是"依赖暂时不可用，
+		// 稍后重试可能成功"，但原样重试永远不会成功——必须先停止容器或改成强制删除。
+		// 给错码会让前端把这类错误提示成"请稍后重试"，用户点多少次都没用。
+		// 这里保留完整文案：它已经写明了该怎么改（先停止 / 勾选强制删除）。
+		return envelope.WrapError(envelope.CodeConflict, err.Error(), err)
 	case errors.Is(err, errErrComposeFailed):
 		// 编排命令失败：责任在"被管理的机器"上（端口冲突、镜像拉不到、
 		// YAML 写错），映射成 runtime_failed 而不是 internal，

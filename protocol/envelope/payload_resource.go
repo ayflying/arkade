@@ -83,9 +83,6 @@ type VolumeRemovePayload struct {
 // ---------------------------------------------------------------- 容器编排
 
 // ComposeProjectSummary 是编排项目摘要。
-//
-// 一个编排项目在 Docker 侧的具体体现是：一组带 com.docker.compose.project
-// 标签的容器 + 网络 + 卷。Agent 通过 compose 命令行获取权威状态。
 type ComposeProjectSummary struct {
 	// Name 是编排项目名，同时是 Agent 本机目录名，必须符合 [a-z0-9_-]+。
 	Name string `json:"name"`
@@ -96,6 +93,8 @@ type ComposeProjectSummary struct {
 	// 它是双向同步的判定依据：Hub 记录自己下发的哈希，Agent 上报本机哈希，
 	// 两者不一致即说明有偏离（本地手改过、或同步没成功），界面要显式告警，
 	// 而不是静默用某一端覆盖另一端。
+	//
+	// **外部项目此字段恒为空串**，理由见 Managed 的说明。
 	ConfigHash string `json:"config_hash"`
 	// Services 是服务名列表（来自 compose 配置）。
 	Services []string `json:"services"`
@@ -104,12 +103,37 @@ type ComposeProjectSummary struct {
 	// Total 是服务总数。
 	Total int `json:"total"`
 	// UpdatedAt 是 compose.yml 在本机的最后修改时间（Unix 秒）。
+	// 外部项目为 0（不知道，且不该去猜）。
 	UpdatedAt int64 `json:"updated_at"`
+	// Managed 表示这个项目是否由 Arkade 管理（工作区里有目录、配置由 Hub 下发）。
+	//
+	// **false 的含义是"机器上已有、但 Arkade 不拥有它"**，例如运维直接
+	// 用 docker compose 起的生产项目。这类项目只能看，不能改：
+	// Editable 为 false、ConfigHash 为空、没有目录可写。
+	//
+	// 用显式布尔而不是靠"ConfigHash 是否为空"隐式判断：
+	// 隐式判断会把"新项目还没算过哈希"误判成外部项目，
+	// 前端据此隐藏编辑入口——那是一个很难排查的"按钮不见了"故障。
+	Managed bool `json:"managed"`
 }
 
 // ComposeListResult 是编排列表应答。
 type ComposeListResult struct {
+	// Projects 是 Arkade 工作区里的项目（可管理）。
+	//
+	// 保留这个字段名与含义是为了向后兼容：Hub 现有代码与测试都按
+	// "工作区项目"理解它。外部项目放在 External 里而不是混进来，
+	// 是因为两者可做的操作完全不同，混在一个列表里迟早会被误操作。
 	Projects []ComposeProjectSummary `json:"projects"`
+	// External 是机器上已有、但 Arkade 未纳管的编排项目。
+	//
+	// 来源只有 Docker 容器标签（com.docker.compose.project/service），
+	// **不读取任何外部配置文件、不执行任何外部 up/down**。
+	// 这些项目不属于 Arkade，不得自动导入、不得改动。
+	//
+	// 新增字段而非复用 Projects：旧版 Hub 不认识它会被忽略（json 反序列化
+	// 忽略未知字段），因此这是向后兼容的增量变化。
+	External []ComposeProjectSummary `json:"external"`
 }
 
 // ComposeSpecPayload 承载一份编排文件内容。

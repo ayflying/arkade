@@ -23,6 +23,12 @@ export type IconName =
   | 'refresh' // 刷新
   | 'trash' // 删除
   | 'warning' // 警告（drift 告警）
+  | 'overview' // 概览（仪表盘）
+  | 'audit' // 审计日志（带勾选的清单）
+  | 'plus' // 新增/添加说明入口
+  | 'edit' // 编辑
+  | 'ban' // 禁用
+  | 'check' // 启用/成功
 
 /** 全部图标名的运行时列表，便于测试或调试时校验完整性 */
 export const ICON_NAMES: readonly IconName[] = [
@@ -40,5 +46,11 @@ export const ICON_NAMES: readonly IconName[] = [
   'chevron-left',
   'refresh',
   'trash',
-  'warning'
+  'warning',
+  'overview',
+  'audit',
+  'plus',
+  'edit',
+  'ban',
+  'check'
 ]

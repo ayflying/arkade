@@ -127,7 +127,9 @@ func prepareLocal(args []string, stderr io.Writer, extraFlag func(*flag.FlagSet)
 	}
 
 	reg := handler.NewRegistry()
-	handler.RegisterDefaults(reg, rt, buildComposeManager(cfg, rt))
+	// 本地一次性命令（container ls 之类）不需要服务日志，
+	// 传 nil 由 RegisterDefaults 用静默日志器兜底。
+	handler.RegisterDefaults(reg, rt, buildComposeManager(cfg, rt), nil)
 	return &localSetup{rt: rt, registry: reg, cfg: cfg}, pa, exitOK, true
 }
 

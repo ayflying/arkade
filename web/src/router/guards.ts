@@ -1,5 +1,5 @@
 import { useAuthStore } from '@/stores/auth'
-import { LOGIN_PATH, router } from './index'
+import { HOME_PATH, LOGIN_PATH, router } from './index'
 
 /**
  * 全局路由守卫：登录态判定
@@ -21,8 +21,8 @@ router.beforeEach(async (to) => {
   const isPublic = to.meta.public === true
 
   if (isPublic) {
-    // 已登录还去登录页，直接送到业务首页
-    return auth.isLoggedIn ? { path: '/agents' } : true
+    // 已登录还去登录页，直接送到业务首页（概览，不再是服务器列表）
+    return auth.isLoggedIn ? { path: HOME_PATH } : true
   }
 
   if (!auth.isLoggedIn) {

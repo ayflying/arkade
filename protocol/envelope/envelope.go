@@ -92,7 +92,16 @@ const (
 	CodeUnsupported   = "unsupported"    // 目标运行时或版本不支持该操作
 	CodeTimeout       = "timeout"        // 超时（等待 Agent 响应超时）
 	CodeRuntimeFailed = "runtime_failed" // 运行时执行失败，Message 带原因
-	CodeInternal      = "internal"       // 服务端内部错误
+	// CodeConflict 表示目标当前状态不允许该操作，例如删除运行中的容器、
+	// 用户名重复、编排版本不匹配。
+	//
+	// 与 CodeRuntimeFailed 的区别必须分清：
+	//   runtime_failed 是「依赖坏了，稍后重试可能成功」，Hub 映射成 503；
+	//   conflict 是「请求与当前状态冲突，原样重试永远失败」，Hub 映射成 409。
+	// 前端对两者的引导完全不同——后者要提示用户改条件（先停止容器），
+	// 前者才是提示稍后重试。混用一个码，前端只能显示含糊的"操作失败"。
+	CodeConflict = "conflict"
+	CodeInternal = "internal" // 服务端内部错误
 )
 
 // NewRequest 构造一个请求信封。ID 由调用方传入，方便调用处复用同一 ID 做超时清理。

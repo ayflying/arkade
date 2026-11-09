@@ -67,14 +67,33 @@ func NewRouter(d Deps) http.Handler {
 		// 之后所有接口都必须已登录。
 		api.Group(func(priv chi.Router) {
 			priv.Use(authenticator(d.Auth))
+			// 审计必须挂在认证之后：auditMiddleware 要从 context 取当前用户，
+			// 挂前面就只能记到空用户名。同时它只记 POST/PUT/PATCH/DELETE，
+			// GET 会被直接放行（见 middleware_audit.go）。
+			priv.Use(auditMiddleware(d.DB, d.Log))
 
 			priv.Post("/auth/logout", handleLogout(d))
 			priv.Get("/auth/me", handleMe(d))
 
 			priv.Get("/agents", handleListAgents(d))
+			// 操作审计：admin 看全部，非 admin 只看自己的（权限在 handler 内收紧）。
+			priv.Get("/audit", handleListAudit(d))
+			priv.Get("/audit/actions", handleListAuditActions(d))
+			// 服务器记录的管理：改名/备注/禁用/删除。
+			// 全部要求 admin（在 handler 里用 requireAdmin 判断），
+			// 因为它们改的是纳管关系本身，会影响到所有用户组。
+			priv.Patch("/agents/{agentID}", handlePatchAgent(d))
+			priv.Delete("/agents/{agentID}", handleDeleteAgent(d))
+			priv.Post("/agents/{agentID}/disable", handleDisableAgent(d))
+			priv.Post("/agents/{agentID}/enable", handleEnableAgent(d))
+
 			priv.Get("/agents/{agentID}/containers", handleListContainers(d))
 			priv.Post("/agents/{agentID}/containers/{containerID}/start", handleContainerStart(d))
 			priv.Post("/agents/{agentID}/containers/{containerID}/stop", handleContainerStop(d))
+			// 重启与启停同级（operate）：不销毁对象、不改纳管关系。
+			priv.Post("/agents/{agentID}/containers/{containerID}/restart", handleContainerRestart(d))
+			// 删除是唯一不可逆的容器操作，权限提到 manage。
+			priv.Delete("/agents/{agentID}/containers/{containerID}", handleContainerRemove(d))
 			priv.Get("/agents/{agentID}/containers/{containerID}/logs", handleContainerLogs(d))
 
 			// 容器编排（docker compose）。

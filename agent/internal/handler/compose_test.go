@@ -24,7 +24,7 @@ func newComposeRegistry(t *testing.T) (*Registry, *compose.Manager) {
 	t.Helper()
 	mgr := compose.NewManager(t.TempDir(), "")
 	reg := NewRegistry()
-	RegisterDefaults(reg, &fakeRuntime{}, mgr)
+	RegisterDefaults(reg, &fakeRuntime{}, mgr, nil)
 	return reg, mgr
 }
 
@@ -50,7 +50,7 @@ func TestComposeMethodsRegistered(t *testing.T) {
 // 比收到"写文件失败"清楚得多。
 func TestComposeNilManagerSkipsRegistration(t *testing.T) {
 	reg := NewRegistry()
-	RegisterDefaults(reg, &fakeRuntime{}, nil)
+	RegisterDefaults(reg, &fakeRuntime{}, nil, nil)
 	if reg.Has(envelope.MethodComposeUp) {
 		t.Error("没有 Manager 时不应注册编排方法")
 	}

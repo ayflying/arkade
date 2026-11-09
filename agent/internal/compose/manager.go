@@ -19,6 +19,18 @@ import (
 type Manager struct {
 	ws     *Workspace
 	runner *Runner
+	// labelSource 用于在 Apply 前探测"这个名字是否已被外部项目占用"。
+	// 为 nil 表示不做该检查（仅测试场景），生产路径一定注入。
+	labelSource containerLabelSource
+}
+
+// SetLabelSource 注入引擎标签探测源。
+//
+// 为什么用 setter 而不是构造参数：Manager 在 cli 包里构造时引擎还没就绪
+// （引擎探测本身可能失败，而编排能力要独立于它），
+// 用 setter 可以让两者解耦，也避免改动 NewManager 的既有调用点。
+func (m *Manager) SetLabelSource(src containerLabelSource) {
+	m.labelSource = src
 }
 
 // NewManager 构造。dockerHost 会显式传给 compose 子进程（见 runner.go 的说明）。
@@ -43,6 +55,32 @@ func (m *Manager) Apply(ctx context.Context, name, content, expectHash string) (
 	if err != nil {
 		return Result{}, err
 	}
+
+	// **安全闸门：不许按同名接管外部项目。**
+	//
+	// 这是最后一道防线，也是本任务里最危险的一处。
+	//
+	// 攻击/误操作路径：外部生产项目（例如 act-runner）已在引擎里跑着，
+	// 但 Arkade 工作区里没有它的目录。此时用户在界面上新建一个同名编排，
+	// 内容随便写——`docker compose up -d` 会按项目名匹配到**已有的那些容器**，
+	// 用新配置重建它们。也就是说：只要名字撞上，一次"新建"就能
+	// 悄悄改掉一台机器上的生产负载，而界面上看起来只是"创建了一个新编排"。
+	//
+	// 仅靠列表只读是不够的：列表只读拦不住用户手工输入相同名字。
+	// 因此判定必须落在真正执行 up 的这一层。
+	//
+	// 判定逻辑：工作区里没有这个项目（目录/文件不存在），但引擎里已有
+	// 同名项目的容器 → 说明它与外部项目同名 → 拒绝。
+	//
+	// 为什么不用"引擎里有没有"单独判断：工作区里正常存在的项目在引擎里
+	// 当然也有容器，那样会把自己管理的项目也拦掉。必须两个条件同时成立。
+	if !m.ws.Exists(n) && m.engineHasProject(ctx, n) {
+		return Result{}, fmt.Errorf(
+			"机器上已存在同名的 compose 项目 %q，但它不是由 Arkade 创建的；"+
+				"为避免改动该项目的现有容器，本次操作已拒绝。"+
+				"请换一个编排名称，或先通过导入流程纳管（当前版本暂不支持导入）", n)
+	}
+
 	localHash := Hash(content)
 	if expectHash != "" && expectHash != localHash {
 		// 关键：仍然写盘。不写的话这条"哈希不符"的错误就无从排查，
@@ -62,6 +100,32 @@ func (m *Manager) Apply(ctx context.Context, name, content, expectHash string) (
 		return Result{}, err
 	}
 	return m.run(ctx, n, TimeoutLong, "up", "-d", "--remove-orphans"), nil
+}
+
+// engineHasProject 判断引擎里是否已有该名字的 compose 项目容器。
+//
+// 探测失败时**返回 true**（保守拒绝）：
+// 我们无法确认这个名字是否安全，而在"可能改动生产负载"和
+// "拒绝一次新建"之间，后者显然是更轻的代价。
+// 用户会看到明确错误，可以重试；而生产容器被重建是不可逆的。
+func (m *Manager) engineHasProject(ctx context.Context, name string) bool {
+	if m.labelSource == nil {
+		// 没有注入探测源（例如单元测试里的裸 Manager）。
+		// 返回 false 以保持既有行为，避免让所有测试都要构造引擎。
+		// 生产路径由 buildComposeManager 注入。
+		return false
+	}
+	found, err := DiscoverExternal(ctx, m.labelSource)
+	if err != nil {
+		// 探测不了就不敢放行。
+		return true
+	}
+	for _, p := range found {
+		if p.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // Down 停止并移除容器（保留数据卷，除非 removeVolumes）。

@@ -45,8 +45,17 @@ export const AGENT_OPERATION_ITEMS: MenuItemDef[] = [
   { routeName: 'agent-volumes', label: '存储卷', icon: 'volume' }
 ]
 
-/** 顶部固定入口：服务器列表 */
-const SERVER_ENTRY: MenuItemDef = { routeName: 'agents', label: '服务器', icon: 'server' }
+/**
+ * 顶部固定入口：全局导航（与「是否选中服务器」无关）。
+ *
+ * 顺序即展示顺序：概览 → 服务器 → 审计。
+ * 概览排在最前，因为它是登录后的首页，用户最常从那里开始。
+ */
+const GLOBAL_ENTRIES: MenuItemDef[] = [
+  { routeName: 'overview', label: '概览', icon: 'overview' },
+  { routeName: 'agents', label: '服务器', icon: 'server' },
+  { routeName: 'audit', label: '操作审计', icon: 'audit' }
+]
 
 /** 菜单分组：分组标题为空字符串时不渲染标题行 */
 export interface MenuGroupDef {
@@ -96,7 +105,7 @@ export function buildMenuOptions(agentId: string | null): MenuOption[] {
       type: 'group',
       key: 'entry',
       label: '',
-      children: [toMenuOption(SERVER_ENTRY)]
+      children: GLOBAL_ENTRIES.map((item) => toMenuOption(item))
     } as MenuOption
   ]
 
@@ -124,7 +133,9 @@ export function buildMenuOptions(agentId: string | null): MenuOption[] {
  *   否则进入详情后左侧「容器编排」不高亮，用户会迷失位置。
  */
 const ROUTE_TO_MENU_KEY: Record<string, string> = {
+  overview: 'overview',
   agents: 'agents',
+  audit: 'audit',
   'agent-containers': 'agent-containers',
   'agent-stacks': 'agent-stacks',
   // 编排详情/新建属于「容器编排」这一菜单项的下级页面
@@ -141,7 +152,17 @@ export function resolveActiveMenuKey(routeName: string | symbol | null | undefin
   return ROUTE_TO_MENU_KEY[routeName] ?? null
 }
 
-/** 所有可点击菜单项的 routeName 集合：SiteMenu 用它判断 key 是否可直接跳转 */
+/**
+ * 所有可点击菜单项的 routeName 集合：SiteMenu 用它判断 key 是否可直接跳转。
+ *
+ * 注意这里必须包含 GLOBAL_ENTRIES 的每一项：漏掉会导致对应菜单点了没反应。
+ */
 export function isMenuRouteName(key: string): boolean {
-  return key === SERVER_ENTRY.routeName || AGENT_OPERATION_ITEMS.some((item) => item.routeName === key)
+  const globalKeys = GLOBAL_ENTRIES.map((item) => item.routeName)
+  return globalKeys.includes(key) || AGENT_OPERATION_ITEMS.some((item) => item.routeName === key)
+}
+
+/** 全局入口（不依赖选中服务器）的 routeName 集合：SiteMenu 据此决定跳转是否带 :id */
+export function isGlobalMenuKey(key: string): boolean {
+  return GLOBAL_ENTRIES.some((item) => item.routeName === key)
 }

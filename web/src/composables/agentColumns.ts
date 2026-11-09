@@ -6,7 +6,7 @@
  *
  * 离线行的处理（需求硬性要求）：
  * - 整行置灰：通过 rowProps 加 class，父页面用 :deep(.row--offline) 降透明度；
- * - 操作按钮 disabled + tooltip 说明原因：见 render 里的 AgentRowActions 组件。
+ * - 操作按钮的可用性由 AgentRowActions 自己判断并给出 tooltip 说明。
  */
 
 import { h } from 'vue'
@@ -16,14 +16,23 @@ import AgentLabelList from '@/components/agent/AgentLabelList.vue'
 import RelativeTime from '@/components/common/RelativeTime.vue'
 import AgentRowActions from '@/components/agent/AgentRowActions.vue'
 import type { Agent } from '@/types/agent'
+import { agentDisplayName, isAgentDisabled } from '@/utils/agentDisplay'
 import { mapAgentStatus, mapRuntime } from '@/utils/statusMap'
 
 /** 离线行的 class 名，父组件样式与测试都依赖这个常量 */
 export const OFFLINE_ROW_CLASS = 'agent-row--offline'
 
-/** 列的渲染函数需要两个回调：进入容器页、当前行是否正被操作 */
+/**
+ * 列定义的处理器集合。
+ *
+ * 全部是回调而非直接调接口：页面负责二次确认与请求编排，
+ * 列定义保持纯函数，便于测试与复用。
+ */
 export interface AgentColumnHandlers {
   onEnter: (agent: Agent) => void
+  onEdit: (agent: Agent) => void
+  onToggleDisabled: (agent: Agent) => void
+  onDelete: (agent: Agent) => void
   isBusy: (agentId: string) => boolean
 }
 
@@ -39,29 +48,30 @@ export function createAgentColumns(handlers: AgentColumnHandlers): DataTableColu
       title: '名称',
       key: 'name',
       minWidth: 180,
-      ellipsis: { tooltip: true },
-      // 名称列做成可点击入口，同时整行也支持点击进入
-      render: (row) =>
-        h(
+      render: (row) => {
+        // 展示名优先：用户设置了 display_name 时显示它，原始名放进 tooltip
+        const label = agentDisplayName(row)
+        const showOriginal = (row.display_name ?? '').trim() !== '' && row.name !== ''
+        return h(
           'a',
           {
             class: 'agent-name-link',
+            title: showOriginal ? `原始名称：${row.name}` : row.id,
             onClick: (e: MouseEvent) => {
               // 阻止冒泡，避免触发行点击重复跳转
               e.stopPropagation()
-              if (row.status === 'online' || row.status === 'upgrading' || row.status === 'offline') {
-                handlers.onEnter(row)
-              }
+              handlers.onEnter(row)
             }
           },
-          row.name || row.id
+          label
         )
+      }
     },
     {
       title: '状态',
       key: 'status',
       width: 110,
-      render: (row) => h(AgentStatusTag, { status: row.status })
+      render: (row) => h(AgentStatusTag, { status: row.status, disabled: isAgentDisabled(row) })
     },
     {
       title: '引擎',
@@ -72,7 +82,9 @@ export function createAgentColumns(handlers: AgentColumnHandlers): DataTableColu
         // 引擎版本为空时不显示多余的括号
         return h('span', { class: 'runtime-cell' }, [
           h('span', runtime),
-          row.runtime_version ? h('span', { class: 'runtime-cell__version' }, ` ${row.runtime_version}`) : null
+          row.runtime_version
+            ? h('span', { class: 'runtime-cell__version' }, ` ${row.runtime_version}`)
+            : null
         ])
       }
     },
@@ -91,19 +103,30 @@ export function createAgentColumns(handlers: AgentColumnHandlers): DataTableColu
     {
       title: '标签',
       key: 'labels',
-      minWidth: 200,
+      minWidth: 180,
       render: (row) => h(AgentLabelList, { labels: row.labels ?? {}, max: 3 })
+    },
+    {
+      title: '备注',
+      key: 'note',
+      minWidth: 160,
+      ellipsis: { tooltip: true },
+      render: (row) => row.note || '—'
     },
     {
       title: '操作',
       key: 'actions',
-      width: 120,
-      align: 'right',
+      // 四个按钮横排，给足宽度；窄屏靠 scroll-x 横向滚动兜底
+      width: 220,
+      fixed: 'right',
       render: (row) =>
         h(AgentRowActions, {
           agent: row,
           busy: handlers.isBusy(row.id),
-          onEnter: () => handlers.onEnter(row)
+          onEnter: () => handlers.onEnter(row),
+          onEdit: () => handlers.onEdit(row),
+          'onToggle-disabled': () => handlers.onToggleDisabled(row),
+          onDelete: () => handlers.onDelete(row)
         })
     }
   ]
@@ -111,8 +134,7 @@ export function createAgentColumns(handlers: AgentColumnHandlers): DataTableColu
 
 /**
  * 行属性：离线/未知状态的行加上置灰 class。
- * 置灰是视觉弱化，真正的拦截在 AgentRowActions 里（disabled + tooltip），
- * 两者缺一不可：只置灰不拦截仍可能误点，只拦截不置灰用户不明白为什么点不动。
+ * 置灰是视觉弱化，真正的拦截在 AgentRowActions 里（disabled + tooltip）。
  */
 export function agentRowProps(row: Agent): Record<string, unknown> {
   const style = mapAgentStatus(row.status)

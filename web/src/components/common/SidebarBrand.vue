@@ -22,7 +22,7 @@ const emit = defineEmits<{
 
 <template>
   <div class="brand" :class="{ 'brand--collapsed': collapsed }">
-    <router-link to="/agents" class="brand__link" @click="emit('navigate')">
+    <router-link to="/overview" class="brand__link" @click="emit('navigate')">
       <img src="/favicon.svg" alt="Arkade 图标" class="brand__logo" />
       <!-- 折叠时用 v-show 而非 v-if：保留 DOM 让宽度过渡更平滑，且避免频繁创建销毁 -->
       <span v-show="!collapsed" class="brand__title">Arkade</span>

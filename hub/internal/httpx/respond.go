@@ -81,7 +81,12 @@ func statusForCode(code string) int {
 		return http.StatusNotFound
 	case envelope.CodeBadRequest:
 		return http.StatusBadRequest
-	case codeConflict:
+	// conflict 有两层来源，但语义一致，故合并成一条：
+	//   - Hub 自己的业务语义（用户名/组名重名，见 codeConflict 常量）；
+	//   - 协议层的 "目标状态不允许该操作"（envelope.CodeConflict）。
+	// 两者都是「原样重试永远失败，必须提示用户改条件」，映射 409 正确。
+	// 协议层提供同名常量后这里只需列一次，重复 case 在 Go 里是编译错误。
+	case envelope.CodeConflict:
 		return http.StatusConflict
 	case envelope.CodeAgentOffline, envelope.CodeTimeout, envelope.CodeAgentBusy, envelope.CodeRuntimeFailed:
 		return http.StatusServiceUnavailable

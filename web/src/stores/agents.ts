@@ -50,5 +50,22 @@ export const useAgentsStore = defineStore('agents', () => {
     return agents.value.find((a) => a.id === id)
   }
 
-  return { agents, loading, errorText, loaded, onlineCount, refresh, findById }
+  /**
+   * 用后端返回的完整对象就地替换某台服务器。
+   *
+   * 用途：PATCH / disable / enable 都已返回更新后的完整 Agent，
+   * 直接替换本地这一行即可，不必再拉一次整表——
+   * 少一次请求，也避免「刚操作完列表闪一下重新加载」的观感。
+   *
+   * @returns 是否真的替换到了。false 表示本地没有这一行
+   *          （例如刚在别处新增），调用方应改用 refresh() 拉全量兜底。
+   */
+  function replace(updated: Agent): boolean {
+    const index = agents.value.findIndex((a) => a.id === updated.id)
+    if (index < 0) return false
+    agents.value[index] = updated
+    return true
+  }
+
+  return { agents, loading, errorText, loaded, onlineCount, refresh, findById, replace }
 })

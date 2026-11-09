@@ -46,11 +46,22 @@ const OPERATION_LABELS: Record<string, string> = {
   'agent-volumes': '存储卷'
 }
 
+/** 顶层页面（不依赖选中服务器）的路由名 → 面包屑文案 */
+const TOP_LEVEL_LABELS: Record<string, string> = {
+  overview: '概览',
+  agents: '服务器',
+  audit: '操作审计'
+}
+
 /** 完整层级：由路由 name 推导，与路由表保持同步 */
 const allItems = computed<CrumbItem[]>(() => {
+  const routeName = typeof route.name === 'string' ? route.name : ''
+
   if (agentId.value === null) {
-    // 未选中服务器：只有服务器列表一级
-    return [{ label: '服务器' }]
+    // 未选中服务器：只显示当前顶层页面的名字。
+    // 不能一律写「服务器」——概览页和审计页会被误标成「服务器」，用户找不到自己在哪
+    const topLabel = TOP_LEVEL_LABELS[routeName] ?? '概览'
+    return [{ label: topLabel }]
   }
 
   const items: CrumbItem[] = [
@@ -59,7 +70,6 @@ const allItems = computed<CrumbItem[]>(() => {
     { label: displayName.value, to: `/agents/${encodeURIComponent(agentId.value)}/containers` }
   ]
 
-  const routeName = typeof route.name === 'string' ? route.name : ''
   const operationLabel = OPERATION_LABELS[routeName]
   if (operationLabel !== undefined) {
     items.push({ label: operationLabel })

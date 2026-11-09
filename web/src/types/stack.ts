@@ -54,18 +54,49 @@ export interface StackSummary {
 }
 
 /**
+ * 服务器上已存在、但未被 Arkade 纳管的 compose 项目。
+ *
+ * 来源：Agent 扫描引擎标签发现的外部项目（如用户直接用 docker compose 起的）。
+ * Arkade **只读不写**：不读取其 compose 内容、不覆盖、不执行任何动作、不自动纳管。
+ *
+ * 为什么必须单独成表而不是只在顶部放几个标签：
+ * 用户反馈「编排列表是空的但设备上明明有很多编排」——真实原因就是这些项目
+ * 都在 Arkade 工作目录之外。只在顶部列个名字，主表仍然是空的，
+ * 用户会认为功能坏了。必须让它们在页面上**可见地存在**，并说明为什么不能操作。
+ */
+export type ExternalStack = {
+  /** 项目名（compose project name） */
+  name: string
+  /** 项目状态；后端可能给 running/exited/partial 等，未知值按原样展示 */
+  status: string
+  /** compose 中声明的服务数；后端给不出时可为 0 */
+  services: number
+  /** 实际运行中的容器数 */
+  containers_running: number
+  /** 该项目下的容器总数 */
+  containers_total: number
+}
+
+/**
  * 编排列表响应。
  *
  * `orphans` 是「Agent 上有、Hub 数据库里没有」的编排名：
  * 这类编排无法通过本界面管理（界面数据来自 Hub），
  * 但**必须显示出来**，否则用户永远发现不了它们的存在。
+ *
+ * 注意与 `external_stacks` 的区别——两者都是「未纳管」，但信息量不同：
+ * - `orphans` 只有名字（string[]），兼容旧后端，只说得出「有这个项目」；
+ * - `external_stacks` 带状态与服务/容器数，能画成一张有信息量的表。
+ * 后端提供 `external_stacks` 时优先用它渲染；只有 `orphans` 时退化成名字列表。
  */
 export interface StackListResponse {
   stacks: StackSummary[]
   /** Agent 是否在线；离线时列表仍返回 200，各条 status 为 'offline' */
   agent_online: boolean
-  /** 存在于 Agent 本机但未被 Hub 纳管的编排名 */
+  /** 存在于 Agent 本机但未被 Hub 纳管的编排名（旧字段，兼容保留） */
   orphans?: string[]
+  /** 未被纳管的 compose 项目详情（新字段，可能暂缺） */
+  external_stacks?: ExternalStack[]
 }
 
 /** GET /api/agents/{id}/stacks/{name} 响应：编排详情 */

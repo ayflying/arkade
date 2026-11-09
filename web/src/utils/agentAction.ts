@@ -47,3 +47,25 @@ export function canStopContainer(state: string): boolean {
 export function canStartContainer(state: string): boolean {
   return state === 'exited' || state === 'stopped' || state === 'created'
 }
+
+/**
+ * 是否可重启容器。
+ *
+ * 范围比启停宽：**只要状态是明确的（非空、非 unknown）就允许重启**。
+ * 原因：重启最常见的用途正是修「容器卡住/状态诡异」，
+ * 如果只在 running 时才给点，恰恰在最需要它的时候点不了。
+ * 过渡态（restarting/paused）也不拦——用户再点一次重启是合理的重试。
+ */
+export function canRestartContainer(state: string): boolean {
+  return state !== '' && state !== 'unknown' && state !== 'dead'
+}
+
+/**
+ * 容器是否正在运行（决定删除时是否需要 force）。
+ *
+ * 只有 running/paused/restarting 这类「容器还占着运行时」的状态需要 force；
+ * 已停止的容器直接删即可。
+ */
+export function needsForceDelete(state: string): boolean {
+  return state === 'running' || state === 'paused' || state === 'restarting'
+}

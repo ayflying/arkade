@@ -130,19 +130,16 @@ func (e *engine) Stop(ctx context.Context, idOrName string, force bool) error {
 }
 
 // defaultStopTimeoutSec 是优雅停止的等待秒数。
+//
+// 停止与重启共用这一个值：重启的语义是"先优雅停再启"，
+// 两者用不同的超时只会让行为变得难以解释。
 const defaultStopTimeoutSec = 10
 
-// Remove 实现 Runtime。
-func (e *engine) Remove(ctx context.Context, idOrName string, force bool) error {
-	if err := validateRef(idOrName); err != nil {
-		return err
-	}
-	p := containerPath(idOrName)
-	if force {
-		p += "?force=1"
-	}
-	return e.translate(e.client.delete(ctx, p))
-}
+// Remove 已迁移到 container_ops.go 的 RemoveContainer。
+//
+// 保留这个说明而不是删掉整段：该方法曾经是"只有一个 force 参数"的版本，
+// 无法表达 removeVolumes，且与 RemoveContainer 语义重叠容易被误用。
+// 现在容器删除只有 RemoveContainer 一个入口，签名把两个危险开关都显式化。
 
 // Logs 实现 Runtime。
 //

@@ -21,6 +21,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { NButton, NIcon, NLayout, NLayoutContent, NLayoutSider } from 'naive-ui'
 import AppBreadcrumb from '@/components/common/AppBreadcrumb.vue'
 import AppIcon from '@/components/common/AppIcon.vue'
+import AutoRefreshToggle from '@/components/common/AutoRefreshToggle.vue'
 import MobileMenuDrawer from '@/components/common/MobileMenuDrawer.vue'
 import SidebarBrand from '@/components/common/SidebarBrand.vue'
 import SiteMenu from '@/components/common/SiteMenu.vue'
@@ -219,6 +220,13 @@ async function handleLogout(): Promise<void> {
         <app-breadcrumb :compact="isMobile" class="app-header__crumbs" />
 
         <div class="app-header__spacer" />
+
+        <!--
+          全局「自动刷新」开关：放在用户区左边。
+          这是全局偏好，关掉后所有页面都不再轮询，因此必须常驻可见，
+          不能塞进某个页面里（否则用户会以为只关了当前页）。
+        -->
+        <auto-refresh-toggle :compact="isMobile" />
 
         <user-menu :compact="isMobile" :logging-out="loggingOut" @logout="handleLogout" />
       </header>

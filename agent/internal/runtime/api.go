@@ -16,11 +16,12 @@ const (
 	pathNetworks = "/networks"    // 网络列表（注意：不是 /networks/json）
 	pathVolumes  = "/volumes"     // 存储卷列表
 
-	actionStart  = "/start"
-	actionStop   = "/stop"   // 支持 ?t=<秒> 优雅退出超时
-	actionKill   = "/kill"   // force 停止走 kill
-	actionRemove = "/delete" // 实为 DELETE 方法，路径为容器自身
-	actionLogs   = "/logs"
+	actionStart   = "/start"
+	actionStop    = "/stop"    // 支持 ?t=<秒> 优雅退出超时
+	actionRestart = "/restart" // 支持 ?t=<秒> 停止超时，之后再启动
+	actionKill    = "/kill"    // force 停止走 kill
+	actionRemove  = "/delete"  // 实为 DELETE 方法，路径为容器自身
+	actionLogs    = "/logs"
 )
 
 // 日志拉取参数：必须"按行尾取"，并允许 ANSI 控制字符原样返回。

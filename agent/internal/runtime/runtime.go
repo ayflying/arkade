@@ -61,8 +61,14 @@ type Runtime interface {
 	Start(ctx context.Context, idOrName string) error
 	// Stop 停止容器；force=true 时跳过优雅退出（SIGKILL）。
 	Stop(ctx context.Context, idOrName string, force bool) error
-	// Remove 删除容器；force=true 时即使运行中也强制删除。
-	Remove(ctx context.Context, idOrName string, force bool) error
+	// Restart 重启容器（先优雅停止再启动），超时由实现决定。
+	Restart(ctx context.Context, idOrName string) error
+	// RemoveContainer 删除容器。
+	//
+	// force=true 时即使容器在运行也强制删除——不支持它的话，运行中的容器
+	// 根本删不掉（运行时返回 409），删除功能等于废的。
+	// removeVolumes=true 会连带删除匿名卷，是数据丢失操作，调用方必须显式要求。
+	RemoveContainer(ctx context.Context, idOrName string, force, removeVolumes bool) error
 	// Logs 拉取日志，返回已按行拆分的文本（不含结尾空行噪声）。
 	Logs(ctx context.Context, idOrName string, opts LogOptions) (LogResult, error)
 

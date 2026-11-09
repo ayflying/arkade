@@ -80,6 +80,34 @@ func (c *connection) send(env *envelope.Envelope) error {
 	}
 }
 
+// methodSessionClose 是"服务端即将关闭连接"的通知方法名。
+//
+// 定义在 Hub 侧而不是 protocol 包里：协议模块当前不归本任务修改，
+// 且这是一条单向的通知事件（Agent 收到后打印原因并停止重连即可），
+// 不需要双向契约演化。Agent 侧不认识这个方法名时，
+// 会按"未知方法"忽略，行为退化为原来的直接断开——不会更糟。
+const methodSessionClose = "session.close"
+
+// sendClose 把"连接即将被服务端关闭"的原因发给对端。
+//
+// 为什么需要这个而不直接断开：管理动作（禁用服务器）如果只是踢掉连接，
+// Agent 侧只能观察到"连接断了"，会当成网络问题无限重连，
+// 运维也看不出是被人为禁用的。先发一条带原因的关闭通知，
+// Agent 就能打印出"该服务器已被管理员禁用"并停止重连。
+//
+// 发送失败不报错：对端可能已经死了，那种情况下我们能做的只有关闭连接本身。
+func (c *connection) sendClose(reason string) {
+	env, err := envelope.NewEvent("close-"+c.agentID, methodSessionClose, c.agentID,
+		map[string]string{"reason": reason})
+	if err != nil {
+		c.log.Warn("构造关闭通知失败", "err", err)
+		return
+	}
+	if err := c.send(env); err != nil {
+		c.log.Warn("发送关闭通知失败", "err", err)
+	}
+}
+
 // writeLoop 是唯一的写 goroutine。WebSocket 不允许并发写，所有写入必须串行经过这里。
 func (c *connection) writeLoop() {
 	defer c.close()

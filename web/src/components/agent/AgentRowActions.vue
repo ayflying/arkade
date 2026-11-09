@@ -1,20 +1,26 @@
 <script setup lang="ts">
 /**
- * 服务器行操作区（查看容器 / 进入）
+ * 服务器行操作区（查看容器 / 编辑 / 禁用·启用 / 删除）
  *
- * 关键需求：**离线行不能发出永远不返回的请求**。
- * 因此这里不只是把按钮 disabled，还用 tooltip 明确告诉用户「为什么不能点」
- * （来自 utils/agentAction 的统一文案），避免出现「按钮灰着但没人知道原因」。
+ * ## 与「离线」有关的按钮可用性
+ *
+ * 「查看容器」「编辑」「启用」**不加在线限制**：
+ * - 查看容器：数据是 Hub 缓存的，离线也能看；
+ * - 编辑：改的是 Hub 里的显示名/备注/标签，根本不经过 Agent；
+ * - 启用：改的是 Hub 侧的开关状态，同样不需要 Agent 在线。
+ *
+ * 只有「禁用」需要限制吗？也不需要——它同样只改 Hub 状态。
+ * 因此本组按钮全部只看「是否被禁用」和「是否正在请求中」，
+ * 这与容器启停按钮（必须 Agent 在线）的规则不同，不要混用判断。
  */
 import { computed } from 'vue'
 import { NButton, NTooltip } from 'naive-ui'
 import type { Agent } from '@/types/agent'
-import { isAgentOnline } from '@/utils/agentAction'
-import { mapAgentStatus } from '@/utils/statusMap'
+import { isAgentDisabled } from '@/utils/agentDisplay'
 
 interface Props {
   agent: Agent
-  /** 该行是否正在执行操作（本页暂无写操作，保留给后续扩展，避免引入再做破坏性改动） */
+  /** 该行是否有操作在途（删除/禁用等），在途时禁用全部按钮防连点 */
   busy?: boolean
 }
 
@@ -22,46 +28,67 @@ const props = withDefaults(defineProps<Props>(), { busy: false })
 
 const emit = defineEmits<{
   (e: 'enter'): void
+  (e: 'edit'): void
+  (e: 'toggle-disabled'): void
+  (e: 'delete'): void
 }>()
 
-const online = computed(() => isAgentOnline(props.agent))
+const disabled = computed(() => isAgentDisabled(props.agent))
 
-/**
- * 禁用原因文案：
- * - 离线：直接说明离线；
- * - 升级中/未知：说明当前状态不允许操作。
- */
-const disabledReason = computed<string>(() => {
-  if (online.value) return ''
-  const { label } = mapAgentStatus(props.agent.status)
-  return `服务器当前状态为「${label}」，无法进行操作`
-})
+/** 禁用/启用按钮的文案：按当前状态显示「下一步能做什么」 */
+const toggleLabel = computed(() => (disabled.value ? '启用' : '禁用'))
 
-function handleEnter(): void {
-  if (!online.value) return
-  emit('enter')
-}
+/** 禁用/启用按钮的 tooltip 说明：解释这个操作的后果 */
+const toggleHint = computed(() =>
+  disabled.value
+    ? '启用后恢复正常管理'
+    : '禁用后该服务器的操作入口不可用，不会删除任何容器'
+)
 </script>
 
 <template>
-  <n-tooltip :disabled="online" trigger="hover" placement="top">
-    <template #trigger>
-      <!-- 
-        包一层 span：disabled 的按钮不触发鼠标事件，tooltip 会失效，
-        因此把 tooltip 挂在能接收事件的父元素上。
-      -->
-      <span class="row-actions" @click.stop>
-        <n-button size="small" tertiary :disabled="!online" :loading="busy" @click="handleEnter">
-          查看容器
+  <div class="row-actions" @click.stop>
+    <n-tooltip trigger="hover" placement="top">
+      <template #trigger>
+        <n-button size="tiny" tertiary :disabled="busy" @click="emit('enter')">容器</n-button>
+      </template>
+      查看该服务器上的容器
+    </n-tooltip>
+
+    <n-tooltip trigger="hover" placement="top">
+      <template #trigger>
+        <n-button size="tiny" tertiary :disabled="busy" @click="emit('edit')">编辑</n-button>
+      </template>
+      修改显示名、备注与标签
+    </n-tooltip>
+
+    <n-tooltip trigger="hover" placement="top">
+      <template #trigger>
+        <n-button size="tiny" tertiary :disabled="busy" @click="emit('toggle-disabled')">
+          {{ toggleLabel }}
         </n-button>
-      </span>
-    </template>
-    {{ disabledReason }}
-  </n-tooltip>
+      </template>
+      {{ toggleHint }}
+    </n-tooltip>
+
+    <!-- 删除是危险操作：红色 + 页面里的二次确认（确认文案由页面负责） -->
+    <n-tooltip trigger="hover" placement="top">
+      <template #trigger>
+        <n-button size="tiny" tertiary type="error" :disabled="busy" @click="emit('delete')">
+          删除
+        </n-button>
+      </template>
+      仅移除纳管关系，不删除服务器上的容器
+    </n-tooltip>
+  </div>
 </template>
 
 <style scoped>
 .row-actions {
   display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  /* 按钮组在窄屏下允许换行，避免撑破单元格 */
+  flex-wrap: wrap;
 }
 </style>

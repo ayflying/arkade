@@ -15,11 +15,12 @@ const (
 	MethodSnapshotPush = "agent.snapshot.push" // 重连后的全量状态快照（event），用于 Hub 对账
 
 	// 容器操作
-	MethodContainerList   = "container.list"   // 列出容器
-	MethodContainerStart  = "container.start"  // 启动容器
-	MethodContainerStop   = "container.stop"   // 停止容器
-	MethodContainerRemove = "container.remove" // 删除容器（危险操作）
-	MethodContainerLogs   = "container.logs"   // 拉取日志（有限行数，避免撑爆连接）
+	MethodContainerList    = "container.list"    // 列出容器
+	MethodContainerStart   = "container.start"   // 启动容器
+	MethodContainerStop    = "container.stop"    // 停止容器
+	MethodContainerRestart = "container.restart" // 重启容器（等价 stop + start，但保留容器本身）
+	MethodContainerRemove  = "container.remove"  // 删除容器（危险操作）
+	MethodContainerLogs    = "container.logs"    // 拉取日志（有限行数，避免撑爆连接）
 
 	// 运行时探测
 	MethodRuntimeInfo = "runtime.info" // 上报运行时类型与版本（docker / podman）
@@ -59,12 +60,13 @@ const (
 // 这些字符串就是上面的方法名本身：Agent 的处理器注册表不区分请求来自
 // Hub 连接还是本地 CLI，离线自治才能与在线行为完全一致，不存在两套实现。
 const (
-	LocalMethodContainerList   = MethodContainerList
-	LocalMethodContainerStart  = MethodContainerStart
-	LocalMethodContainerStop   = MethodContainerStop
-	LocalMethodContainerRemove = MethodContainerRemove
-	LocalMethodContainerLogs   = MethodContainerLogs
-	LocalMethodRuntimeInfo     = MethodRuntimeInfo
+	LocalMethodContainerList    = MethodContainerList
+	LocalMethodContainerStart   = MethodContainerStart
+	LocalMethodContainerStop    = MethodContainerStop
+	LocalMethodContainerRestart = MethodContainerRestart
+	LocalMethodContainerRemove  = MethodContainerRemove
+	LocalMethodContainerLogs    = MethodContainerLogs
+	LocalMethodRuntimeInfo      = MethodRuntimeInfo
 
 	LocalMethodImageList     = MethodImageList
 	LocalMethodImageRemove   = MethodImageRemove

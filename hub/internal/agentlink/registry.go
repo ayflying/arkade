@@ -80,6 +80,53 @@ func (r *Registry) Count() int {
 	return len(r.conns)
 }
 
+// IsOnline 判断某个 Agent 当前是否在线。
+func (r *Registry) IsOnline(agentID string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	_, ok := r.conns[agentID]
+	return ok
+}
+
+// Status 返回展示用的实时状态。
+//
+// 为什么需要这个封装：数据库里的 status 只是"最后一次心跳时的快照"，
+// 进程重启后那条记录还写着 online，实际早就断了。
+// 判断在线必须以连接表为准，数据库值只在离线时用于展示原因。
+// 各处分别写这段逻辑很容易漏掉"以 Registry 为准"这条规则，
+// 收敛到这里可以保证所有接口的判定一致。
+func (r *Registry) Status(agentID, dbStatus string) string {
+	if r.IsOnline(agentID) {
+		return "online"
+	}
+	// 不在线时，数据库里的 online 快照是过期信息，一律显示 offline。
+	if dbStatus == "online" {
+		return "offline"
+	}
+	return dbStatus
+}
+
+// Close 主动断开指定 Agent 的连接，reason 会作为关闭原因发给对方。
+//
+// 用于管理动作（禁用、删除记录）：握手只在建立连接时发生，
+// 不主动踢掉存量连接的话，禁用会"看起来生效了但通道还在"。
+//
+// 找不到连接时什么都不做——这是正常情况（Agent 本来就没连）。
+func (r *Registry) Close(agentID, reason string) {
+	r.mu.RLock()
+	c := r.conns[agentID]
+	r.mu.RUnlock()
+
+	if c == nil {
+		return
+	}
+	c.log.Info("管理员操作导致连接关闭", "reason", reason)
+	// 先把原因发给对端，再关连接。
+	// 顺序很重要：先关的话对方只能看到"连接断了"，拿不到原因。
+	c.sendClose(reason)
+	c.close()
+}
+
 // Call 向指定 Agent 下发请求并等待响应。
 //
 // 这是所有容器操作的唯一入口。离线时立刻返回 agent_offline，不排队、不重试：

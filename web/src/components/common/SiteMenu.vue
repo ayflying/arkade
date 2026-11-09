@@ -12,7 +12,7 @@
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { NMenu } from 'naive-ui'
-import { buildMenuOptions } from '@/layouts/menuConfig'
+import { buildMenuOptions, isGlobalMenuKey } from '@/layouts/menuConfig'
 import { SIDER_WIDTH_COLLAPSED } from '@/composables/useResponsive'
 
 interface Props {
@@ -44,9 +44,12 @@ const menuOptions = computed(() => buildMenuOptions(props.agentId))
 /**
  * 菜单点击：key 即 routeName（约定见 menuConfig.buildMenuOptions）。
  *
- * 操作类菜单（容器/编排/镜像/网络/卷）的路由都带 `:id` 参数，
- * 因此跳转时必须把当前服务器 id 一并传入；「服务器」入口没有该参数。
- * 若 agentId 为空而点了操作菜单（理论上不会发生，因为此时不渲染），
+ * 两类菜单的跳转参数不同：
+ * - **全局入口**（概览/服务器/审计）：不带任何参数；
+ * - **服务器操作菜单**（容器/编排/镜像/网络/卷）：必须带当前服务器 `:id`，
+ *   否则路由匹配不上。
+ *
+ * 若 agentId 为空而点了操作菜单（理论上不会发生，因为此时不渲染该分组），
  * 退回服务器列表，避免产生 /agents//containers 这类坏路径。
  *
  * 边界处理：
@@ -54,11 +57,11 @@ const menuOptions = computed(() => buildMenuOptions(props.agentId))
  * - 跳转失败（如路由不存在）也要关抽屉，否则抽屉挡在错误页前面。
  */
 function handleUpdateValue(key: string): void {
-  const isServerEntry = key === 'agents'
-  const params = isServerEntry ? {} : { id: props.agentId ?? '' }
+  const isGlobal = isGlobalMenuKey(key)
+  const params = isGlobal ? {} : { id: props.agentId ?? '' }
 
   // 参数缺失时不要拼出坏路径，直接回服务器列表
-  if (!isServerEntry && (props.agentId === null || props.agentId === '')) {
+  if (!isGlobal && (props.agentId === null || props.agentId === '')) {
     void router.push({ name: 'agents' }).finally(() => props.onNavigate?.())
     return
   }

@@ -38,9 +38,10 @@ func (testRuntime) List(context.Context, bool) ([]runtime.Container, error) {
 	return []runtime.Container{{ID: "abc", Name: "web", State: "running"}}, nil
 }
 
-func (testRuntime) Start(context.Context, string) error        { return nil }
-func (testRuntime) Stop(context.Context, string, bool) error   { return nil }
-func (testRuntime) Remove(context.Context, string, bool) error { return nil }
+func (testRuntime) Start(context.Context, string) error                       { return nil }
+func (testRuntime) Stop(context.Context, string, bool) error                  { return nil }
+func (testRuntime) Restart(context.Context, string) error                     { return nil }
+func (testRuntime) RemoveContainer(context.Context, string, bool, bool) error { return nil }
 func (testRuntime) Logs(context.Context, string, runtime.LogOptions) (runtime.LogResult, error) {
 	return runtime.LogResult{Lines: []string{"hello"}}, nil
 }

@@ -186,6 +186,13 @@ func (s *session) readLoop() error {
 	}
 }
 
+// methodSessionClose 是 Hub 在主动关闭连接前发来的通知方法名。
+//
+// 定义在 Agent 侧而不是 protocol 包里：这是一条单向通知事件，
+// 不需要双向契约。Hub 与 Agent 各自定义同一个字符串常量即可，
+// 不认识时退化为"直接断开"——不会更糟。
+const methodSessionClose = "session.close"
+
 // handleInbound 按类型分发入站信封。
 func (s *session) handleInbound(env *envelope.Envelope) {
 	switch env.Type {
@@ -198,12 +205,36 @@ func (s *session) handleInbound(env *envelope.Envelope) {
 		// Hub 对心跳/事件的确认，目前只用于日志与排障，不改变状态机。
 		s.agent.log.Debug("收到 Hub ack", "method", env.Method, "id", env.ID)
 	case envelope.TypeResponse, envelope.TypeEvent:
-		// 首期 Agent 不向 Hub 发请求，因此收到 response 属于异常；
+		// 服务端主动关闭通知：必须单独处理。
+		//
+		// 为什么这条重要：Hub 会在禁用服务器时先发这个事件再断开。
+		// 如果按"非预期消息"丢弃，运维只能看到连接反复断开重连，
+		// 永远不知道真正原因是"这台机器被管理员禁用了"。
+		// 打印出来，至少日志里能查到明确答案。
+		if env.Method == methodSessionClose {
+			s.agent.log.Error("Hub 主动关闭了连接", "reason", closeReason(env))
+			return
+		}
+		// 其余情况下 Agent 不向 Hub 发请求，收到 response 属于异常；
 		// 记录后丢弃，不中断连接（Hub 可能在做兼容性探测）。
 		s.agent.log.Debug("收到非预期消息类型", "type", env.Type, "method", env.Method)
 	default:
 		s.agent.log.Warn("收到未知类型信封，已忽略", "type", env.Type)
 	}
+}
+
+// closeReason 从关闭通知里取出原因文案。
+//
+// 解析失败时给一句兜底说明而不是空串：日志里出现空的 reason
+// 会让人以为是日志系统丢字段，实际是载荷格式问题，两者要能区分开。
+func closeReason(env *envelope.Envelope) string {
+	var payload struct {
+		Reason string `json:"reason"`
+	}
+	if err := envelope.DecodePayload(env, &payload); err != nil || payload.Reason == "" {
+		return "Hub 未提供关闭原因"
+	}
+	return payload.Reason
 }
 
 // serveRequest 执行请求并把响应投递回出站队列。

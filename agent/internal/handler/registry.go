@@ -10,6 +10,8 @@ package handler
 import (
 	"context"
 	"fmt"
+	"io"
+	"log/slog"
 	"sort"
 	"sync"
 
@@ -115,11 +117,21 @@ func (r *Registry) Dispatch(ctx context.Context, req *envelope.Envelope) *envelo
 // composeMgr 为 nil 时不注册编排方法：没有数据目录就无法落盘编排文件，
 // 注册了也只会在调用时失败。这种情况在本地 CLI 模式里可能出现，
 // 此时 Hub 侧会得到 unsupported，提示比"下载后写文件失败"清楚得多。
-func RegisterDefaults(reg *Registry, rt runtime.Runtime, composeMgr *compose.Manager) {
+// RegisterDefaults 注册全部内置方法。
+//
+// log 用于记录"降级但不致命"的失败（例如引擎标签探测失败）。
+// 传 nil 时自动用静默日志器——测试里大多不关心日志，
+// 强制每个调用点都构造一个日志器是没有必要的噪音。
+func RegisterDefaults(reg *Registry, rt runtime.Runtime, composeMgr *compose.Manager, log *slog.Logger) {
+	if log == nil {
+		log = slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
+	}
 	reg.Register(envelope.MethodRuntimeInfo, newRuntimeInfoHandler(rt))
 	reg.Register(envelope.LocalMethodContainerList, newListHandler(rt))
 	reg.Register(envelope.LocalMethodContainerStart, newStartHandler(rt))
 	reg.Register(envelope.LocalMethodContainerStop, newStopHandler(rt))
+	reg.Register(envelope.LocalMethodContainerRestart, newRestartHandler(rt))
+	reg.Register(envelope.LocalMethodContainerRemove, newRemoveHandler(rt))
 	reg.Register(envelope.LocalMethodContainerLogs, newLogsHandler(rt))
 
 	// 镜像 / 网络 / 存储卷：纯代理能力，只要有运行时就能提供。
@@ -133,7 +145,17 @@ func RegisterDefaults(reg *Registry, rt runtime.Runtime, composeMgr *compose.Man
 	if composeMgr == nil {
 		return
 	}
-	reg.Register(envelope.MethodComposeList, newComposeListHandler(composeMgr))
+	// 外部项目发现能力：只有真实引擎实现了它。
+	//
+	// 为什么用类型断言而不是把它加进 runtime.Runtime 接口：
+	// 加进接口会让所有实现（包括测试里的假 runtime）都必须实现它，
+	// 而那些假实现根本不关心外部项目。断言失败时降级为"没有发现能力"，
+	// 列表仍然正常返回已纳管的编排——这是最小改动。
+	var labelSrc containerLabelLister
+	if src, ok := rt.(containerLabelLister); ok {
+		labelSrc = src
+	}
+	reg.Register(envelope.MethodComposeList, newComposeListHandler(composeMgr, labelSrc, log))
 	reg.Register(envelope.MethodComposeUp, newComposeUpHandler(composeMgr))
 	reg.Register(envelope.MethodComposeDown, newComposeDownHandler(composeMgr))
 	reg.Register(envelope.MethodComposeStop, newComposeStopHandler(composeMgr))

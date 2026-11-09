@@ -19,6 +19,8 @@ type fakeRuntime struct {
 	listErr    error
 	startErr   error
 	stopErr    error
+	restartErr error
+	removeErr  error
 	logsRes    runtime.LogResult
 	logsErr    error
 	info       runtime.Info
@@ -27,6 +29,12 @@ type fakeRuntime struct {
 	lastStop     string
 	lastForce    bool
 	lastLogsOpts runtime.LogOptions
+
+	// 重启 / 删除的记录（供 container_ops_test.go 使用）。
+	lastRestart       string
+	lastRemove        string
+	lastRemoveForce   bool
+	lastRemoveVolumes bool
 
 	// 资源类方法的固定返回与记录（供 resources_test.go 使用）。
 	images            []runtime.Image
@@ -69,7 +77,17 @@ func (f *fakeRuntime) Stop(_ context.Context, id string, force bool) error {
 	return f.stopErr
 }
 
-func (f *fakeRuntime) Remove(context.Context, string, bool) error { return nil }
+func (f *fakeRuntime) Restart(_ context.Context, id string) error {
+	f.lastRestart = id
+	return f.restartErr
+}
+
+func (f *fakeRuntime) RemoveContainer(_ context.Context, id string, force, removeVolumes bool) error {
+	f.lastRemove = id
+	f.lastRemoveForce = force
+	f.lastRemoveVolumes = removeVolumes
+	return f.removeErr
+}
 
 func (f *fakeRuntime) Logs(_ context.Context, _ string, opts runtime.LogOptions) (runtime.LogResult, error) {
 	f.lastLogsOpts = opts
@@ -121,7 +139,7 @@ func (f *fakeRuntime) RemoveVolume(_ context.Context, name string) error {
 // （注册表对未注册方法返回 unsupported，不影响已有断言）。
 func newTestRegistry(rt runtime.Runtime) *Registry {
 	reg := NewRegistry()
-	RegisterDefaults(reg, rt, nil)
+	RegisterDefaults(reg, rt, nil, nil)
 	return reg
 }
 
@@ -378,10 +396,10 @@ func TestRegistryMethodsSorted(t *testing.T) {
 	reg := newTestRegistry(&fakeRuntime{})
 	methods := reg.Methods()
 	// 本测试的注册表不挂编排（composeMgr 为 nil），因此只应包含
-	// 容器 5 个 + 资源 6 个 = 11 个方法。
+	// 容器 7 个 + 资源 6 个 = 13 个方法。
 	// 编排方法数由 compose 专项测试验证，这里固定数字是为了让
 	// "悄悄多注册/漏注册一个方法"能被立刻发现。
-	const wantCount = 11
+	const wantCount = 13
 	if len(methods) != wantCount {
 		t.Fatalf("注册方法数 = %d，期望 %d: %v", len(methods), wantCount, methods)
 	}
@@ -395,6 +413,8 @@ func TestRegistryMethodsSorted(t *testing.T) {
 		envelope.LocalMethodContainerList,
 		envelope.LocalMethodContainerStart,
 		envelope.LocalMethodContainerStop,
+		envelope.LocalMethodContainerRestart,
+		envelope.LocalMethodContainerRemove,
 		envelope.LocalMethodContainerLogs,
 		envelope.MethodImageList,
 		envelope.MethodImageRemove,

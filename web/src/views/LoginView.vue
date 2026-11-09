@@ -39,7 +39,7 @@ const redirectTarget = computed<string>(() => {
   if (typeof value === 'string' && value.startsWith('/') && !value.startsWith('//')) {
     return value
   }
-  return '/agents'
+  return '/overview'
 })
 
 async function handleSubmit(): Promise<void> {

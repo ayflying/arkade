@@ -35,7 +35,16 @@ func buildComposeManager(cfg config.Config, rt runtime.Runtime) *compose.Manager
 		// Hub 侧得到 unsupported 而不是一堆写文件失败的错误。
 		return nil
 	}
-	return compose.NewManager(cfg.DataDir, dockerHostFor(rt))
+	mgr := compose.NewManager(cfg.DataDir, dockerHostFor(rt))
+	// 注入引擎探测源：Apply 执行 up 之前要确认"这个名字没被外部项目占用"，
+	// 否则一次同名新建就能按项目名接管并重建别人的生产容器。
+	// 见 compose/manager.go 里 Apply 开头那段说明。
+	if src, ok := rt.(interface {
+		ListContainerLabels(context.Context) ([]compose.ContainerLabels, error)
+	}); ok {
+		mgr.SetLabelSource(src)
+	}
+	return mgr
 }
 
 // dockerHostFor 推导要传给 compose 子进程的 DOCKER_HOST。
