@@ -31,7 +31,7 @@ services:
     environment:
       # 密码与令牌只从环境变量注入，不写进配置文件——配置文件会被挂载到卷里，
       # 明文落盘等于把凭据留在磁盘上。
-      ARKADE_INITIAL_PASS: ${ARKADE_INITIAL_PASS:?必须设置 AKRADE_INITIAL_PASS}
+      ARKADE_INITIAL_PASS: ${ARKADE_INITIAL_PASS:?必须设置 ARKADE_INITIAL_PASS（见 deploy/docker/.env.example）}
       ARKADE_AGENT_TOKEN: ${ARKADE_AGENT_TOKEN:?必须设置 ARKADE_AGENT_TOKEN}
       # 覆盖配置里的监听地址，容器内必须监听 0.0.0.0 才能被端口映射访问。
       ARKADE_LISTEN: 0.0.0.0:8080

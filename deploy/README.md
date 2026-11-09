@@ -2,6 +2,24 @@
 
 本目录只放 Agent 的部署资产，Hub 侧的部署文件由 Hub 负责人维护。
 
+## 安全约定（必读）
+
+**配置文件里不允许出现任何真实密钥或令牌。** 所有凭据一律通过环境变量注入：
+
+| 凭据 | 环境变量 | 写入位置 |
+| --- | --- | --- |
+| Agent 接入令牌 | `ARKADE_AGENT_TOKEN` | `/etc/arkade/agent.env`（0600） |
+| 初始管理员密码 | `ARKADE_INITIAL_PASS` | 仅 Hub 侧，交互式输入或 EnvironmentFile |
+
+原因很实际：配置文件会被备份、被复制到其他机器、被 ansible 之类的工具批量下发，
+令牌写进去等于同时泄露到所有这些副本；而环境变量只存在于进程环境中，不随文件扩散。
+
+`*.example.toml` 里的凭据字段一律留空，不是让你填完再提交——**复制成实际配置后也不填**，
+改用 `ARKADE_AGENT_TOKEN` 传入（Agent 读取环境变量的优先级高于配置文件）。
+
+`.gitignore` 已拦截 `.env`、`agent.toml`、`hub.toml`、`config.toml` 等实际配置文件，
+只放行 `*.example`。新增配置文件时请沿用这个命名习惯。
+
 ## 目录内容
 
 | 文件 | 用途 |
@@ -20,16 +38,22 @@ sudo install -d -m 0750 -o arkade -g arkade /opt/arkade/agent /etc/arkade
 # 2. 安装二进制（静态编译，无外部依赖）
 sudo install -m 0755 arkade-agent /usr/local/bin/arkade-agent
 
-# 3. 准备配置：先放模板，再填入 hub_url 与 token
+# 3. 准备配置：只填 hub_url 这类非敏感项，token 保持留空
 sudo install -m 0640 -o arkade -g arkade deploy/agent.example.toml /etc/arkade/agent.toml
 sudo editor /etc/arkade/agent.toml
+
+# 3.1 令牌单独放环境变量文件，权限设为 0600（不要写进 agent.toml）
+sudo sh -c 'printf "ARKADE_AGENT_TOKEN=%s\n" "$(openssl rand -hex 24)" > /etc/arkade/agent.env'
+sudo chown arkade:arkade /etc/arkade/agent.env
+sudo chmod 0600 /etc/arkade/agent.env
+# 同一个令牌要填到 Hub 侧的 ARKADE_AGENT_TOKEN，两边必须一致
 
 # 4. 让 Agent 用户能访问运行时套接字
 #    Docker：加入 docker 组（等于给了等效 root 权限，属已知权衡）
 sudo usermod -aG docker arkade
 #    Podman rootless：改用该用户的 systemd 用户会话，见下文
 
-# 5. 安装并启动服务
+# 5. 安装并启动服务（单元文件已配置 EnvironmentFile=/etc/arkade/agent.env）
 sudo install -m 0644 deploy/arkade-agent.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now arkade-agent

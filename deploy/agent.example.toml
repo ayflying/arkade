@@ -10,9 +10,15 @@
 # 生产环境务必用 wss://，Agent 令牌走的是长连接请求头。
 hub_url = "wss://hub.example.com:8443/agent/connect"
 
-# 注册令牌：在 Hub 的 Agent 注册页面创建后复制。令牌属于敏感信息，
-# 不要提交到版本库，也不要写进 world-readable 的文件。
-token = "在此填入 Hub 下发的 Agent 令牌"
+# 注册令牌：在 Hub 的 Agent 注册页面创建后复制。
+#
+# 【安全约定】这里必须留空，不要填真实令牌：
+#   - 配置文件会被备份、被复制到别的机器、被 ansible/脚本批量下发，
+#     令牌写进去等于同时泄露到所有这些副本；
+#   - 正确做法是用环境变量注入，优先级高于本文件：
+#       ARKADE_AGENT_TOKEN=<令牌> arkade-agent run -c /etc/arkade/agent.toml
+#     systemd 部署时写 EnvironmentFile（见 deploy/arkade-agent.service）。
+token = ""
 
 # Agent ID：留空即可。首次连接成功后 Hub 会在 HelloAck 中下发，
 # Agent 会把它原子写入 <data_dir>/agent_id，重启后继续复用同一个身份。

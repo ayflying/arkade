@@ -18,8 +18,10 @@ Type=simple
 User=arkade
 Group=arkade
 
-# 环境变量文件放令牌以外的可覆盖项时可选用：
-# EnvironmentFile=-/etc/arkade/agent.env
+# 令牌通过环境变量注入，不写进 /etc/arkade/agent.toml。
+# 文件内容形如：ARKADE_AGENT_TOKEN=<令牌>，权限应为 0600 且属主为 arkade。
+# 前面的 "-" 表示文件不存在时不报错（本地调试可省略该文件）。
+EnvironmentFile=-/etc/arkade/agent.env
 ExecStart=/usr/local/bin/arkade-agent run -c /etc/arkade/agent.toml
 # 本地 CLI 也要能读到同一个数据目录，因此工作目录固定为其父目录。
 WorkingDirectory=/opt/arkade

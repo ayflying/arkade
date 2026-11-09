@@ -40,11 +40,27 @@ desktop.ini
 *.db-shm
 *.db-wal
 data/
-.env
-.env.local
 *.pem
 *.key
 config.local.*
+
+# 凭据文件：只允许提交 *.example / *.template
+# 说明：任何名为 .env 或 *.env 的实际配置文件都可能含令牌，
+# 一律不入库；需要对外展示时用 .env.example。
+.env
+.env.*
+!.env.example
+*.env
+!*.env.example
+secrets/
+*.secrets.toml
+hub.toml
+agent.toml
+config.toml
+!agent.example.toml
+!hub.example.toml
+!config.example.toml
+!config.toml.example
 
 # 工具生成的本地索引
 .cg/
