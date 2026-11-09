@@ -147,6 +147,7 @@ func NewRouter(d Deps) http.Handler {
 			priv.Delete("/agents/{agentID}/images/{imageID}", handleRemoveImage(d))
 			priv.Get("/agents/{agentID}/networks", handleListNetworks(d))
 			priv.Delete("/agents/{agentID}/networks/{networkID}", handleRemoveNetwork(d))
+			priv.Post("/agents/{agentID}/volume-files", handleVolumeFiles(d))
 			priv.Get("/agents/{agentID}/volumes", handleListVolumes(d))
 			priv.Delete("/agents/{agentID}/volumes/{name}", handleRemoveVolume(d))
 

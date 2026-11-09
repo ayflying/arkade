@@ -82,6 +82,8 @@ var auditRoutes = map[string]auditRoute{
 	"/api/agents/{agentID}/images/import":  {Action: "image.import"},
 	"/api/agents/{agentID}/images/migrate": {Action: "image.migrate"},
 	"/api/image-tasks/{taskID}/cancel":     {Action: "image.cancel", TargetParam: "taskID"},
+	// 内容不进入审计；统一记录卷文件操作结果，不复制请求体。
+	"/api/agents/{agentID}/volume-files": {Action: "volume.files"},
 	// ---- 资源 ----
 	"/api/agents/{agentID}/images/{imageID}": {
 		Action:      audit.ActionImageRemove,

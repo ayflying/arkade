@@ -41,6 +41,7 @@ const (
 	ActionImageRemove   = "image.remove"
 	ActionNetworkRemove = "network.remove"
 	ActionVolumeRemove  = "volume.remove"
+	ActionVolumeFiles   = "volume.files"
 
 	// 服务器
 	ActionAgentUpdate  = "agent.update"
@@ -97,6 +98,7 @@ var labels = map[string]string{
 	ActionImageRemove:   "删除镜像",
 	ActionNetworkRemove: "删除网络",
 	ActionVolumeRemove:  "删除存储卷",
+	ActionVolumeFiles:   "管理卷内文件",
 
 	ActionAgentUpdate:     "修改服务器",
 	ActionAgentDelete:     "删除服务器",

@@ -396,10 +396,10 @@ func TestRegistryMethodsSorted(t *testing.T) {
 	reg := newTestRegistry(&fakeRuntime{})
 	methods := reg.Methods()
 	// 本测试的注册表不挂编排（composeMgr 为 nil），因此只应包含
-	// 容器 7 个 + 资源 6 个 = 13 个方法。
+	// 容器 7 个 + 资源 6 个 + 卷文件 1 个 = 14 个方法。
 	// 编排方法数由 compose 专项测试验证，这里固定数字是为了让
 	// "悄悄多注册/漏注册一个方法"能被立刻发现。
-	const wantCount = 13
+	const wantCount = 14
 	if len(methods) != wantCount {
 		t.Fatalf("注册方法数 = %d，期望 %d: %v", len(methods), wantCount, methods)
 	}

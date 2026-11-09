@@ -174,6 +174,11 @@ func RegisterDefaultsWithTransfer(reg *Registry, rt runtime.Runtime, composeMgr 
 		reg.Register(envelope.MethodImageTaskRelease, newImageTaskReleaseHandler(imageMgr))
 	}
 
+	// 存储卷文件管理：同样是"有运行时就能提供"的纯代理能力，
+	// 因此注册在 composeMgr 提前返回之前。
+	// 引擎不支持时处理器内部返回 unsupported（可选接口断言）。
+	reg.Register(envelope.MethodVolumeFiles, newVolumeFilesHandler(rt))
+
 	if composeMgr == nil {
 		return
 	}

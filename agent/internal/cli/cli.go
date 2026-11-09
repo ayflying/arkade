@@ -17,6 +17,7 @@ import (
 
 	"arkade/agent/internal/config"
 	"arkade/agent/internal/handler"
+	"arkade/agent/internal/helperfs"
 	"arkade/agent/internal/link"
 	"arkade/agent/internal/logging"
 	"arkade/agent/internal/runtime"
@@ -64,6 +65,16 @@ func Main(args []string, stdout, stderr io.Writer) int {
 	}
 
 	cmd, rest := args[0], args[1:]
+	// ============================ 隐藏命令：volume-file-helper ============================
+	//
+	// 这个命令**只在临时 helper 容器内部**被调用，不面向用户，也不出现在 usage 里。
+	// 它必须在所有配置解析、Hub 连接、compose/imagetransfer 初始化**之前**返回：
+	//   - 容器里没有配置文件，走正常路径会直接失败；
+	//   - 更不该有任何出网或状态初始化动作——它只做一次卷内文件操作。
+	// 挂载点固定为 /data，不接受参数（理由见 helperfs.Run 的说明）。
+	if cmd == "volume-file-helper" {
+		return helperfs.Run()
+	}
 	switch cmd {
 	case "run":
 		return cmdRun(rest, stderr)

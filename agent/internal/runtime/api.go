@@ -16,6 +16,9 @@ const (
 	pathNetworks = "/networks"    // 网络列表（注意：不是 /networks/json）
 	pathVolumes  = "/volumes"     // 存储卷列表
 
+	// 容器创建与归档（volume 文件读写用的 helper 容器）。
+	pathContainersCreate = "/containers/create" // POST 建容器
+
 	// 镜像传输端点（拉取 / 导出 / 导入）。
 	//
 	// 三者都是**流**：

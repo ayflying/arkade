@@ -20,4 +20,8 @@ require (
 
 require gopkg.in/yaml.v3 v3.0.1
 
+// golang.org/x/sys 直接用于卷文件操作：renameat2(RENAME_NOREPLACE)
+// 与 openat(O_NOFOLLOW|O_NONBLOCK)，见 internal/helperfs。
+require golang.org/x/sys v0.30.0
+
 replace arkade/protocol => ../protocol

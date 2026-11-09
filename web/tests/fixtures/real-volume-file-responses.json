@@ -1,0 +1,87 @@
+{
+  "_source": "Lead 定稿的存储卷文件管理 API：单 endpoint POST /api/agents/{id}/volume-files，按 operation 分派。所有操作要求该服务器 manage 权限，响应 no-store。",
+  "_request": "{volume, operation: 'list'|'read'|'write'|'mkdir'|'rename'|'delete', path, destination?, data_base64?, expected_sha256?, create_only?}",
+  "_response": "{result: {path, entries?, data_base64?, sha256?, size?, message?}}",
+
+  "list": {
+    "_comment": "list 一个目录。四种 kind 都出现，用于验证只有 file 可读、只有 directory 可进。",
+    "result": {
+      "path": "base",
+      "entries": [
+        { "name": "sub", "kind": "directory", "size": 0, "modified_at": 1700000000, "mode": "drwxr-xr-x" },
+        { "name": "app.conf", "kind": "file", "size": 1240, "modified_at": 1700000100, "mode": "-rw-r--r--" },
+        { "name": "link-to-outside", "kind": "symlink", "size": 12, "modified_at": 1700000200, "mode": "lrwxrwxrwx" },
+        { "name": "pg.sock", "kind": "unsupported", "size": 0, "modified_at": 1700000300, "mode": "srwxrwxrwx" }
+      ]
+    }
+  },
+
+  "read": {
+    "_comment": "read 返回内容 + sha256。sha256 必须留存，作为后续 write 的 expected_sha256。",
+    "result": {
+      "path": "app.conf",
+      "data_base64": "IyDmlbDmja7lupPphY3nva4KREJfSE9TVD1sb2NhbGhvc3QKREJfUE9SVD01NDMyCg==",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 46
+    }
+  },
+
+  "readEmpty": {
+    "_comment": "空文件（0 字节）。注意 data_base64 带 omitempty，空串会被**整个字段省略**——不能当「没有内容」处理，否则空文件既不能编辑也不能下载。sha256 仍然有值（空内容的哈希）。",
+    "result": {
+      "path": "empty.conf",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    }
+  },
+
+  "write": {
+    "_comment": "write 成功：返回写入后的 sha256，可供连续编辑不回读。",
+    "result": {
+      "path": "app.conf",
+      "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+      "size": 52,
+      "message": "已保存"
+    }
+  },
+
+  "mkdir": {
+    "result": {
+      "path": "newdir",
+      "message": "已创建目录"
+    }
+  },
+
+  "rename": {
+    "_comment": "rename 拒绝覆盖已有目标（后端保证），前端不提供覆盖选项。",
+    "result": {
+      "path": "new.conf",
+      "message": "已重命名"
+    }
+  },
+
+  "delete": {
+    "_comment": "delete 只允许单文件或空目录，不可恢复。",
+    "result": {
+      "path": "old.conf",
+      "message": "已删除"
+    }
+  },
+
+  "degraded": {
+    "_comment": "字段缺失的降级响应：界面不能出现 undefined。",
+    "list": {
+      "result": {
+        "path": ""
+      }
+    },
+    "entry": {
+      "result": {
+        "path": "",
+        "entries": [
+          { "name": "weird", "kind": "something-new-from-future-backend", "size": 0, "modified_at": 0, "mode": "" }
+        ]
+      }
+    }
+  }
+}

@@ -75,6 +75,22 @@ const agentChildRoutes: RouteRecordRaw[] = [
     component: () => import('@/views/VolumeListView.vue'),
     props: true,
     meta: { title: '存储卷' }
+  },
+  {
+    /*
+     * 卷内文件管理器。
+     *
+     * 用独立路由而不是抽屉：需要**可分享的深链接**（把「某个卷的某个目录」
+     * 发给同事是运维排障的刚需），且文件编辑是长时间停留的操作。
+     *
+     * `:name` 是卷名，放在 :id 之后、与 volumes 同级前缀，
+     * 避免与 `volumes`（列表页）混淆——路径段多一层 `files`。
+     */
+    path: 'volumes/:name/files',
+    name: 'agent-volume-files',
+    component: () => import('@/views/VolumeFilesView.vue'),
+    props: true,
+    meta: { title: '存储卷文件' }
   }
 ]
 
