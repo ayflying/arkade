@@ -190,4 +190,41 @@ var migrations = []migration{
 			`CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_logs (action)`,
 		},
 	},
+	{
+		version: 6,
+		name:    "Agent 专属接入凭据与预创建标记",
+		stmts: []string{
+			// agent_tokens 保存「服务器专属接入密钥」的摘要。
+			//
+			// **绝不存明文。** 明文只在创建/重置时的响应里出现一次，
+			// 之后 Hub 只握有它的 SHA256。这样即使整个数据库被拖走，
+			// 攻击者也拿不到可直接用的密钥。
+			//
+			// token_hash 做主键而不是自增 id：一个 Agent 在同一时刻
+			// 只有一把有效密钥（重置即删旧行），主键语义正好表达这一点，
+			// 也顺手阻止了"同一摘要被插入两次"。
+			`CREATE TABLE IF NOT EXISTS agent_tokens (
+				token_hash TEXT NOT NULL PRIMARY KEY,
+				agent_id TEXT NOT NULL,
+				created_at INTEGER NOT NULL
+			)`,
+			// 反向查询（按 agent_id 找摘要）用于重置时删旧行。
+			// 建 UNIQUE 而不是普通索引：一个 Agent 不应同时存在两把密钥，
+			// 否则"重置后旧密钥失效"就无法保证——旧行漏删会让旧密钥继续可用，
+			// 那是一个安全漏洞而不是小瑕疵。
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_tokens_agent
+				ON agent_tokens (agent_id)`,
+			// preconditioned：预创建记录标记。
+			//
+			// 1 = 由管理员在界面预建（必须先持有专属密钥才能接入）；
+			// 0 = 老版本自动注册建立的记录（共享 token 仍可照常接入）。
+			//
+			// 为什么需要这一列而不是"看有没有凭据行"：
+			// 凭据行会被重置/删除，而"这是预建记录"这个身份不该随之改变。
+			// 例如重置密钥的瞬间旧行已删、新行未写，若靠凭据行判断，
+			// 那条记录会短暂退化成"可被共享 token 认领"的状态——竞态窗口虽小，
+			// 但正好落在最敏感的时刻。
+			`ALTER TABLE agents ADD COLUMN preprovisioned INTEGER NOT NULL DEFAULT 0`,
+		},
+	},
 }

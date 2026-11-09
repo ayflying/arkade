@@ -44,6 +44,9 @@ func (r *Registry) Add(c *connection) {
 	}
 }
 
+// ErrCredentialRevoked 表示连接携带的凭据在握手过程中被撤销。
+var ErrCredentialRevoked = errors.New("该服务器的接入凭据已在握手过程中被撤销，请使用新密钥重新连接")
+
 // Remove 移除连接。只有登记的仍是同一条连接时才移除，
 // 防止旧连接关闭时误删刚上线的新连接。
 func (r *Registry) Remove(c *connection) {

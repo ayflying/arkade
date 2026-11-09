@@ -18,13 +18,23 @@ export interface StatusStyle {
   dimmed: boolean
 }
 
-/** Agent 状态映射：online 在线 / offline 离线 / upgrading 升级中 */
+/**
+ * Agent 状态映射：online 在线 / offline 离线 / pending 待接入 / upgrading 升级中
+ *
+ * `pending` 与 `offline` 必须区分开：
+ * - offline = 以前连上过，现在断了 → 去查网络、查进程
+ * - pending = 创建了记录、密钥发了，但**从来没有 Agent 连上来过** → 去查部署是否做完
+ * 两者的排查动作完全不同，混成一类会让用户对着一个从没部署成功的服务器去查网络问题。
+ */
 export function mapAgentStatus(status: string): StatusStyle {
   switch (status) {
     case 'online':
       return { label: '在线', type: 'success', dimmed: false }
     case 'offline':
       return { label: '离线', type: 'error', dimmed: true }
+    case 'pending':
+      // 中性灰而不是红色：还没接入不是故障，是等待用户执行部署动作
+      return { label: '待接入', type: 'info', dimmed: true }
     case 'upgrading':
       return { label: '升级中', type: 'warning', dimmed: false }
     default:

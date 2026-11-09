@@ -42,6 +42,13 @@ const (
 	ActionAgentDelete  = "agent.delete"
 	ActionAgentDisable = "agent.disable"
 	ActionAgentEnable  = "agent.enable"
+	// 预创建服务器与重置接入密钥。
+	//
+	// 这两个动作的审计里**绝不能出现 token 或其摘要**：
+	// 审计表会被非 admin 用户读到自己的记录、也会被导出与备份带走，
+	// 密钥一旦落进审计就等于永久泄漏（备份里已有副本，无法撤回）。
+	ActionAgentCreate     = "agent.create"
+	ActionAgentTokenReset = "agent.token_reset"
 
 	// 用户与用户组
 	ActionUserCreate  = "user.create"
@@ -81,10 +88,12 @@ var labels = map[string]string{
 	ActionNetworkRemove: "删除网络",
 	ActionVolumeRemove:  "删除存储卷",
 
-	ActionAgentUpdate:  "修改服务器",
-	ActionAgentDelete:  "删除服务器",
-	ActionAgentDisable: "禁用服务器",
-	ActionAgentEnable:  "启用服务器",
+	ActionAgentUpdate:     "修改服务器",
+	ActionAgentDelete:     "删除服务器",
+	ActionAgentDisable:    "禁用服务器",
+	ActionAgentEnable:     "启用服务器",
+	ActionAgentCreate:     "添加服务器",
+	ActionAgentTokenReset: "重置服务器接入密钥",
 
 	ActionUserCreate:  "创建用户",
 	ActionUserUpdate:  "修改用户",

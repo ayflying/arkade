@@ -1,0 +1,25 @@
+# 独立 Agent 部署：在受管服务器运行，不会同时启动 Hub。
+# 将 agent.env.example 复制为同目录 .env，填写网页生成的专属密钥。
+# 镜像必须先在本机构建或从你自己的可信仓库取得；不假设存在公开镜像。
+services:
+  agent:
+    image: ${ARKADE_AGENT_IMAGE:-arkade-agent:debug}
+    restart: ${ARKADE_RESTART_POLICY:-unless-stopped}
+    environment:
+      ARKADE_HUB_URL: ${ARKADE_AGENT_HUB_URL:?请填写可从此服务器访问的Hub WebSocket地址}
+      ARKADE_AGENT_TOKEN: ${ARKADE_AGENT_TOKEN:?请填写添加服务器时生成的专属接入密钥}
+      ARKADE_AGENT_NAME: ${ARKADE_AGENT_NAME:-arkade-node}
+      ARKADE_DATA_DIR: ${ARKADE_AGENT_DATA_DIR:-/opt/arkade/agent}
+      ARKADE_SOCKET: ${ARKADE_AGENT_SOCKET:-}
+      ARKADE_RUNTIME_KIND: ${ARKADE_AGENT_RUNTIME_KIND:-auto}
+      ARKADE_HEARTBEAT_SEC: ${ARKADE_AGENT_HEARTBEAT_SEC:-15}
+      ARKADE_LOG_LEVEL: ${ARKADE_LOG_LEVEL:-info}
+      ARKADE_LOG_FORMAT: ${ARKADE_LOG_FORMAT:-text}
+    volumes:
+      - agent-data:/opt/arkade/agent
+      # CLI要求配置文件存在；其中不保存密钥，实际值来自上方environment。
+      - ./agent.config.toml:/opt/arkade/agent/agent.toml:ro
+      # Docker socket赋予宿主机高权限，仅部署到可信的受管服务器。
+      - ${ARKADE_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
+volumes:
+  agent-data:

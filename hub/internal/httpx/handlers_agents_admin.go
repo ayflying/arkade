@@ -9,12 +9,14 @@ package httpx
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
+	"arkade/hub/internal/agentlink"
 	"arkade/hub/internal/store"
 	"arkade/protocol/envelope"
 )
@@ -109,6 +111,13 @@ func validateAgentLabels(labels map[string]string) string {
 	return ""
 }
 
+// DeleteAgentCloseReason 是删除服务器时回给 Agent 的断开原因。
+//
+// 必须写成人能照做的中文：它会出现在 Agent 的日志和界面上，
+// 运维据此判断"是被管理员移除了"而不是网络故障——
+// 后者会导致无意义的重连风暴与错误排查方向。
+const DeleteAgentCloseReason = "该服务器记录已被管理员移除，连接已断开；如需继续纳管请重新接入"
+
 // handleDeleteAgent 处理 DELETE /api/agents/{agentID}。
 //
 // 语义要点（本功能最容易做错的地方）：
@@ -140,29 +149,40 @@ func handleDeleteAgent(d Deps) http.HandlerFunc {
 			return
 		}
 
-		if err := d.DB.DeleteAgent(r.Context(), agentID); err != nil {
-			respondStoreError(w, d, err, "服务器不存在")
+		// **删除必须与握手走同一临界区。**
+		//
+		// 否则存在真实的"复活"竞态：一次握手已通过 authorize、
+		// 还没写库时，删除操作把记录删掉；随后那次握手照常
+		// OnAgentHello 落库，把刚删掉的服务器**重新建出来**。
+		// 用户看到的是"删掉的服务器自己回来了"。
+		var deleteErr error
+		if gerr := d.runRevocation(r.Context(), func() error {
+			if err := d.DB.DeleteAgent(r.Context(), agentID); err != nil {
+				return err
+			}
+			// 同时删除专属凭据：不删的话那把密钥仍然有效，
+			// 持有它的机器下次重连会按摘要解析出一个不存在的 ID。
+			if terr := d.DB.DeleteAgentToken(r.Context(), agentID); terr != nil {
+				// 记录已删除，凭据删失败属于罕见故障。
+				// 只记日志而不判请求失败：记录确实没了，
+				// 回 500 会让用户以为删除没成功而反复点击。
+				d.Log.Error("删除服务器后清理接入凭据失败，该凭据可能仍然可用",
+					"agent_id", agentID, "err", terr)
+			}
+			// 断开现有连接（详见下方说明）。
+			d.Registry.Close(agentID, DeleteAgentCloseReason)
+			return nil
+		}); gerr != nil {
+			deleteErr = gerr
+		}
+		if deleteErr != nil {
+			if errors.Is(deleteErr, agentlink.ErrGuardBusy) {
+				respondError(w, d.Log, envelope.CodeInternal, "系统繁忙，请稍后重试")
+				return
+			}
+			respondStoreError(w, d, deleteErr, "服务器不存在")
 			return
 		}
-
-		// **删除记录后必须断开该 Agent 的存量连接。**
-		//
-		// 不断开的后果（真机验证时实际踩到）：
-		//   - GET /api/agents 返回空列表（记录没了）；
-		//   - 但 /healthz 的 agents_online 仍是 1（在线表里还有那条连接）；
-		//   - Agent 侧的 WebSocket 还活着，它不知道自己已被移除，
-		//     因此不会重连，也就永远等不到"重新注册"的机会；
-		//   - 该连接继续收心跳、继续占着在线名额，成为"幽灵在线"。
-		// 界面上表现为"删掉了但还显示在线"，且操作该服务器的接口 404，
-		// 用户完全无法理解发生了什么。
-		//
-		// 断开是安全的：Agent 会自动重连，重连走握手会重新写入记录
-		// （见 agent_sink.OnAgentHello 的 Upsert），即"重新注册"。
-		// 也就是说删除**不是永久拉黑**——若要永久拒绝，应该用"禁用"，
-		// 它在握手阶段拒绝并给出明确原因。
-		//
-		// 文案也把这一点告诉对端，让 Agent 日志里能看出是被人为移除的。
-		d.Registry.Close(agentID, "该服务器记录已被管理员移除，连接已断开；如需继续纳管请重新接入")
 
 		respondJSON(w, d.Log, http.StatusOK, map[string]any{
 			"deleted":  true,
@@ -206,17 +226,35 @@ func handleSetAgentDisabled(d Deps, disabled bool) http.HandlerFunc {
 		}
 		agentID := chi.URLParam(r, "agentID")
 
-		if err := d.DB.SetAgentDisabled(r.Context(), agentID, disabled, time.Now().Unix()); err != nil {
-			respondStoreError(w, d, err, "服务器不存在")
-			return
+		// 写库与踢连接必须在临界区内。
+		//
+		// 竞争的不是"禁用后被踢"，而是**在途握手**：
+		// 一次握手已过 authorize、还没落库时被禁用，
+		// 若不禁用路径拿同一把锁，那次握手会在禁用生效后照常上线，
+		// 于是"已禁用"的服务器又挂在线上——禁用看起来没生效。
+		var setErr error
+		if gerr := d.runRevocation(r.Context(), func() error {
+			if err := d.DB.SetAgentDisabled(r.Context(), agentID, disabled, time.Now().Unix()); err != nil {
+				return err
+			}
+			// 禁用时把在线连接踢掉。不踢的话就有一个危险的空档：
+			// 管理员禁用了一个疑似异常的 Agent，但它已经连着，
+			// 而握手只发生在新连接上，禁用对存量连接无效——
+			// 用户看到"已禁用"而那条通道还能用。
+			if disabled {
+				d.Registry.Close(agentID, "该服务器已被管理员禁用，连接已断开")
+			}
+			return nil
+		}); gerr != nil {
+			setErr = gerr
 		}
-
-		// 禁用时把在线连接踢掉。不踢的话就有一个危险的空档：
-		// 管理员禁用了一个疑似异常的 Agent，但它已经连着，
-		// 而握手只发生在新连接上，禁用对存量连接无效——
-		// 用户看到"已禁用"而那条通道还能用。
-		if disabled {
-			d.Registry.Close(agentID, "该服务器已被管理员禁用，连接已断开")
+		if setErr != nil {
+			if errors.Is(setErr, agentlink.ErrGuardBusy) {
+				respondError(w, d.Log, envelope.CodeInternal, "系统繁忙，请稍后重试")
+				return
+			}
+			respondStoreError(w, d, setErr, "服务器不存在")
+			return
 		}
 
 		rec, err := d.DB.GetAgent(r.Context(), agentID)

@@ -35,12 +35,21 @@ type AgentRecord struct {
 	Note string
 	// Disabled 为真时，该 Agent 的握手请求会被拒绝。
 	Disabled bool
+
+	// Preprovisioned 表示这条记录是管理员预建的（先建记录、后部署机器）。
+	//
+	// 为什么单独用一个列，而不是"有没有凭据行"推导：
+	// 重置密钥时会先删旧凭据行再插新的，那一瞬间凭据行是不存在的；
+	// 若用"没有凭据行"来推断"不是专属服务器"，
+	// 这条记录会在那个窗口里暂时变成可被**共享 token 认领**的状态——
+	// 那是提权。标记必须独立持久化。
+	Preprovisioned bool
 }
 
 // 列清单常量：集中在一处，避免 List 与 Get 两处的列顺序不一致
 // 导致 Scan 参数错位（这类 bug 编译期发现不了，只在运行时把字段串到一起）。
 const agentColumns = `id, name, status, version, runtime, runtime_version, last_seen, labels,
-	created_at, updated_at, display_name, note, disabled`
+	created_at, updated_at, display_name, note, disabled, preprovisioned`
 
 // scanAgent 把一行扫描进 AgentRecord。
 //
@@ -52,13 +61,15 @@ func scanAgent(sc interface {
 	var rec AgentRecord
 	var labelsRaw string
 	var disabled int
+	var preprovisioned int
 	if err := sc.Scan(&rec.ID, &rec.Name, &rec.Status, &rec.Version, &rec.Runtime,
 		&rec.RuntimeVersion, &rec.LastSeen, &labelsRaw, &rec.CreatedAt, &rec.UpdatedAt,
-		&rec.DisplayName, &rec.Note, &disabled); err != nil {
+		&rec.DisplayName, &rec.Note, &disabled, &preprovisioned); err != nil {
 		return AgentRecord{}, err
 	}
 	rec.Labels = parseLabels(labelsRaw)
 	rec.Disabled = disabled != 0
+	rec.Preprovisioned = preprovisioned != 0
 	return rec, nil
 }
 
@@ -92,12 +103,13 @@ func (d *DB) UpsertAgent(ctx context.Context, rec AgentRecord) error {
 			return nil
 		}
 
+		// 握手仅刷新运行状态；标签与显示名/备注由管理员维护，重连不得清空。
 		_, err = tx.ExecContext(ctx,
 			`UPDATE agents SET name = ?, status = ?, version = ?, runtime = ?, runtime_version = ?,
-			        last_seen = ?, labels = ?, updated_at = ?
+			        last_seen = ?, updated_at = ?
 			 WHERE id = ?`,
 			rec.Name, rec.Status, rec.Version, rec.Runtime, rec.RuntimeVersion,
-			rec.LastSeen, string(labelsRaw), rec.UpdatedAt, rec.ID,
+			rec.LastSeen, rec.UpdatedAt, rec.ID,
 		)
 		if err != nil {
 			return fmt.Errorf("更新 Agent 失败: %w", err)

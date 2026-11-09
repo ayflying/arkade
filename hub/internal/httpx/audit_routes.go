@@ -108,6 +108,18 @@ var auditRoutes = map[string]auditRoute{
 	"/api/agents/{agentID}/enable": {
 		Action: audit.ActionAgentEnable,
 	},
+	// 预创建服务器与重置接入密钥。
+	//
+	// 只用路由模式与 agent_id 作 target：**密钥本身绝不进审计**。
+	// detail 也不填请求体内容——请求体里有 name/note/labels，
+	// 记录它们等于把用户资料复制到一张会被导出备份的表里。
+	"/api/agents": {
+		Action: audit.ActionAgentCreate,
+	},
+	"/api/agents/{agentID}/token/reset": {
+		Action:      audit.ActionAgentTokenReset,
+		TargetParam: "agentID",
+	},
 
 	// ---- 用户 ----
 	"/api/users": {

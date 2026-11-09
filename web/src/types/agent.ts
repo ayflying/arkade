@@ -17,8 +17,19 @@
  * 泛型约束（详见 types/table.ts 的说明）。
  */
 
-/** Agent 连接状态 */
-export type AgentStatus = 'online' | 'offline' | 'upgrading'
+/**
+ * Agent 连接状态。
+ *
+ * - `online`   已连接
+ * - `offline`  曾连接过，当前断开
+ * - `pending`  已在 Hub 预创建、从未连接过（专属密钥已生成但没人拿它启动过 Agent）
+ * - `upgrading` 升级中
+ *
+ * `pending` 必须与 `offline` 区分开：
+ * offline 是「本来连得好好的，掉了」，pending 是「还没开始接过」。
+ * 混成一类会让用户对着一个从没部署成功的服务器去查网络问题。
+ */
+export type AgentStatus = 'online' | 'offline' | 'pending' | 'upgrading'
 
 /** Agent 探测到的容器运行时 */
 export type RuntimeKind = 'docker' | 'podman' | 'none'
@@ -109,4 +120,52 @@ export type DeleteAgentResponse = {
   orphan_stacks: number
   /** 后端给出的中文结果说明 */
   message: string
+}
+
+/**
+ * 专属接入密钥（enrollment）。
+ *
+ * ## 这是整个前端里唯一的敏感值，处理规则必须严格遵守
+ *
+ * - `token` **只在创建 / 重置的响应里出现一次**，后端只存摘要，之后无法再取回；
+ * - 因此它只存在于**当前弹窗组件的局部 ref里**，用完即弃：
+ *   不写 Pinia、不写 localStorage / sessionStorage、不进 URL、不 console.log；
+ * - 关闭弹窗立即清空，连组件卸载也要清（见 EnrollmentTokenModal）。
+ *
+ * 违反任意一条，密钥就会通过浏览器历史、开发者工具、备份或截图泄漏出去。
+ */
+export type Enrollment = {
+  /** 一次性明文密钥；仅创建/重置时可获得 */
+  token: string
+  /** 该密钥对应的服务器 id */
+  agent_id: string
+}
+
+/**
+ * POST /api/agents 响应体：预创建服务器。
+ *
+ * 与 PATCH 同样是包装形状 `{ agent, enrollment }`。
+ * `agent.status` 为 `pending`，`last_seen` 为 0——因为还没有任何 Agent 连上来过。
+ */
+export type CreateAgentResponse = {
+  agent: Agent
+  enrollment: Enrollment
+}
+
+/** POST /api/agents/{id}/token/reset 响应体：重置专属密钥 */
+export type ResetAgentTokenResponse = {
+  agent: Agent
+  enrollment: Enrollment
+}
+
+/**
+ * POST /api/agents 请求体：预创建服务器。
+ *
+ * `name` 是显示名且必填；`note` / `labels` 可选。
+ * 重名时后端返回 409，页面需据此给出「名称已被占用」的明确提示。
+ */
+export type CreateAgentRequest = {
+  name: string
+  note?: string
+  labels?: Record<string, string>
 }

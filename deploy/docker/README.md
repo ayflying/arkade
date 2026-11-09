@@ -17,6 +17,32 @@
 | `../../hub/Dockerfile` | Hub 镜像：先构建前端产物，再构建 Go 二进制 |
 | `../../agent/Dockerfile` | Agent 镜像：静态 Go 二进制 |
 
+## 独立部署 Agent（网页预建服务器）
+
+这是受管服务器上的 **Agent**，不是 HTTP/SOCKS 网络代理。网页先点击“添加服务器”创建待接入记录，取得该记录的专属接入密钥；首次连接后绑定该记录，不再重复创建。
+
+在目标服务器上准备可信的 Agent 镜像（当前不假设存在公开镜像仓库）：
+
+```bash
+# 在仓库根目录构建Linux镜像
+docker build -f agent/Dockerfile -t arkade-agent:debug .
+# 准备独立目录，不覆盖Hub演示部署现有的.env
+mkdir -p ./agent-node
+cp deploy/docker/agent-compose.yml deploy/docker/agent.config.toml ./agent-node/
+cp deploy/docker/agent.env.example ./agent-node/.env
+cd ./agent-node
+# 编辑.env：填写专属ARKADE_AGENT_TOKEN和可达的ARKADE_AGENT_HUB_URL
+chmod 600 .env
+docker compose -f agent-compose.yml up -d
+docker compose -f agent-compose.yml ps
+```
+
+- 生产连接建议 `wss://你的域名/agent/connect`；内网测试可用 `ws://Hub地址:端口/agent/connect`。跨主机不要填写Agent自己的 `127.0.0.1` 或仅在Hub编排网络内可用的 `hub` 服务名。
+- 密钥只在创建/重置时完整返回，不写入程序配置文件或YAML。丢失后在网页重置，旧密钥立即作废；更新 `.env` 后用 `docker compose -f agent-compose.yml up -d --force-recreate` 重新注入。
+- `.env`、复制出的部署目录和密钥不得提交到Git；不要分享会展开密钥的 `docker compose config` 输出。
+- 保留Agent数据卷，以复用身份和本地编排。只有明确要清除该节点数据时才删除卷。
+- Docker socket允许控制宿主机容器，等同高权限访问，仅在可信机器上部署。Podman的套接字路径与权限需单独验证，不能直接照搬Docker配置。
+
 ## 使用
 
 凭据只配在编排层（`.env`），程序配置文件里一律留空——配置只有一处来源，不用两头改。

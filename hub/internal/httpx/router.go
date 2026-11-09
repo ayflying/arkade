@@ -32,6 +32,19 @@ type Deps struct {
 	AgentConn  http.Handler // Agent 连接处理器（不套会话中间件）
 	WebDist    string       // 前端产物目录，空则不托管
 	HubVersion string
+	// AgentSharedToken 是配置里的全局共享 token 明文。
+	//
+	// 只在生成专属密钥时用于"避免同值"检查，不会写库、不会出现在任何响应里。
+	// 之所以需要它：若一把专属密钥恰好与共享 token 同值，
+	// 认证时同一个字符串会有两种解释（专属身份 vs 共享身份），
+	// 那是提权漏洞的经典形态。生成时避开它，比事后加判断干净得多。
+	AgentSharedToken string
+	// Guard 把"握手最终校验 + 写库 + 登记"与"撤销写库 + 断开"串行化。
+	//
+	// 撤销类 handler（reset / delete / disable）必须用它包住写库与 Close，
+	// 否则会与在途握手产生竞态：那次握手的 Close 找不到连接，
+	// 而它会照常上线甚至复活已删记录（详见 agentlink/generation.go）。
+	Guard *agentlink.EnrollmentGuard
 }
 
 // NewRouter 构造根路由。
@@ -83,6 +96,10 @@ func NewRouter(d Deps) http.Handler {
 			// 全部要求 admin（在 handler 里用 requireAdmin 判断），
 			// 因为它们改的是纳管关系本身，会影响到所有用户组。
 			priv.Patch("/agents/{agentID}", handlePatchAgent(d))
+			// 预创建服务器：先建记录并下发专属密钥，再由那台机器接入。
+			priv.Post("/agents", handleCreateAgent(d))
+			// 重置专属密钥：旧密钥立即失效并踢掉现有连接。
+			priv.Post("/agents/{agentID}/token/reset", handleResetAgentToken(d))
 			priv.Delete("/agents/{agentID}", handleDeleteAgent(d))
 			priv.Post("/agents/{agentID}/disable", handleDisableAgent(d))
 			priv.Post("/agents/{agentID}/enable", handleEnableAgent(d))

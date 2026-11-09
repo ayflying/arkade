@@ -29,6 +29,27 @@ type testEnv struct {
 	db     *store.DB
 	auth   *auth.Service
 	log    *slog.Logger
+
+	// registry 与 guard 是**真实装配**的一部分，必须与 WebSocket 服务共用。
+	//
+	// 早先这里每个测试各建一个 Registry，于是出现一类假失败：
+	// HTTP 的"重置密钥"踢的是 A 表，而测试的 Agent 连在 B 表上，
+	// 即使生产代码正确也测不过；反过来更糟——它会掩盖真实的踢连接 bug。
+	registry *agentlink.Registry
+	guard    *agentlink.EnrollmentGuard
+
+	// agentHandler 是 Agent 连接入口（供测试在需要时换成阻塞式 handler）。
+	agentHandler *agentlink.Server
+
+	// gate 是握手闸门：竞态测试用它把握手停在"已认证、未注册"位置。
+	gate *gatedHello
+
+	// wsURL 是同一个 httptest 服务的地址，Agent 与 API 打在同一台服务上，
+	// 与生产一致（生产也是同一个端口）。
+	wsURL string
+
+	// closeSrv 关闭 httptest 服务。
+	closeSrv func()
 }
 
 // newTestEnv 搭建一套真实依赖（真实 SQLite 临时文件），只有地址是虚拟的。
@@ -68,6 +89,18 @@ func newTestEnv(t *testing.T) *testEnv {
 	authSvc := auth.NewService(db, time.Hour)
 	reg := agentlink.NewRegistry()
 	ops := agentlink.NewOps(reg)
+	guard := agentlink.NewEnrollmentGuard()
+
+	// Agent 连接服务：注入与路由相同的 registry 与 guard，
+	// 这样撤销类接口（reset/delete/disable）真的能作用到测试的 Agent 连接上。
+	//
+	// 外面包一层可挂起的 gate：竞态测试需要把握手停在
+	// "已认证、未注册"这个精确位置，再插入撤销操作。
+	// 平时它直接透传，不影响其它测试。
+	gate := &gatedHello{sink: &agentSink{db: db, log: log}}
+	agentSrv := agentlink.NewServer(reg, composeTestAgentToken, "test", gate, log)
+	agentSrv.SetCredentialStore(NewCredentialStore(db))
+	agentSrv.SetEnrollmentGuard(guard)
 
 	router := NewRouter(Deps{
 		Log:        log,
@@ -75,12 +108,30 @@ func newTestEnv(t *testing.T) *testEnv {
 		Auth:       authSvc,
 		Registry:   reg,
 		Ops:        ops,
-		AgentConn:  http.NotFoundHandler(),
+		AgentConn:  http.HandlerFunc(agentSrv.HandleConnect),
 		WebDist:    "",
 		HubVersion: "test",
+		// 与生产一致：handler 需要共享 token 才能"避开同值"生成专属密钥。
+		AgentSharedToken: composeTestAgentToken,
+		Guard:            guard,
 	})
 
-	return &testEnv{router: router, db: db, auth: authSvc, log: log}
+	// 同一个端口同时服务 API 与 Agent 连接（生产也是这样）。
+	srv := httptest.NewServer(router)
+	t.Cleanup(srv.Close)
+
+	return &testEnv{
+		router:       router,
+		db:           db,
+		auth:         authSvc,
+		log:          log,
+		registry:     reg,
+		guard:        guard,
+		agentHandler: agentSrv,
+		gate:         gate,
+		wsURL:        srv.URL,
+		closeSrv:     srv.Close,
+	}
 }
 
 // do 执行一次请求并返回响应与解析后的错误体。

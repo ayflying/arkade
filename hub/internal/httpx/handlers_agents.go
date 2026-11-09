@@ -93,6 +93,15 @@ func toAgentView(rec store.AgentRecord, online map[string]struct{}) agentView {
 	status := "offline"
 	if _, ok := online[rec.ID]; ok {
 		status = "online"
+	} else if rec.Status == store.StatusPending {
+		// 预建但从未接入：保持 pending，不要降级成 offline。
+		//
+		// 关键在于"offline 与 pending 要用户做的事完全不同"：
+		//   offline = 曾经连上过，现在断了 → 去查网络、查进程、查为什么掉线；
+		//   pending = 从没连上过 → 去那台机器上部署 Agent、填密钥。
+		// 把 pending 显示成 offline，会让一台还没部署的机器看起来像故障，
+		// 用户按"掉线"的思路排查，永远找不到问题。
+		status = store.StatusPending
 	}
 	labels := rec.Labels
 	if labels == nil {

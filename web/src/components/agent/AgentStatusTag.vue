@@ -25,8 +25,8 @@ const props = withDefaults(defineProps<Props>(), { disabled: false })
 
 const style = computed(() => mapAgentStatus(props.status))
 
-/** 契约内只有三种状态；其余视为未知，给徽标加虚线提示 */
-const isKnown = computed(() => ['online', 'offline', 'upgrading'].includes(props.status))
+/** 已知状态：其余视为未知，给徽标加虚线提示 */
+const isKnown = computed(() => ['online', 'offline', 'pending', 'upgrading'].includes(props.status))
 
 /**
  * 实际展示的文案类型。

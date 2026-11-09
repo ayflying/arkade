@@ -45,6 +45,25 @@ func respondJSON(w http.ResponseWriter, log *slog.Logger, status int, body any) 
 	}
 }
 
+// respondSecretJSON 用于响应体含**一次性密钥**的接口。
+//
+// 除了 respondJSON 已有的 no-store，还额外加三条：
+//
+//	Pragma: no-cache         —— 兼容 HTTP/1.0 的中间代理（它们只认这个）；
+//	Cache-Control: no-store  —— 覆盖所有现代缓存，且明确"不要存到磁盘"；
+//	X-Content-Type-Options   —— 防止浏览器把 JSON 当 HTML 嗅探渲染。
+//
+// 为什么值得单开一个函数：这些头只对"含密钥的响应"是必须的，
+// 而"必须"的理由是密钥一旦被浏览器缓存或中间代理留存，
+// 就等价于把凭据写进了一个用户无法清除、我们也看不到的地方。
+// 把它们和普通响应用同一个函数，将来很容易在重构时丢失。
+func respondSecretJSON(w http.ResponseWriter, log *slog.Logger, status int, body any) {
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
+	respondJSON(w, log, status, body)
+}
+
 // respondError 是唯一的错误出口。
 //
 // 映射规则与前端契约严格对应：

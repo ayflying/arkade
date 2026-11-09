@@ -49,6 +49,13 @@ func NewApp(ctx context.Context, cfg config.Config, log *slog.Logger, version st
 	helloHandler := &agentSink{db: db, log: log}
 
 	agentSrv := agentlink.NewServer(reg, cfg.Auth.AgentToken, version, helloHandler, log)
+	// 注入专属凭据查询：有了它，专属密钥才能按摘要解析出绑定身份，
+	// 共享 token 也才能拒绝认领已被专属密钥绑定的服务器。
+	agentSrv.SetCredentialStore(NewCredentialStore(db))
+	// 注入握手临界区守卫：握手侧与撤销侧（reset/delete/disable）共用同一把锁，
+	// 消除"认证通过后、注册前被撤销"的竞态。撤销侧拿的就是这个对象。
+	guard := agentlink.NewEnrollmentGuard()
+	agentSrv.SetEnrollmentGuard(guard)
 	ops := agentlink.NewOps(reg)
 
 	router := NewRouter(Deps{
@@ -60,6 +67,10 @@ func NewApp(ctx context.Context, cfg config.Config, log *slog.Logger, version st
 		AgentConn:  http.HandlerFunc(agentSrv.HandleConnect),
 		WebDist:    cfg.Web.Dist,
 		HubVersion: version,
+		// 传给 handler 只为"生成密钥时避开与共享 token 同值"。
+		// 它不会写库、不会进响应、不会进日志。
+		AgentSharedToken: cfg.Auth.AgentToken,
+		Guard:            guard,
 	})
 
 	httpSrv := &http.Server{

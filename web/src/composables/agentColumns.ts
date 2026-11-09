@@ -31,6 +31,7 @@ export const OFFLINE_ROW_CLASS = 'agent-row--offline'
 export interface AgentColumnHandlers {
   onEnter: (agent: Agent) => void
   onEdit: (agent: Agent) => void
+  onResetToken: (agent: Agent) => void
   onToggleDisabled: (agent: Agent) => void
   onDelete: (agent: Agent) => void
   isBusy: (agentId: string) => boolean
@@ -116,8 +117,8 @@ export function createAgentColumns(handlers: AgentColumnHandlers): DataTableColu
     {
       title: '操作',
       key: 'actions',
-      // 四个按钮横排，给足宽度；窄屏靠 scroll-x 横向滚动兜底
-      width: 220,
+      // 五个按钮横排，给足宽度；窄屏靠 scroll-x 横向滚动兜底
+      width: 300,
       fixed: 'right',
       render: (row) =>
         h(AgentRowActions, {
@@ -125,6 +126,7 @@ export function createAgentColumns(handlers: AgentColumnHandlers): DataTableColu
           busy: handlers.isBusy(row.id),
           onEnter: () => handlers.onEnter(row),
           onEdit: () => handlers.onEdit(row),
+          'onReset-token': () => handlers.onResetToken(row),
           'onToggle-disabled': () => handlers.onToggleDisabled(row),
           onDelete: () => handlers.onDelete(row)
         })
@@ -133,8 +135,11 @@ export function createAgentColumns(handlers: AgentColumnHandlers): DataTableColu
 }
 
 /**
- * 行属性：离线/未知状态的行加上置灰 class。
- * 置灰是视觉弱化，真正的拦截在 AgentRowActions 里（disabled + tooltip）。
+ * 行属性：离线/未知/pending 状态的行加上置灰 class。
+ *
+ * pending 也置灰，并且额外加一个「不可点」的标记：
+ * 它没有容器数据可看，整行置灰能让用户点之前就预期到「这台还没通」，
+ * 而不是点进去看到空列表再疑惑。真正的拦截在页面 enterAgent 里。
  */
 export function agentRowProps(row: Agent): Record<string, unknown> {
   const style = mapAgentStatus(row.status)
