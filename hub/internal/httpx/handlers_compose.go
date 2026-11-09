@@ -23,7 +23,6 @@ import (
 	"context"
 	"net/http"
 	"sort"
-	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -36,8 +35,9 @@ import (
 
 // createStackRequest 是创建编排的请求体。
 type createStackRequest struct {
-	Name    string `json:"name"`
-	Content string `json:"content"`
+	Name       string `json:"name"`
+	Content    string `json:"content"`
+	EnvContent string `json:"env_content"`
 }
 
 // handleCreateStack 处理 POST /api/agents/{agentID}/stacks。
@@ -63,11 +63,15 @@ func handleCreateStack(d Deps) http.HandlerFunc {
 			return
 		}
 
-		hash := composeConfigHash(req.Content)
+		if err := validateComposeEnv(req.EnvContent); err != nil {
+			badRequest(w, d, "%s", err.Error())
+			return
+		}
+		hash := composeProjectHash(req.Content, req.EnvContent)
 		now := time.Now().UTC()
 		rec := store.ComposeStack{
 			ID: "stk-" + randomSuffix(), AgentID: agentID, Name: req.Name,
-			Content: req.Content, ConfigHash: hash, Version: 1,
+			Content: req.Content, EnvContent: req.EnvContent, ConfigHash: hash, Version: 1,
 			CreatedAt: now, UpdatedAt: now,
 		}
 		if err := d.DB.CreateComposeStack(r.Context(), rec); err != nil {
@@ -108,7 +112,7 @@ func compoResultOrNil(res envelope.ComposeOpResult, ok bool) any {
 // 下发失败是另一回事，用 sync_ok/sync_hint 表达，前端显示橙色警告即可。
 func (d Deps) dispatchComposeUp(r *http.Request, agentID string, rec store.ComposeStack) (envelope.ComposeOpResult, bool, string) {
 	spec := envelope.ComposeSpecPayload{
-		Name: rec.Name, Content: rec.Content, ContentHash: rec.ConfigHash,
+		Name: rec.Name, Content: rec.Content, EnvContent: rec.EnvContent, ContentHash: rec.ConfigHash,
 	}
 	res, cerr := d.Ops.ComposeUp(r.Context(), agentID, spec)
 	if cerr != nil {
@@ -132,6 +136,8 @@ func (d Deps) dispatchComposeUp(r *http.Request, agentID string, rec store.Compo
 // updateStackRequest 是更新编排的请求体。
 type updateStackRequest struct {
 	Content string `json:"content"`
+	// 省略保留旧.env，空字符串明确清空，避免旧客户端静默删除密钥。
+	EnvContent *string `json:"env_content"`
 	// Version 是乐观锁：必须是客户端读到的版本号。
 	// 不提供"跳过校验"的开关——那等于允许静默覆盖别人的修改。
 	Version int64 `json:"version"`
@@ -161,8 +167,21 @@ func handleUpdateStack(d Deps) http.HandlerFunc {
 			return
 		}
 
-		hash := composeConfigHash(req.Content)
-		updated, ok, err := d.DB.UpdateComposeStack(r.Context(), agentID, name, req.Version, req.Content, hash)
+		previous, err := d.DB.GetComposeStack(r.Context(), agentID, name)
+		if err != nil {
+			respondStoreError(w, d, err, "编排不存在")
+			return
+		}
+		envContent := previous.EnvContent
+		if req.EnvContent != nil {
+			envContent = *req.EnvContent
+		}
+		if err := validateComposeEnv(envContent); err != nil {
+			badRequest(w, d, "%s", err.Error())
+			return
+		}
+		hash := composeProjectHash(req.Content, envContent)
+		updated, ok, err := d.DB.UpdateComposeProject(r.Context(), agentID, name, req.Content, envContent, hash, req.Version, time.Now().UTC())
 		if err != nil {
 			respondStoreError(w, d, err, "编排不存在")
 			return
@@ -390,22 +409,21 @@ func handleGetStack(d Deps) http.HandlerFunc {
 			}
 		}
 
+		// 详情仅返回运行元数据；配置内容从manage专用/config接口读取。
 		respondJSON(w, d.Log, http.StatusOK, map[string]any{
-			"stack":   toStackView(rec, remote),
-			"content": rec.Content,
+			"stack": toStackView(rec, remote),
 		})
 	}
 }
 
 // handleGetStackConfig 处理 GET /api/agents/{agentID}/stacks/{name}/config。
 //
-// 只返回纯文本（Content-Type: text/plain），不包 JSON：
-// 编辑页直接把它塞进 textarea，包一层 JSON 反而要前端多解析一次。
+// 配置含.env敏感信息，仅manage可读取，JSON返回项目文件与版本，禁止缓存。
 func handleGetStackConfig(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		agentID := agentIDFromPath(r)
 		name := chi.URLParam(r, "name")
-		if !requirePermission(w, d, r, agentID, user.PermView) {
+		if !requirePermission(w, d, r, agentID, user.PermManage) {
 			return
 		}
 		if !requireComposeName(w, d, name) {
@@ -416,11 +434,9 @@ func handleGetStackConfig(d Deps) http.HandlerFunc {
 			respondStoreError(w, d, err, "编排不存在")
 			return
 		}
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-store")
-		// 把版本号放进响应头，编辑页更新时用得上（省一次详情请求）。
-		w.Header().Set("X-Arkade-Stack-Version", strconv.FormatInt(rec.Version, 10))
-		_, _ = w.Write([]byte(rec.Content))
+		respondSecretJSON(w, d.Log, http.StatusOK, map[string]any{
+			"content": rec.Content, "env_content": rec.EnvContent, "version": rec.Version,
+		})
 	}
 }
 
@@ -431,9 +447,8 @@ func handleGetStackConfig(d Deps) http.HandlerFunc {
 // 还占着端口和卷的编排，用户彻底无法管理。反之若 Agent 已删、删记录失败，
 // 下次列表会显示 drift/孤儿，还能再点一次删除。
 //
-// Agent 离线时怎么办？**允许删除记录**：用户明确要删，而 Agent 此刻不在线；
-// 把记录留着会让用户的删除意图永远无法完成。响应里用 sync_ok=false 提示
-// "记录已删除，但 Agent 离线，本机文件仍在"。
+// Agent离线或执行失败时保留记录，避免仍运行的服务从管理界面消失。
+// 默认保留卷，删除数据卷必须是明确的独立勾选。
 func handleDeleteStack(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		agentID := agentIDFromPath(r)
@@ -451,20 +466,21 @@ func handleDeleteStack(d Deps) http.HandlerFunc {
 			return
 		}
 
-		// 默认连带删卷：用户点"删除编排"时预期的是彻底清理，
-		// 留一堆匿名卷占着磁盘是更常见的抱怨来源。
+		removeVolumes, valid := parseBoolQuery(r.URL.Query().Get("remove_volumes"))
+		if !valid {
+			badRequest(w, d, "remove_volumes必须是true或false")
+			return
+		}
+		// 默认保留数据卷，只有用户明确确认时才允许删除。
 		opRes, cerr := d.Ops.ComposeRemove(r.Context(), agentID, envelope.ComposeOpPayload{
-			Name: name, RemoveVolumes: true,
+			Name: name, RemoveVolumes: removeVolumes,
 		})
 		syncOK := cerr == nil
 		syncMsg := ""
 		if cerr != nil {
-			if cerr.Code == envelope.CodeAgentOffline {
-				syncMsg = "记录已删除，但 Agent 当前离线，本机编排文件与容器仍然存在，恢复上线后需要手动清理"
-			} else {
-				syncMsg = "记录已删除，但 Agent 执行删除失败：" + cerr.Message
-			}
-			d.Log.Warn("删除编排时下发失败", "agent", agentID, "name", name, "err", cerr)
+			// 删除执行失败必须保留管理记录，否则仍在运行的项目会从界面消失。
+			respondError(w, d.Log, cerr.Code, "删除未完成，编排记录已保留："+cerr.Message)
+			return
 		}
 
 		if err := d.DB.DeleteComposeStack(r.Context(), agentID, name); err != nil {
@@ -537,7 +553,7 @@ func handleStackAction(d Deps) http.HandlerFunc {
 		case "up":
 			// up 必须重新下发内容：Agent 本机文件可能被别人改过或丢了，
 			// 直接执行 up 会跑起一份与 Hub 记录不一致的编排。
-			spec := envelope.ComposeSpecPayload{Name: rec.Name, Content: rec.Content, ContentHash: rec.ConfigHash}
+			spec := envelope.ComposeSpecPayload{Name: rec.Name, Content: rec.Content, EnvContent: rec.EnvContent, ContentHash: rec.ConfigHash}
 			res, cerr := d.Ops.ComposeUp(ctx, agentID, spec)
 			if cerr != nil {
 				respondConnError(w, d, cerr)
@@ -569,7 +585,6 @@ func handleStackAction(d Deps) http.HandlerFunc {
 			if !requirePermission(w, d, r, agentID, user.PermManage) {
 				return
 			}
-			opPayload.RemoveVolumes = true
 			res, cerr := d.Ops.ComposeRemove(ctx, agentID, opPayload)
 			if cerr != nil {
 				respondConnError(w, d, cerr)

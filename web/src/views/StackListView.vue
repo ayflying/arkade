@@ -26,6 +26,7 @@ import AppIcon from '@/components/common/AppIcon.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import StackStateTag from '@/components/stack/StackStateTag.vue'
+import StackImportModal from '@/components/stack/StackImportModal.vue'
 import { listStacks } from '@/api/stacks'
 import { useCurrentAgent } from '@/composables/useCurrentAgent'
 import { usePolling } from '@/composables/usePolling'
@@ -35,6 +36,17 @@ import { formatAbsoluteTime, formatRelativeTime } from '@/utils/formatTime'
 
 const router = useRouter()
 const { agentId, isOnline: storeOnline, displayName } = useCurrentAgent()
+
+/** 导入纳管弹窗 */
+const importShow = ref(false)
+/** 要导入的项目名（来自被点的那一行） */
+const importProjectName = ref('')
+
+/** 打开导入弹窗 */
+function openImport(projectName: string): void {
+  importProjectName.value = projectName
+  importShow.value = true
+}
 
 const stacks = ref<StackSummary[]>([])
 /** 未纳管编排：Agent 上有、Hub 里没有（只有名字，旧字段兼容） */
@@ -128,9 +140,9 @@ const subtitle = computed(() => {
 /**
  * 未纳管项目表格列。
  *
- * 只有只读信息，**不放任何操作按钮**：
+ * 除「导入纳管」外不放任何操作：
  * 这些是用户自己在服务器上起的项目，Arkade 不该假装能编辑/启停它们
- * （会读到不存在的接口，或者更糟——误伤线上服务）。
+ * （会打到不存在的接口，或者更糟——误伤线上服务）。
  */
 const unmanagedColumns = computed<DataTableColumns<ExternalStack>>(() => [
   {
@@ -146,18 +158,75 @@ const unmanagedColumns = computed<DataTableColumns<ExternalStack>>(() => [
     render: (row) => h(StackStateTag, { state: row.status })
   },
   {
-    title: '服务数',
+    title: '服务',
     key: 'services',
-    width: 100,
-    render: (row) => (row.services > 0 ? String(row.services) : '—')
+    width: 160,
+    /*
+     * 后端给的是 services: string[]（服务名列表），不是数字。
+     * 之前这里写 row.services > 0 是按错误类型写的：
+     * 数组和数字比较永远为 false，于是永远显示「—」。
+     *
+     * 显示数量、名字进 tooltip：服务名可能很长，
+     * 全列出来会把表格撑爆，但用户排查时需要知道具体是哪些。
+     *
+     * null = 未知（字段缺失/Agent 离线）→ 显示「—」；
+     * 空数组 = 确实没有服务 → 显示「0 个」。两者不能混。
+     */
+    render: (row) => {
+      const names = row.services
+      if (!Array.isArray(names)) return '—'
+      if (names.length === 0) {
+        return h('span', { class: 'arkade-cell-muted' }, '0 个')
+      }
+      return h(
+        'span',
+        { title: names.join('、'), class: 'arkade-cell-muted' },
+        `${names.length} 个`
+      )
+    }
   },
   {
     title: '容器数',
     key: 'containers',
     width: 110,
-    // 运行中/总数：只给总数看不出服务到底活没活
+    /*
+     * 运行中/总数：只给总数看不出服务到底活没活。
+     * 任一为 null（未知）就整体显示「—」——
+     * 既不能拼出「2 / undefined」，也不能把未知当 0 显示成「0 / 0」。
+     */
+    render: (row) => {
+      const running = row.running
+      const total = row.total
+      if (typeof running !== 'number' || typeof total !== 'number') return '—'
+      if (!Number.isFinite(running) || !Number.isFinite(total)) return '—'
+      return `${running} / ${total}`
+    }
+  },
+  {
+    title: '操作',
+    key: 'actions',
+    width: 110,
+    /*
+     * 一律显示入口，**不按角色隐藏**。
+     *
+     * 后端权限是「用户组 × 该 Agent」授予的 view/operate/manage，
+     * 普通用户被授予 manage 后同样可以导入。前端没有接口能查到自己在某台
+     * Agent 上的档位，按 admin/user 角色猜会让有权限的用户永远看不到入口。
+     * 真正的拦截在后端（import 要 manage），被拒时按 403 提示。
+     */
     render: (row) =>
-      `${row.containers_running} / ${row.containers_total}`
+      h(
+        NButton,
+        {
+          size: 'tiny',
+          tertiary: true,
+          onClick: (e: MouseEvent) => {
+            e.stopPropagation()
+            openImport(row.name)
+          }
+        },
+        () => '导入纳管'
+      )
   }
 ])
 
@@ -230,10 +299,17 @@ const columns = computed<DataTableColumns<StackSummary>>(() => [
     title: '服务数',
     key: 'running',
     minWidth: 110,
-    // 后端字段是 running / total（不是 services_running / services_total）
+    /*
+     * 后端字段是 running / total（不是 services_running / services_total）。
+     * 任一为 null（未知）就显示「—」——不能把未知当成 0 渲染成「运行 0 / 共 0」，
+     * 那会让用户以为服务全挂了。
+     */
     render: (row) => {
       const running = row.running
       const total = row.total
+      if (typeof running !== 'number' || typeof total !== 'number') {
+        return h('span', { class: 'arkade-cell-muted' }, '—')
+      }
       // 全部运行绿色、部分运行橙色、全停灰色，便于快速扫视
       const color = total > 0 && running === total ? '#18a058' : running === 0 ? '#8b9099' : '#f0a020'
       return h('span', { style: `color:${color}` }, `运行 ${running} / 共 ${total}`)
@@ -287,6 +363,11 @@ onMounted(() => {
         <n-button size="small" :disabled="!isOnline" :loading="loading" @click="refresh()">
           刷新
         </n-button>
+        <!--
+          新建编排一律显示：写权限是「用户组 × 该 Agent」授予的 manage，
+          前端查不到自己在单台服务器上的档位，不能按角色猜。
+          没有权限时后端会 403，提示由页面统一处理。
+        -->
         <n-button size="small" type="primary" @click="goCreate">新建编排</n-button>
       </template>
     </page-header>
@@ -405,6 +486,17 @@ onMounted(() => {
         <n-tag :bordered="false" size="small">正在加载编排列表…</n-tag>
       </div>
     </div>
+
+    <!--
+      导入纳管：把服务器上已有项目的配置复制进 Arkade 管理区。
+      导入**不会启动、停止或重建任何容器**，弹窗里有明确说明。
+    -->
+    <stack-import-modal
+      v-model:show="importShow"
+      :agent-id="agentId ?? ''"
+      :project-name="importProjectName"
+      @imported="refresh()"
+    />
   </div>
 </template>
 

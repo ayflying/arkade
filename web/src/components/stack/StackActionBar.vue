@@ -25,9 +25,18 @@ interface Props {
   online: boolean
   /** 删除中（外部触发的忙碌态） */
   deleting?: boolean
+  /**
+   * 当前账号是否有变更权限（manage）。
+   *
+   * 这些动作都要求 manage：up/rebuild/remove 后端都会校验。
+   * 只读账号看到一排亮着的按钮、点了才被 403，体验很差；
+   * 这里直接禁用。**这只是界面收敛，不是安全边界**——
+   * 真正的拦截永远在后端。
+   */
+  permitted?: boolean
 }
 
-const props = withDefaults(defineProps<Props>(), { deleting: false })
+const props = withDefaults(defineProps<Props>(), { deleting: false, permitted: true })
 
 const emit = defineEmits<{
   (e: 'action', action: StackAction): void
@@ -46,14 +55,29 @@ const isStopped = computed(() => props.state === 'stopped')
 /**
  * 状态是否「可知」。
  *
- * Agent 离线时后端把编排状态标成 'offline'——这表示查不到真实状态，
- * 而不是「已停止」。此时既不该判定为可启动，也不该判定为可停止，
- * 所有操作按钮统一按不可用处理（上层也用 online 禁用，这里双重保险）。
+ * - `offline`：Agent 离线，查不到真实状态，不是「已停止」；
+ * - `unknown`：后端也没给出有效状态；
+ * - `busy`：Agent 正在对该项目执行操作，此刻读到的是**半写状态**，
+ *   既不能判定为运行中也不能判定为已停止。
+ *
+ * 这三种情况下一律不推断运行/停止，操作按钮统一按不可用处理
+ * （上层也用 online 禁用，这里双重保险）。
+ *
+ * busy 单独列出来是关键：若把它当「不是 offline」放过去，
+ * 就会被当成可操作状态，用户可能在 Agent 正在 down 的中途点 up，
+ * 两个操作互相踩，结果不可预测。
  */
-const stateKnown = computed(() => props.state !== 'offline' && props.state !== 'unknown')
+const stateKnown = computed(
+  () => props.state !== 'offline' && props.state !== 'unknown' && props.state !== 'busy'
+)
 
-/** 综合可用性：在线 + 状态可知 + 无操作在途 */
-const canOperate = computed(() => props.online && stateKnown.value && !busy.value)
+/** 项目是否正在被 Agent 操作中（用于给出「请稍候」的解释） */
+const isBusy = computed(() => props.state === 'busy')
+
+/** 综合可用性：有权限 + 在线 + 状态可知 + 无操作在途 */
+const canOperate = computed(
+  () => props.permitted && props.online && stateKnown.value && !busy.value
+)
 
 /**
  * 更新镜像与重建的确认文案。
@@ -62,7 +86,8 @@ const canOperate = computed(() => props.online && stateKnown.value && !busy.valu
  * 但用户常常以为是「热更新」，所以必须说清会中断。
  */
 async function confirmAndRun(action: StackAction, title: string, content: string): Promise<void> {
-  if (busy.value) return
+  // busy / 离线 / 状态未知时连确认框都不弹：弹了也执行不了，只是多一步
+  if (busy.value || !stateKnown.value) return
   const ok = await confirmAction({
     title,
     content,
@@ -75,7 +100,8 @@ async function confirmAndRun(action: StackAction, title: string, content: string
 
 /** 直接执行（无需确认的操作） */
 function run(action: StackAction): void {
-  if (busy.value || !props.online) return
+  // stateKnown 已排除 busy：项目正在被操作时不能叠加新动作
+  if (busy.value || !props.online || !props.permitted || !stateKnown.value) return
   runningAction.value = action
   emit('action', action)
 }
@@ -135,6 +161,14 @@ defineExpose({ finish })
 
 <template>
   <div class="stack-actions">
+    <!--
+      操作中的提示条：按钮全部变灰时，用户需要知道「为什么」。
+      没有这句解释，用户会以为界面卡住了或者权限不够。
+    -->
+    <span v-if="isBusy" class="stack-actions__busy">
+      该项目正在执行操作，请等待完成后再继续。
+    </span>
+
     <!--
       启动用 primary 主色，但只在真正可点时才上主色。
       服务运行中时「启动」是禁用的，若仍画成醒目的蓝按钮，
@@ -197,14 +231,17 @@ defineExpose({ finish })
 
     <!--
       删除是最危险的操作：二次确认 + 红色。
-      这里不传 online 判断，是因为删除的是 Hub 里的记录 + 容器，
-      即使 Agent 离线也应当允许用户清理纳管关系（是否真的清掉容器由后端处理）。
+      注意这里**保留** online 判断：删除必须由 Agent 在那台机器上真正移除容器和文件，
+      Agent 离线时后端会 503 并保留记录，所以离线时禁用而不是让用户点完拿一个报错。
+      同时也要 permitted——删除要 manage 权限。
+      另外还要排除 stateKnown 里的 busy：
+      项目正在被操作时删除，会和进行中的操作互相踩，可能留下半清理状态。
     -->
     <n-button
       size="small"
       type="error"
       secondary
-      :disabled="busy"
+      :disabled="busy || !online || !permitted || !stateKnown"
       :loading="deleting"
       @click="emit('delete')"
     >
@@ -217,6 +254,13 @@ defineExpose({ finish })
 .stack-actions {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
+}
+
+/* 操作中的解释文案：不抢按钮的视觉重点，但要能读到 */
+.stack-actions__busy {
+  font-size: 12px;
+  color: var(--arkade-text-tertiary);
 }
 </style>

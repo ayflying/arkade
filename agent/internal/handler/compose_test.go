@@ -91,37 +91,44 @@ func TestComposeUpValidation(t *testing.T) {
 	}
 }
 
-// TestComposeUpPersistsContentEvenWhenCommandFails 验证核心规则：
-// **命令失败时编排内容仍然落盘**。
+// TestComposeUpValidatesBeforeWriting 验证"配置不合法时**不写盘**"。
 //
-// 理由：用户写的 YAML 是最宝贵的资产。compose 命令可能因为引擎暂时不可用
-// 而失败，但那不该导致用户的内容丢失——重试时不该让用户重新粘贴一遍。
-func TestComposeUpPersistsContentEvenWhenCommandFails(t *testing.T) {
+// 这条规则替代了早先的"命令失败也要保住内容"：
+// 保住内容的动机是对的，但做法错了。把 compose 解析不了的 compose.yml
+// 写进项目目录，会让这个项目之后**所有**命令都失败——
+// 包括 down/stop，用户连"把它停掉"都做不到，只能登机器手工删文件。
+//
+// 更严重的是它会覆盖**正在运行的项目**的配置：
+// 用户看到"下发失败"，但下一次 stop/restart 用的已经是被判为无效的那份内容。
+//
+// 因此现在的顺序是：先在临时目录校验 → 通过才写 → 再 up。
+// 本机没有 docker，校验必然失败，所以断言"目录里什么都没有"。
+func TestComposeUpValidatesBeforeWriting(t *testing.T) {
 	reg, mgr := newComposeRegistry(t)
 	const content = "services:\n  web:\n    image: nginx\n"
 
 	resp := request(t, reg, envelope.MethodComposeUp, envelope.ComposeSpecPayload{
 		Name: "web", Content: content,
 	})
-	// 本机没有 docker，命令必然失败 → 必须报错（不能静默成功）。
+	// 校验失败必须报错（不能静默成功）。
 	if resp.Error == nil {
-		t.Fatal("命令失败时必须返回错误，不能报告成功")
+		t.Fatal("校验失败时必须返回错误，不能报告成功")
 	}
-
-	// 但文件必须已经落盘。
-	got, err := mgr.Workspace().Read("web")
-	if err != nil {
-		t.Fatalf("命令失败时编排文件仍应保存，实际读取失败: %v", err)
+	// 且**绝不能**留下文件：既没有 compose.yml，也没有 .env。
+	if mgr.Workspace().Exists("web") {
+		t.Error("校验未通过时不应写入 compose.yml（否则后续 stop/restart 都会失败）")
 	}
-	if got != content {
-		t.Errorf("保存的内容应与提交一致，实际 %q", got)
+	if mgr.Workspace().EnvExists("web") {
+		t.Error("校验未通过时不应写入 .env")
 	}
 }
 
-// TestComposeUpHashMismatch 验证哈希不符时的行为。
+// TestComposeUpHashMismatch 验证哈希不符时拒绝且不写盘。
 //
 // 声明哈希与内容对不上说明传输或 Hub 侧计算出了问题。
-// 此时保存文件（便于排查）但不启动，并给出明确说明。
+// 早先的实现选择"先落盘再报错便于排查"，那是危险的：
+// 它会覆盖正在运行项目的配置，于是下一次 stop/restart 用的就是这份可疑内容。
+// 排查所需的两个哈希值在错误信息里已经够了，不需要看磁盘上的文件。
 func TestComposeUpHashMismatch(t *testing.T) {
 	reg, mgr := newComposeRegistry(t)
 	const content = "services: {}\n"
@@ -135,9 +142,12 @@ func TestComposeUpHashMismatch(t *testing.T) {
 	if !strings.Contains(resp.Error.Message, "哈希") {
 		t.Errorf("文案应说明哈希不一致，实际 %q", resp.Error.Message)
 	}
-	// 文件仍应落盘。
-	if _, err := mgr.Workspace().Read("web"); err != nil {
-		t.Errorf("哈希不符时仍应保存文件便于排查: %v", err)
+	// 不得写盘。
+	if mgr.Workspace().Exists("web") {
+		t.Error("哈希不符时不得写入 compose.yml")
+	}
+	if mgr.Workspace().EnvExists("web") {
+		t.Error("哈希不符时不得写入 .env")
 	}
 }
 

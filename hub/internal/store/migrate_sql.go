@@ -227,4 +227,11 @@ var migrations = []migration{
 			`ALTER TABLE agents ADD COLUMN preprovisioned INTEGER NOT NULL DEFAULT 0`,
 		},
 	},
+	{
+		version: 7,
+		name:    "编排项目保存环境文件",
+		stmts: []string{
+			`ALTER TABLE compose_stacks ADD COLUMN env_content TEXT NOT NULL DEFAULT ''`,
+		},
+	},
 }

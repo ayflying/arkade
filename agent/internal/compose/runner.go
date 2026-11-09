@@ -58,6 +58,43 @@ type Runner struct {
 	Dir string
 	// Env 是额外环境变量，便于测试注入。
 	Env []string
+
+	// EnvFile 是项目的 .env 绝对路径；空表示该项目没有 .env。
+	//
+	// 显式传 --env-file 而不是依赖 compose 的"自动读当前目录 .env"：
+	//   - 自动读取依赖 cwd，一旦 cwd 变了就读不到（本项目里 cwd 是项目目录，
+	//     看起来没问题，但这类隐式依赖在重构时最容易断）；
+	//   - 显式传路径让"哪个文件参与插值"是完全确定的，便于排查。
+	EnvFile string
+
+	// EnvExcludeKeys 是必须从**继承环境**里剔除的变量名。
+	//
+	// 这是本项目最容易出错、后果最严重的一处，单独说明：
+	//
+	// docker compose 的插值优先级是 shell 环境 > .env 文件。
+	// 也就是说，如果 Agent 进程的环境里有 FOO，而项目 .env 里也定义了 FOO，
+	// 那么 ${FOO} 会取 **Agent 进程的 FOO**，.env 里的值被静默忽略。
+	//
+	// 真实危害：Agent 自己就带着 ARKADE_AGENT_TOKEN、ARKADE_DATA_DIR 等变量。
+	// 若某份编排里写了 ${ARKADE_AGENT_TOKEN}（恶意或用户笔误），
+	// 它就会被展开成 Hub 的接入密钥，然后写进容器配置、出现在 docker inspect、
+	// 甚至被容器里的进程读走。这不是理论风险，是"只要写错一个变量名就泄漏"。
+	//
+	// 因此规则是：把项目 .env 里定义的所有键，都从子进程的继承环境里剔除，
+	// 保证 .env 是真的生效；同时无条件剔除 ARKADE_* 前缀（见 environ）。
+	EnvExcludeKeys []string
+}
+
+// envFileArgs 返回 --env-file 参数（没有 .env 时为空）。
+//
+// 位置要求：--env-file 是 `docker compose` 的**全局选项**，
+// 必须放在子命令之前（compose --env-file x.env up），放在 up 之后会被当作
+// 未知参数而报错。
+func (r *Runner) envFileArgs() []string {
+	if strings.TrimSpace(r.EnvFile) == "" {
+		return nil
+	}
+	return []string{"--env-file", r.EnvFile}
 }
 
 // binary 返回要执行的 docker 路径。
@@ -88,11 +125,16 @@ var ErrTimeout = errors.New("compose 命令执行超时")
 // --project-name 显式指定而不是靠目录名推断：目录名虽然与项目名相同，
 // 但显式指定能让命令在任何工作目录下行为一致，也避免 compose 对目录名
 // 做额外的大小写/字符转换后与 Hub 记录的项目名对不上。
-func composeArgs(project string, args ...string) []string {
-	out := make([]string, 0, len(args)+4)
+//
+// envFile 是项目 .env 的绝对路径（空表示没有），作为全局选项放在最前面。
+func composeArgs(project, envFile string, args ...string) []string {
+	out := make([]string, 0, len(args)+6)
 	out = append(out, "compose")
 	if project != "" {
 		out = append(out, "--project-name", project)
+	}
+	if strings.TrimSpace(envFile) != "" {
+		out = append(out, "--env-file", envFile)
 	}
 	return append(out, args...)
 }
@@ -108,7 +150,7 @@ func (r *Runner) Run(ctx context.Context, project string, timeout time.Duration,
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(runCtx, r.binary(), composeArgs(project, args...)...)
+	cmd := exec.CommandContext(runCtx, r.binary(), composeArgs(project, r.EnvFile, args...)...)
 	cmd.Dir = r.Dir
 	cmd.Env = r.environ()
 
@@ -145,35 +187,53 @@ func (r *Runner) Run(ctx context.Context, project string, timeout time.Duration,
 	return res
 }
 
+// agentEnvPrefix 是 Agent 自身配置变量名的前缀。
+//
+// 一律不传给 compose 子进程，理由见 Runner.EnvExcludeKeys 的注释：
+// compose 的插值会优先取 shell 环境，Agent 的密钥因此可能被 ${} 展开进容器。
+const agentEnvPrefix = "ARKADE_"
+
 // environ 组装子进程环境变量。
 //
-// 显式覆盖 DOCKER_HOST 而不是追加：环境变量重复时行为依赖具体实现，
+// 三条规则，顺序有意义：
+//  1. 先放入显式注入的 r.Env（测试用，优先级最高）；
+//  2. 再从继承环境里复制，但剔除：ARKADE_* 前缀、项目 .env 已定义的键、
+//     以及将被显式覆盖的 DOCKER_HOST；
+//  3. 最后追加重设的 DOCKER_HOST。
+//
+// 显式覆盖而不是追加：环境变量重复时行为依赖具体实现，
 // 先过滤掉继承来的 DOCKER_HOST 再加入我们的值，避免"到底哪个生效"的不确定性。
 func (r *Runner) environ() []string {
-	var out []string
+	out := make([]string, 0, len(os.Environ())+len(r.Env)+1)
 	if len(r.Env) > 0 {
 		out = append(out, r.Env...)
 	}
-	want := strings.TrimSpace(r.DockerHost)
-	if want == "" {
-		// 不覆盖：让 compose 用当前进程环境里的值（如果有）。
-		return append(out, filteredEnviron("DOCKER_HOST")...)
-	}
-	out = append(out, filteredEnviron("DOCKER_HOST")...)
-	out = append(out, "DOCKER_HOST="+want)
-	return out
-}
 
-// filteredEnviron 返回除指定键之外的当前环境变量。
-func filteredEnviron(excludeKey string) []string {
-	env := os.Environ()
-	out := make([]string, 0, len(env))
-	prefix := excludeKey + "="
-	for _, kv := range env {
-		if strings.HasPrefix(kv, prefix) {
+	exclude := make(map[string]struct{}, len(r.EnvExcludeKeys)+1)
+	exclude["DOCKER_HOST"] = struct{}{}
+	for _, k := range r.EnvExcludeKeys {
+		k = strings.TrimSpace(k)
+		if k != "" {
+			exclude[k] = struct{}{}
+		}
+	}
+
+	for _, kv := range os.Environ() {
+		key, _, ok := strings.Cut(kv, "=")
+		if !ok {
+			continue
+		}
+		if strings.HasPrefix(key, agentEnvPrefix) {
+			continue
+		}
+		if _, skip := exclude[key]; skip {
 			continue
 		}
 		out = append(out, kv)
+	}
+
+	if want := strings.TrimSpace(r.DockerHost); want != "" {
+		out = append(out, "DOCKER_HOST="+want)
 	}
 	return out
 }

@@ -166,4 +166,7 @@ func RegisterDefaults(reg *Registry, rt runtime.Runtime, composeMgr *compose.Man
 	reg.Register(envelope.MethodComposeBackup, newComposeBackupHandler(composeMgr))
 	reg.Register(envelope.MethodComposeLogs, newComposeLogsHandler(composeMgr))
 	reg.Register(envelope.MethodComposePS, newComposePSHandler(composeMgr))
+	// 外部编排的显式纳管：preview 只读、adopt 只落盘（绝不 up/down）。
+	reg.Register(envelope.MethodComposePreview, newComposePreviewHandler(composeMgr, labelSrc))
+	reg.Register(envelope.MethodComposeAdopt, newComposeAdoptHandler(composeMgr))
 }

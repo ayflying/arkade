@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"arkade/protocol/envelope"
@@ -37,6 +38,34 @@ const (
 func composeConfigHash(content string) string {
 	sum := sha256.Sum256([]byte(content))
 	return hex.EncodeToString(sum[:])[:composeHashHexLen]
+}
+
+// composeProjectHash 同时覆盖Compose与.env，空环境文件兼容旧哈希。
+// 长度前缀避免不同文件分界产生相同输入；与Agent HashProject固定向量对齐。
+func composeProjectHash(content, envContent string) string {
+	if envContent == "" {
+		return composeConfigHash(content)
+	}
+	h := sha256.New()
+	h.Write([]byte("arkade.compose.project.v1\x00content\x00"))
+	h.Write([]byte(strconv.Itoa(len(content))))
+	h.Write([]byte("\x00"))
+	h.Write([]byte(content))
+	h.Write([]byte("env\x00"))
+	h.Write([]byte(strconv.Itoa(len(envContent))))
+	h.Write([]byte("\x00"))
+	h.Write([]byte(envContent))
+	return hex.EncodeToString(h.Sum(nil))[:composeHashHexLen]
+}
+
+func validateComposeEnv(content string) error {
+	if len(content) > maxComposeContentBytes {
+		return fmt.Errorf("环境文件超过1MB限制")
+	}
+	if strings.ContainsRune(content, '\x00') {
+		return fmt.Errorf("环境文件包含非法空字符")
+	}
+	return nil
 }
 
 // validComposeName 校验编排项目名。

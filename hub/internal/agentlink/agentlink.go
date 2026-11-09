@@ -55,6 +55,9 @@ var slowMethodTimeouts = map[string]time.Duration{
 	envelope.MethodComposeDown:    2 * time.Minute,
 	envelope.MethodComposeRemove:  2 * time.Minute,
 	envelope.MethodComposeBackup:  5 * time.Minute,
+	// 导入预检可能包含Compose解析，须等待Agent短超时返回，而非默认15秒先超时。
+	envelope.MethodComposePreview: 1 * time.Minute,
+	envelope.MethodComposeAdopt:   2 * time.Minute,
 }
 
 // requestTimeoutFor 返回某个方法的等待上限。

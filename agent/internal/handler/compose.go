@@ -65,7 +65,16 @@ func newComposeUpHandler(mgr *compose.Manager) Handler {
 		if nerr != nil {
 			return nil, nerr
 		}
-		res, err := mgr.Apply(ctx, name, p.Content, p.ContentHash)
+		// 用 ApplyProject 而不是 Apply：这样 env_content 才会一起落盘，
+		// 且哈希校验按"compose.yml + .env 联合"进行。
+		// 旧 Hub 不发 env_content → 反序列化为空串 → 视为"清空 .env"，
+		// 那恰好等于旧行为（旧版根本没有 .env 这个概念）。
+		res, err := mgr.ApplyProject(ctx, compose.ProjectSpec{
+			Name:       name,
+			Content:    p.Content,
+			EnvContent: p.EnvContent,
+			ExpectHash: p.ContentHash,
+		})
 		if err != nil {
 			return nil, badRequestf("%v", err)
 		}

@@ -369,17 +369,17 @@ func contains(s, sub string) bool {
 	return false
 }
 
-// TestMigrationVersionIsSix 验证迁移版本号已推进到 6。
+// TestMigrationVersionCurrent 验证迁移包含项目环境文件版本。
 //
 // 版本号写错会导致新库与旧库结构不一致，而两边测试都可能"各自通过"。
-func TestMigrationVersionIsSix(t *testing.T) {
+func TestMigrationVersionCurrent(t *testing.T) {
 	db := newTestDB(t)
 	var v int
 	err := db.db.QueryRowContext(context.Background(), `SELECT MAX(version) FROM schema_migrations`).Scan(&v)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v != 6 {
-		t.Errorf("迁移版本应为 6，实际 %d", v)
+	if v != 7 {
+		t.Errorf("迁移版本应为 7，实际 %d", v)
 	}
 }

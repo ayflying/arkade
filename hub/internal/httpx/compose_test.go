@@ -417,15 +417,15 @@ func TestGetStackDetail(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("解析详情失败: %v", err)
 	}
-	if resp.Content != sampleCompose {
-		t.Errorf("详情应返回完整内容，实际 %q", resp.Content)
+	if resp.Content != "" {
+		t.Error("运行详情不应包含项目配置内容")
 	}
 	if resp.Stack.Name != "web" {
 		t.Errorf("名字应为 web，实际 %q", resp.Stack.Name)
 	}
 }
 
-// TestGetStackConfig 验证 /config 返回纯文本并把版本号放进响应头。
+// TestGetStackConfig 验证/config以不可缓存JSON返回项目文件和版本。
 func TestGetStackConfig(t *testing.T) {
 	env := newTestEnv(t)
 	cookies := env.login(t)
@@ -437,14 +437,19 @@ func TestGetStackConfig(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("取配置应返回 200，实际 %d", rec.Code)
 	}
-	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/plain") {
-		t.Errorf("Content-Type 应为 text/plain，实际 %q", ct)
+	var config struct {
+		Content    string `json:"content"`
+		EnvContent string `json:"env_content"`
+		Version    int64  `json:"version"`
 	}
-	if got := rec.Body.String(); got != sampleCompose {
-		t.Errorf("响应体应是原始 compose 文本，实际 %q", got)
+	if err := json.Unmarshal(rec.Body.Bytes(), &config); err != nil {
+		t.Fatal(err)
 	}
-	if v := rec.Header().Get("X-Arkade-Stack-Version"); v != "1" {
-		t.Errorf("X-Arkade-Stack-Version 应为 1，实际 %q", v)
+	if config.Content != sampleCompose || config.EnvContent != "" || config.Version != 1 {
+		t.Fatal("配置接口项目文件或版本不匹配")
+	}
+	if !strings.Contains(rec.Header().Get("Cache-Control"), "no-store") {
+		t.Fatal("敏感配置响应必须禁止缓存")
 	}
 }
 
@@ -476,8 +481,7 @@ func TestStackNotFound(t *testing.T) {
 	}
 }
 
-// TestDeleteStackAgentOffline 验证 Agent 离线时仍能删掉 Hub 记录，
-// 但明确告知本机文件还在。
+// TestDeleteStackAgentOffline 验证Agent离线拒绝删除并保留管理记录。
 func TestDeleteStackAgentOffline(t *testing.T) {
 	env := newTestEnv(t)
 	cookies := env.login(t)
@@ -486,24 +490,11 @@ func TestDeleteStackAgentOffline(t *testing.T) {
 	env.seedStack(t, agentID, "web", sampleCompose)
 
 	rec, _ := env.do(t, http.MethodDelete, "/api/agents/"+agentID+"/stacks/web", "", cookies)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("删除应返回 200，实际 %d，响应 %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("离线删除必须拒绝并保留记录，实际 %d", rec.Code)
 	}
-	var resp struct {
-		SyncOK   bool   `json:"sync_ok"`
-		SyncHint string `json:"sync_hint"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("解析删除响应失败: %v", err)
-	}
-	if resp.SyncOK {
-		t.Error("Agent 离线时 sync_ok 应为 false")
-	}
-	if !strings.Contains(resp.SyncHint, "离线") {
-		t.Errorf("应提示 Agent 离线、本机文件仍在，实际 %q", resp.SyncHint)
-	}
-	if _, err := env.db.GetComposeStack(newTestContext(), agentID, "web"); err != store.ErrNotFound {
-		t.Errorf("记录应已删除，实际 err=%v", err)
+	if _, err := env.db.GetComposeStack(newTestContext(), agentID, "web"); err != nil {
+		t.Fatalf("删除未执行时必须保留管理记录: %v", err)
 	}
 }
 

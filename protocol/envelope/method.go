@@ -54,6 +54,17 @@ const (
 	MethodComposeBackup  = "compose.backup"  // 备份编排文件与关联数据卷清单
 	MethodComposeLogs    = "compose.logs"    // 查看某个服务的日志
 	MethodComposePS      = "compose.ps"      // 查看该编排下的容器状态
+
+	// 外部编排的显式纳管（用户主动导入）。
+	//
+	// 与 compose.up 的区别是**语义**，不是实现便利：
+	//   - preview 只读，回答"能不能导入、为什么不能"；
+	//   - adopt 只落盘，**绝不 up/down/pull**——
+	//     外部项目正在跑生产负载，导入不应该顺带改动它。
+	// 两者都只依据引擎容器标签与本地工作区状态判断，
+	// 不读取宿主机上的任何配置文件（Agent 在容器内本就读不到）。
+	MethodComposePreview = "compose.preview" // 预检：能否导入某个已发现的外部编排
+	MethodComposeAdopt   = "compose.adopt"   // 导入：把外部编排显式纳管（只落盘，不启动）
 )
 
 // Hub → Agent 的本地通道方法名（Agent 内部 CLI 复用同一套处理器）。
@@ -86,4 +97,7 @@ const (
 	LocalMethodComposeBackup  = MethodComposeBackup
 	LocalMethodComposeLogs    = MethodComposeLogs
 	LocalMethodComposePS      = MethodComposePS
+
+	LocalMethodComposePreview = MethodComposePreview
+	LocalMethodComposeAdopt   = MethodComposeAdopt
 )

@@ -234,7 +234,21 @@ onMounted(() => {
           unit="个"
           :hint="`运行中 ${data.totals.runningContainers} 个`"
         />
-        <stat-card label="容器编排" :value="data.totals.stacks" unit="个" />
+        <!--
+          容器编排：必须同时给出「已纳管」和「未纳管」两个数。
+          只显示已纳管时，如果全部项目都没纳管，这里就是 0，
+          用户会以为服务器上一个编排都没有——实际他机器上跑着一堆。
+        -->
+        <stat-card
+          label="容器编排"
+          :value="data.totals.stacks"
+          unit="个"
+          :hint="
+            data.totals.unmanagedStacks > 0
+              ? `另有 ${data.totals.unmanagedStacks} 个未纳管`
+              : '全部已纳管'
+          "
+        />
         <stat-card label="本地镜像" :value="data.totals.images" unit="个" />
         <stat-card label="网络" :value="data.totals.networks" unit="个" />
         <stat-card label="存储卷" :value="data.totals.volumes" unit="个" />

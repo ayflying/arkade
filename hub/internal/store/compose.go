@@ -25,6 +25,7 @@ type ComposeStack struct {
 	AgentID    string
 	Name       string
 	Content    string
+	EnvContent string
 	ConfigHash string
 	// Version 是乐观锁版本号：每次内容更新 +1。客户端提交更新时必须带上
 	// 它读到的版本，版本不匹配说明期间有人改过，必须让用户重新确认。
@@ -40,17 +41,17 @@ type ComposeStack struct {
 }
 
 // composeStackColumns 是查询字段的唯一定义，与 scanComposeStack 一一对应。
-const composeStackColumns = `id, agent_id, name, content, config_hash, version, created_at, updated_at, synced_at`
+const composeStackColumns = `id, agent_id, name, content, env_content, config_hash, version, created_at, updated_at, synced_at`
 
 // CreateComposeStack 插入一条编排记录。
 //
 // 同一 Agent 下项目名重复时返回 ErrConflict（上层映射 409）：项目名就是 Agent
 // 本机的目录名，重名会让两份编排互相覆盖文件，必须在入库这一层就拦住。
 func (d *DB) CreateComposeStack(ctx context.Context, s ComposeStack) error {
-	const q = `INSERT INTO compose_stacks(id, agent_id, name, content, config_hash, version, created_at, updated_at, synced_at)
-	           VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	const q = `INSERT INTO compose_stacks(id, agent_id, name, content, env_content, config_hash, version, created_at, updated_at, synced_at)
+	           VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	_, err := d.db.ExecContext(ctx, q,
-		s.ID, s.AgentID, s.Name, s.Content, s.ConfigHash, s.Version,
+		s.ID, s.AgentID, s.Name, s.Content, s.EnvContent, s.ConfigHash, s.Version,
 		timeToUnix(s.CreatedAt), timeToUnix(s.UpdatedAt), timeToUnix(s.SyncedAt),
 	)
 	return normalizeExecError(err, "创建编排")
@@ -62,7 +63,7 @@ func scanComposeStack(row interface {
 }) (ComposeStack, error) {
 	var s ComposeStack
 	var createdAt, updatedAt, syncedAt int64
-	err := row.Scan(&s.ID, &s.AgentID, &s.Name, &s.Content, &s.ConfigHash, &s.Version,
+	err := row.Scan(&s.ID, &s.AgentID, &s.Name, &s.Content, &s.EnvContent, &s.ConfigHash, &s.Version,
 		&createdAt, &updatedAt, &syncedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ComposeStack{}, ErrNotFound
@@ -121,15 +122,14 @@ func (d *DB) ListComposeStacks(ctx context.Context, agentID string) ([]ComposeSt
 //   - bool：是否命中（false 表示 version 不匹配）
 //   - error：真正的数据库错误
 func (d *DB) UpdateComposeStack(ctx context.Context, agentID, name string, expectedVersion int64, content, configHash string) (ComposeStack, bool, error) {
-	const q = `UPDATE compose_stacks
+	// 不读取后回写 env_content：只更新这些列，数据库原子保留当前环境文件。
+	q := `UPDATE compose_stacks
 	           SET content = ?, config_hash = ?, version = version + 1, updated_at = ?
-	           WHERE agent_id = ? AND name = ? AND version = ?`
-	res, err := d.db.ExecContext(ctx, q, content, configHash, time.Now().UTC().Unix(),
-		agentID, name, expectedVersion)
-	if err != nil {
-		return ComposeStack{}, false, fmt.Errorf("更新编排失败: %w", err)
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
+	           WHERE agent_id = ? AND name = ? AND version = ?
+	           RETURNING ` + composeStackColumns
+	updated, err := scanComposeStack(d.db.QueryRowContext(ctx, q,
+		content, configHash, time.Now().UTC().Unix(), agentID, name, expectedVersion))
+	if errors.Is(err, ErrNotFound) {
 		// 没命中分两种情况，必须区分：
 		//   - 记录不存在 → ErrNotFound（404）
 		//   - 记录存在但版本不符 → 乐观锁冲突（409）
@@ -139,9 +139,31 @@ func (d *DB) UpdateComposeStack(ctx context.Context, agentID, name string, expec
 		}
 		return ComposeStack{}, false, nil
 	}
-	updated, gerr := d.GetComposeStack(ctx, agentID, name)
-	if gerr != nil {
-		return ComposeStack{}, false, gerr
+	if err != nil {
+		return ComposeStack{}, false, fmt.Errorf("更新编排失败: %w", err)
+	}
+	return updated, true, nil
+}
+
+// UpdateComposeProject 原子更新 compose、环境文件、哈希与版本。
+// expectedVersion 不匹配时不写入任何字段；at 是本次保存的时间。
+// RETURNING 与写入属于同一条语句，返回的记录不会混入后续并发更新。
+func (d *DB) UpdateComposeProject(ctx context.Context, agentID, name, content, envContent, configHash string, expectedVersion int64, at time.Time) (ComposeStack, bool, error) {
+	q := `UPDATE compose_stacks
+		SET content = ?, env_content = ?, config_hash = ?, version = version + 1, updated_at = ?
+		WHERE agent_id = ? AND name = ? AND version = ?
+		RETURNING ` + composeStackColumns
+	updated, err := scanComposeStack(d.db.QueryRowContext(ctx, q,
+		content, envContent, configHash, timeToUnix(at), agentID, name, expectedVersion))
+	if errors.Is(err, ErrNotFound) {
+		// 保留旧更新接口的语义：不存在是 404，版本过期是冲突。
+		if _, gerr := d.GetComposeStack(ctx, agentID, name); gerr != nil {
+			return ComposeStack{}, false, gerr
+		}
+		return ComposeStack{}, false, nil
+	}
+	if err != nil {
+		return ComposeStack{}, false, fmt.Errorf("更新编排项目失败: %w", err)
 	}
 	return updated, true, nil
 }

@@ -145,8 +145,108 @@ type ComposeSpecPayload struct {
 	Name string `json:"name"`
 	// Content 是完整的 compose.yml 文本。
 	Content string `json:"content"`
-	// ContentHash 是 Hub 侧计算的哈希，Agent 落盘后回报自己算的哈希用于校验。
+	// EnvContent 是该项目同名 .env 的完整文本。
+	//
+	// 空串有两种含义，必须靠 ContentHash 区分，因此这里只表达"文本为空"：
+	//   - 旧版 Hub 不发这个字段 → 反序列化为空串 → 继续按旧方式工作（只有 compose.yml）；
+	//   - 新版 Hub 明确发空串 → 表示"清空该项目的 .env"（删除文件），
+	//     而不是"保留上一次的 .env"。保留会留下用户以为已经删掉的密钥。
+	//
+	// 之所以把 .env 放在消息里而不是让 Agent 去某处读：
+	// Agent 运行在容器里，**读不到宿主机上的编排目录**，
+	// 任何"Agent 自己去读宿主 .env"的设计在真实部署里都不成立。
+	EnvContent string `json:"env_content"`
+	// ContentHash 是 Hub 侧计算的**项目哈希**（compose.yml 与 .env 的联合哈希）。
+	//
+	// 与旧版的兼容性靠算法保证：当 EnvContent 为空时，
+	// 联合哈希就等于旧版的 sha256(content) 前 16 位，
+	// 所以旧 Hub（只发 content）与新版 Agent 仍然算得出同一个值。
 	ContentHash string `json:"content_hash"`
+}
+
+// ComposePreviewPayload 是"能否导入某个外部编排"的预检请求。
+//
+// **必须带 Content / EnvContent。** 只给 name 的预检没有意义：
+// Agent 在容器里运行，**读不到宿主机上的编排文件**，
+// 没有内容就只能回答 supported=false，前端将永远无法点"导入"。
+// 用户在前端粘贴 compose 与 .env，随请求一起下发，Agent 才能做真实的安全校验。
+//
+// 内容为空时仍可预检，但结论会是 supported=false 并给出"需要用户提供…"的原因；
+// 这不是失败，而是如实回答"材料不齐"。
+type ComposePreviewPayload struct {
+	Name string `json:"name"`
+	// Content 是用户提供的 compose.yml 文本（可空）。
+	Content string `json:"content"`
+	// EnvContent 是用户提供的 .env 文本（可空；空表示该项目按无 .env 处理）。
+	EnvContent string `json:"env_content"`
+}
+
+// ComposePreviewResult 是预检结果。
+//
+// 字段分三类，前端据此决定按钮状态：
+//   - 事实：discovered / engine_exists / workspace_exists / source / running / total
+//   - 结论：can_import（能否导入）
+//   - 原因：blockers（必须解决）、warnings（提示，不阻塞）
+//
+// 区分"阻塞"与"提示"很重要：把阻塞写成提示会让用户点下按钮后才失败；
+// 把提示写成阻塞会让本来可行的导入被无谓挡住。
+type ComposePreviewResult struct {
+	Name string `json:"name"`
+	// Discovered 表示引擎里存在该名字的外部（非 Arkade）编排项目。
+	Discovered bool `json:"discovered"`
+	// EngineExists / WorkspaceExists 分别对应引擎与工作区，便于前端解释结论。
+	EngineExists    bool `json:"engine_exists"`
+	WorkspaceExists bool `json:"workspace_exists"`
+	// Source 描述这个名字目前来自哪里：engine / workspace / both / none。
+	Source string `json:"source"`
+	// Running / Total 是该外部项目的服务运行数/总数。
+	Running int `json:"running"`
+	Total   int `json:"total"`
+	// CanImport 是**唯一**决定"导入"按钮是否可点的字段。
+	//
+	// 它等价于：发现外部同名项目 且 工作区无冲突 且 内容齐备 且 无安全阻塞项。
+	// 前端不应自己组合这些条件——组合逻辑一旦与 Agent 不一致，
+	// 就会出现"按钮可点但请求必失败"或"明明能导入却点不了"。
+	CanImport bool `json:"can_import"`
+	// ConfigHash 是 Agent 用 HashProject(Content, EnvContent) 算出的项目哈希。
+	// 前端把它作为 expected_content_hash 回传，避免"预览与实际导入内容不一致"。
+	ConfigHash string `json:"config_hash"`
+	// Blockers 是**必须解决**才能导入的原因。
+	Blockers []string `json:"blockers"`
+	// Warnings 是不阻塞导入的提示。
+	Warnings []string `json:"warnings"`
+}
+
+// ComposeAdoptPayload 是"把已发现的外部编排显式纳管"的请求。
+//
+// 这是一个**只落盘、不启动**的操作：绝不执行 up/down/pull/stop。
+// 原因：外部项目正在跑着生产负载，导入的正确动作是"先把配置存下来并表明归属"，
+// 任何"顺手 up 一下让它符合新配置"都会重建容器，那是用户没有要求的破坏。
+type ComposeAdoptPayload struct {
+	Name string `json:"name"`
+	// Content / EnvContent 必须由用户提供（Hub 前端粘贴）。
+	// Agent 读不到宿主机文件，也不能从运行中的容器反推出可信的原始配置。
+	Content    string `json:"content"`
+	EnvContent string `json:"env_content"`
+	// ExpectedContentHash 是 Hub 用同一算法算出的项目哈希，落盘前校验。
+	ExpectedContentHash string `json:"expected_content_hash"`
+	// Confirmation 必须为 true。
+	//
+	// 这是"用户明确知道自己在纳管一个已在运行的外部项目"的显式确认。
+	// 用布尔而不是省略即默认，是为了让"误调接口"不可能完成导入。
+	Confirmation bool `json:"confirmation"`
+}
+
+// ComposeAdoptResult 是导入结果。
+type ComposeAdoptResult struct {
+	Name       string `json:"name"`
+	Status     string `json:"status"`
+	ConfigHash string `json:"config_hash"`
+	Output     string `json:"output"`
+	// Adopted 表示已落盘并纳管（工作区存在该编排）。
+	Adopted bool `json:"adopted"`
+	// EnvWritten 表示本次写入了 .env（false 且 EnvContent 为空时表示已清除）。
+	EnvWritten bool `json:"env_written"`
 }
 
 // ComposeOpPayload 是针对已有编排的操作请求。

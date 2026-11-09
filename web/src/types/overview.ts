@@ -22,7 +22,15 @@ import type { StackSummary } from './stack'
 export type AgentResourceCounts = {
   containers: number
   runningContainers: number
+  /** Hub 已纳管的编排数 */
   stacks: number
+  /**
+   * 服务器上已有、但 Hub 未纳管的 compose 项目数。
+   *
+   * 必须与 `stacks` 分开计数：两者都不为空时页面要说清「N 个已纳管 + M 个未纳管」。
+   * 全都并进 `stacks` 会让用户以为那些未纳管项目也能在这里管理（实际不能）。
+   */
+  unmanagedStacks: number
   images: number
   networks: number
   volumes: number
@@ -67,7 +75,16 @@ export type OverviewData = {
     onlineAgents: number
     containers: number
     runningContainers: number
+    /** Hub 已纳管的编排总数 */
     stacks: number
+    /**
+     * 服务器上已有、但未被 Hub 纳管的 compose 项目总数。
+     *
+     * 单独给出来是为了修掉一个误导：全部项目都未纳管时，
+     * 「容器编排 0 个」会让用户以为服务器上一个编排都没有，
+     * 实际他机器上跑着一堆。界面必须显示「0 个已纳管，另有 M 个未纳管」。
+     */
+    unmanagedStacks: number
     images: number
     networks: number
     volumes: number

@@ -15,12 +15,13 @@
  * compose.yml 一旦被覆盖，之前那人做的全部修改就丢了，
  * 所以这里宁可让用户重做一次也不要静默合并。
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { NAlert, NButton, NDataTable, NInput, NTabPane, NTabs } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import PageHeader from '@/components/common/PageHeader.vue'
 import StackActionBar from '@/components/stack/StackActionBar.vue'
+import StackEnvEditor from '@/components/stack/StackEnvEditor.vue'
 import StackLogViewer from '@/components/stack/StackLogViewer.vue'
 import StackStateTag from '@/components/stack/StackStateTag.vue'
 import {
@@ -63,6 +64,34 @@ const originalContent = ref('')
 const version = ref(0)
 const saving = ref(false)
 const saveError = ref('')
+
+/**
+ * .env 编辑态。
+ *
+ * `originalEnv` 的意义：后端对 update 的 `env_content` 是「省略=保留、空串=清空」，
+ * 所以必须知道用户到底动过没有。用户只改 compose 时若把 env_content 一起带上，
+ * 一旦本地值因加载失败而为空串，就会**把服务器上的 .env 清空**——那是事故。
+ * 因此只在 `envContent !== originalEnv` 时才提交该字段。
+ */
+const envContent = ref('')
+const originalEnv = ref('')
+
+/**
+ * 配置是否真的加载成功。
+ *
+ * **保存的前置条件**：配置没加载成功时 version 不可信，
+ * 保存会带着 0 或旧版本号发出去，轻则被 409 拒（像 bug），
+ * 重则在无校验路径上覆盖别人的修改。所以宁可禁用保存。
+ */
+const configLoaded = ref(false)
+
+/**
+ * 配置加载失败的原因（多数是 403 无权限）。
+ *
+ * 与 loadError 分开：loadError 代表「整页不可用」，
+ * 而 configError 只是「编辑区不可用」——运行状态、容器、日志都还能看。
+ */
+const configError = ref('')
 /**
  * 同步未成功的提示（来自后端 sync_ok:false + sync_hint）。
  *
@@ -74,8 +103,7 @@ const syncWarning = ref('')
 /** 删除中 */
 const deleting = ref(false)
 
-/** 容器列表（ps） */
-const containers = ref<StackPsContainer[]>([])
+/** 容器列表（ps） */const containers = ref<StackPsContainer[]>([])
 const psLoading = ref(false)
 
 /** 当前 tab */
@@ -83,8 +111,32 @@ const activeTab = ref<'config' | 'containers' | 'logs'>('config')
 
 const actionBarRef = ref<InstanceType<typeof StackActionBar> | null>(null)
 
-/** 内容是否被修改过：未修改时禁用保存按钮 */
-const dirty = computed(() => content.value !== originalContent.value)
+/**
+ * 是否有未保存的改动。
+ *
+ * .env 单独比较：它可能是空串（本来就没配），不能只看 content。
+ */
+const dirty = computed(
+  () => content.value !== originalContent.value || envContent.value !== originalEnv.value
+)
+
+/**
+ * 是否允许编辑配置。
+ *
+ * ## 为什么不按角色判断
+ *
+ * 后端只有 admin / user 两种角色，而真正的写权限是「用户组在某台 Agent 上的授权」
+ * （view < operate < manage）。普通用户被授予 manage 后同样可以编辑。
+ * 后端没有「查询我对这个 Agent 的权限档位」的接口，前端无从得知——
+ * 按角色猜会让**明明有权限的普通用户永远看不到编辑入口**，那是更严重的问题。
+ *
+ * 所以这里只依赖两件**确定**的事：
+ * 1. 配置是否真的加载成功（403 就是没权限，加载失败就是不可编辑）；
+ * 2. 用户是否真的改过（没加载出内容自然也无从改）。
+ *
+ * 真正的拦截在后端（config 要 manage、update 要 manage）。前端不猜权限。
+ */
+const canEditConfig = computed(() => configLoaded.value && configError.value === '')
 
 const state = computed<StackState>(() => detail.value?.status ?? 'unknown')
 
@@ -100,29 +152,72 @@ const ACTION_LABELS: Record<StackAction, string> = {
 }
 
 /**
- * 加载详情 + 配置。
+ * 加载详情 + 配置（**两条独立通道，不能互相拖垮**）。
  *
- * 两个接口分开请求的原因：详情里有状态/服务列表（会变化），
- * 配置里有 compose.yml 与版本号（编辑才需要）。
- * 但配置必须和详情一起拿到，否则用户可能在 version 未就绪时点保存。
+ * ## 为什么必须分开
+ *
+ * `GET .../config` 现在要 manage 权限（因为返回内容含 .env 里的密钥）。
+ * 而详情、容器列表、日志只需要 view 权限。
+ * 如果两者放在同一个 Promise.all 里，viewer/operator 一进页面就因 config 403
+ * **整页报错**，连「服务在不在跑」都看不到——这是可用性事故：
+ * 只读用户最需要知道的恰恰是运行状态。
+ *
+ * 所以：详情失败才算整页失败；配置 403 只是「没有查看/编辑配置的权限」，
+ * 页面其余部分照常工作。
+ *
+ * ## 另一个关键点
+ *
+ * 配置**没加载成功就必须禁止保存**。否则 version 还是 0，
+ * 保存会带着错误的乐观锁版本号发出去，要么被拒（看起来像 bug），
+ * 要么在无校验时覆盖别人的修改。因此用 `configLoaded` 把关。
  */
 async function loadAll(): Promise<void> {
   if (agentId.value === null || stackName.value === '') return
   loading.value = true
   loadError.value = ''
+
+  // 先拿详情：它决定整页能不能显示
   try {
-    const [detailRes, configRes] = await Promise.all([
-      getStack(agentId.value, stackName.value),
-      getStackConfig(agentId.value, stackName.value)
-    ])
-    detail.value = detailRes
-    content.value = configRes.content
-    originalContent.value = configRes.content
-    version.value = configRes.version
+    detail.value = await getStack(agentId.value, stackName.value)
   } catch (err) {
     loadError.value = err instanceof ApiError ? err.message : '加载编排详情失败'
-  } finally {
     loading.value = false
+    return
+  }
+
+  // 再单独拿配置：失败只影响编辑区
+  await loadConfig()
+
+  loading.value = false
+}
+
+/**
+ * 单独加载配置（compose + .env + version）。
+ *
+ * 失败时不抛错、不污染 loadError：403 属于「权限不足」这一**预期情况**，
+ * 不是异常。用 configError 单独承载，界面上只把编辑区换成提示。
+ */
+async function loadConfig(): Promise<void> {
+  if (agentId.value === null || stackName.value === '') return
+  configError.value = ''
+  try {
+    const configRes = await getStackConfig(agentId.value, stackName.value)
+    content.value = configRes.content
+    originalContent.value = configRes.content
+    envContent.value = configRes.env_content
+    originalEnv.value = configRes.env_content
+    version.value = configRes.version
+    configLoaded.value = true
+  } catch (err) {
+    // 没拿到配置就绝不能允许保存：version 未知，保存等于无锁覆盖
+    configLoaded.value = false
+    version.value = 0
+    const apiError = err instanceof ApiError ? err : null
+    if (apiError?.status === 403) {
+      configError.value = '当前账号没有查看或编辑配置的权限，需要管理员权限。'
+    } else {
+      configError.value = apiError?.message ?? '加载配置失败'
+    }
   }
 }
 
@@ -142,25 +237,50 @@ async function loadPs(): Promise<void> {
 }
 
 /**
- * 保存 compose.yml。
+ * 保存 compose.yml（以及改动过的 .env）。
  *
  * 冲突处理：后端用 409/`conflict` 表示版本不一致。
  * 这里不只提示，还直接把本地未保存的修改标记出来，
  * 让用户能先复制自己改的内容再刷新，不至于直接丢失。
+ *
+ * ## env_content 的三态必须精确表达
+ * - 用户没动 .env → **不传该字段**，后端保留原值；
+ * - 用户清空了 .env → 传空串，后端清空；
+ * - 用户改了 → 传新内容。
+ *
+ * 为什么不能「总是传」：一旦加载配置失败、本地 envContent 是空串，
+ * 总是传就会把服务器上的 .env 静默清空——里面的密码全丢。
+ * 因此用 `envContent !== originalEnv` 判断是否动过。
  */
 async function handleSave(): Promise<void> {
   if (agentId.value === null || saving.value) return
 
+  /*
+   * 双保险：按钮已经 disabled，但这里再挡一次。
+   * 配置没加载成功时 version 不可信（可能是 0），
+   * 带着错误版本号保存会覆盖别人的修改或被无意义地 409。
+   */
+  if (!configLoaded.value) {
+    toastError('配置尚未加载成功，无法保存。请先刷新重试。')
+    return
+  }
+
   saving.value = true
   saveError.value = ''
   try {
+    const envChanged = envContent.value !== originalEnv.value
     const res = await updateStack(agentId.value, stackName.value, {
       content: content.value,
-      version: version.value
+      version: version.value,
+      // 只在真的改过时带上；没改就不传，让后端保留原 .env
+      ...(envChanged ? { env_content: envContent.value } : {})
     })
-    // 保存成功后用服务端返回的新版本号更新，便于连续编辑
-    version.value = res.version
+    // 保存成功后用服务端返回的新版本号更新，便于连续编辑。
+    // 版本号在 stack 里（后端把编排信息包在 stack 下），不在顶层。
+    version.value = res.stack.version
     originalContent.value = content.value
+    // 同步本地基线：否则保存完 dirty 仍是 true，保存按钮会一直亮着
+    originalEnv.value = envContent.value
 
     /*
      * 必须检查 sync_ok：Agent 离线或下发失败时后端**不报错**，
@@ -189,9 +309,10 @@ async function handleSave(): Promise<void> {
   }
 }
 
-/** 放弃当前修改，恢复为服务端内容 */
+/** 放弃当前修改，恢复为服务端内容（compose 与 .env 都要回退） */
 function handleReset(): void {
   content.value = originalContent.value
+  envContent.value = originalEnv.value
   saveError.value = ''
 }
 
@@ -229,9 +350,22 @@ async function handleAction(action: StackAction): Promise<void> {
  * 因此这里用带勾选项的确认框：默认不删卷，
  * 只有用户在框里主动勾选「同时删除数据卷」才传 remove_volumes=true。
  * 危险操作必须由用户表达明确意图，而不是靠默认值替他决定。
+ *
+ * ## 离线时不能删
+ *
+ * 删除必须由 Agent 执行（它要在那台机器上真的移除容器与文件），
+ * Agent 离线时后端返回 503 并**保留管理记录**——记录留着，用户上线后还能再删一次。
+ * 所以界面上不能承诺「离线也能删除记录」：那会让用户以为删了，
+ * 结果服务器上还在跑、占着端口。
  */
 async function handleDelete(): Promise<void> {
   if (agentId.value === null || deleting.value) return
+
+  // 离线直接拦住：让用户看到原因，而不是点完拿到一个 503
+  if (!isOnline.value) {
+    toastWarning('服务器离线，无法删除编排。请等服务器上线后再试（记录会保留）。')
+    return
+  }
 
   const result = await confirmWithOption({
     title: '确认删除编排？',
@@ -300,6 +434,20 @@ const psColumns = computed<DataTableColumns<StackPsContainer>>(() => [
 onMounted(async () => {
   await loadAll()
   await loadPs()
+})
+
+/**
+ * 离开页面时清空 .env 与 compose 内容。
+ *
+ * 两者都可能含密钥（.env 里的密码、compose 里私有仓库凭据），
+ * 不该在组件销毁后还被闭包引用住。这里不做任何草稿持久化，
+ * 所以清空不会影响用户体验。
+ */
+onUnmounted(() => {
+  envContent.value = ''
+  originalEnv.value = ''
+  content.value = ''
+  originalContent.value = ''
 })
 </script>
 
@@ -370,7 +518,25 @@ onMounted(async () => {
       <div class="stack-detail__card">
         <n-tabs v-model:value="activeTab" type="line" animated>
           <n-tab-pane name="config" tab="compose.yml">
-            <div class="editor">
+            <!--
+              配置加载失败（多为 403 无 manage 权限）：
+              只把编辑区换掉，页面其余部分（状态、容器、日志）照常可用。
+              只读用户最需要的就是看到运行状态，不能因为看不了配置就整页报废。
+            -->
+            <n-alert
+              v-if="configError !== ''"
+              type="info"
+              :bordered="false"
+              class="editor__error"
+              title="无法查看或编辑配置"
+            >
+              {{ configError }}
+              <div class="editor__retry">
+                <n-button size="tiny" @click="loadConfig">重试</n-button>
+              </div>
+            </n-alert>
+
+            <div v-else class="editor">
               <div class="editor__bar">
                 <span class="editor__hint">
                   {{ dirty ? '有未保存的修改' : '内容与服务端一致' }}
@@ -416,21 +582,42 @@ onMounted(async () => {
                 type="textarea"
                 class="editor__input"
                 :autosize="{ minRows: 14, maxRows: 28 }"
-                :disabled="saving"
+                :disabled="saving || !canEditConfig"
                 spellcheck="false"
               />
+
+              <!--
+                .env 编辑区：紧贴 compose 下方。
+                默认收起+打码（里面通常是密码）。它和 compose 一起保存：
+                后端 update 的 env_content 省略=保留、空串=清空，
+                是否带上该字段由 handleSave 按「有没有改过」决定。
+              -->
+              <stack-env-editor
+                v-model="envContent"
+                :disabled="saving || !canEditConfig"
+                class="detail-env"
+              />
+
+              <!-- 无编辑权限时说明为什么按钮是灰的，避免用户反复点 -->
+              <p v-if="!canEditConfig" class="editor__readonly">
+                当前账号只能查看，不能修改配置。如需编辑请联系管理员。
+              </p>
 
               <div class="editor__actions">
                 <n-button
                   size="small"
                   type="primary"
-                  :disabled="!dirty || saving"
+                  :disabled="!dirty || saving || !canEditConfig"
                   :loading="saving"
                   @click="handleSave"
                 >
                   保存
                 </n-button>
-                <n-button size="small" :disabled="!dirty || saving" @click="handleReset">
+                <n-button
+                  size="small"
+                  :disabled="!dirty || saving || !canEditConfig"
+                  @click="handleReset"
+                >
                   放弃修改
                 </n-button>
               </div>
@@ -526,6 +713,18 @@ onMounted(async () => {
 
 .editor__error {
   margin: 8px;
+}
+
+/* 只读说明：告诉用户按钮为什么是灰的，别让人反复点 */
+.editor__readonly {
+  margin: 0;
+  padding: 8px 10px 0;
+  font-size: 12px;
+  color: var(--arkade-text-tertiary);
+}
+
+.editor__retry {
+  margin-top: 8px;
 }
 
 /* 等宽字体：YAML 靠缩进表达层级，必须等宽才能对齐 */

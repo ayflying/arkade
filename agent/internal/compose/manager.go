@@ -8,6 +8,7 @@ package compose
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -22,6 +23,18 @@ type Manager struct {
 	// labelSource 用于在 Apply 前探测"这个名字是否已被外部项目占用"。
 	// 为 nil 表示不做该检查（仅测试场景），生产路径一定注入。
 	labelSource containerLabelSource
+	// applier 是落盘前配置校验的实现，nil 表示走真实校验。
+	//
+	// 只有测试会覆盖它（构造本文件外的实例无法设置未导出字段）。
+	// 生产代码不给它赋值，因此**生产路径永远真实校验**，
+	// 不存在"配置里忘了打开校验"的静默降级。
+	applier PrecheckFunc
+	// locks 是按项目名的互斥锁，保证同一项目上的操作串行。
+	//
+	// 覆盖范围：Apply/Adopt（校验 + 落盘 + up 全程）、
+	// Down/Stop/Restart/Pull/Rebuild/Remove，以及读侧的 List/Status/Preview。
+	// 边界与理由见 lock.go——只保证**进程内**互斥，不保证跨进程。
+	locks projectLocks
 }
 
 // SetLabelSource 注入引擎标签探测源。
@@ -48,11 +61,72 @@ func (m *Manager) Workspace() *Workspace { return m.ws }
 //
 // 期望哈希的处理：Hub 下发的 ContentHash 用来校验"落盘的内容与 Hub 认为的一致"。
 // 如果收到的内容与它自己声明的哈希对不上，说明传输或 Hub 侧计算出了问题。
-// 此时**先落盘再报错**——保留文件便于排查（用户能直接看到实际落下去的是什么），
-// 同时不让一份哈希错误的内容被静默接受并启动。
+// 此时**拒绝且不写盘**（详见 ApplyProject 里的说明）。
+//
+// 这是**不含 .env 的旧签名**，保留它有两个原因：
+//   - 既有调用方与测试不必跟着改（无 env 的编排仍然完全可用）；
+//   - 它精确表达了"这个项目没有 .env"，而不是让调用方传一个容易忘的空串。
+//
+// 需要下发 .env 时用 ApplyProject。
 func (m *Manager) Apply(ctx context.Context, name, content, expectHash string) (Result, error) {
-	n, err := cleanName(name)
+	return m.ApplyProject(ctx, ProjectSpec{
+		Name:       name,
+		Content:    content,
+		ExpectHash: expectHash,
+	})
+}
+
+// ProjectSpec 是"一次编排下发"的完整输入。
+//
+// 把 compose.yml 与 .env 放在同一个结构体里，而不是给 Apply 加两个参数：
+// 两者必须**一起**通过哈希校验、一起落盘，否则会出现
+// "只用新 compose.yml 配旧 .env"启动的中间态——那是用户没有要求的状态，
+// 且很可能让服务用错密码/端口启动。
+type ProjectSpec struct {
+	// Name 是项目名。
+	Name string
+	// Content 是 compose.yml 文本。
+	Content string
+	// EnvContent 是 .env 文本；空表示"清空该项目 .env"（删除文件）。
+	EnvContent string
+	// ExpectHash 是 Hub 计算的项目哈希；空表示不校验（旧调用方）。
+	//
+	// 校验用 HashProject(Content, EnvContent)，而不是 Hash(Content)：
+	// 否则改了 .env 却不会触发"配置已偏离"，用户看到的一致性是假的。
+	ExpectHash string
+}
+
+// ApplyProject 落盘 compose.yml 与 .env 并启动。
+//
+// 与 Apply 的唯一区别是它接受 .env。安全闸门、哈希校验、落盘顺序完全一致，
+// 这样"有没有 .env"不会让两条路径产生不同的安全行为。
+func (m *Manager) ApplyProject(ctx context.Context, spec ProjectSpec) (Result, error) {
+	n, err := cleanName(spec.Name)
 	if err != nil {
+		return Result{}, err
+	}
+
+	// **全程持项目锁**：校验 → 落盘 → up。
+	//
+	// 为什么必须覆盖到 up 结束：up 是长命令（拉镜像可能要十分钟）。
+	// 若在它执行期间另一个请求改了配置文件，compose 读到的可能是
+	// 新旧混合的状态，而两个请求都会各自报告成功——
+	// 用户看到"两次都成功"，却不知道最终跑的是哪一版配置。
+	var res Result
+	err = m.withProject(ctx, n, func() error {
+		var aerr error
+		res, aerr = m.applyLocked(ctx, n, spec)
+		return aerr
+	})
+	return res, err
+}
+
+// applyLocked 是 ApplyProject 的加锁内实现（调用方必须已持有项目锁）。
+func (m *Manager) applyLocked(ctx context.Context, n string, spec ProjectSpec) (Result, error) {
+	// .env 的格式问题必须在写盘前拒绝：
+	// 落一个 compose 解析不了的 .env，会让这个项目之后**所有**命令都失败
+	// （包括 down/stop 这类本应能救场的命令），用户就被卡住了。
+	if err := ValidateEnvContent(spec.EnvContent); err != nil {
 		return Result{}, err
 	}
 
@@ -81,25 +155,69 @@ func (m *Manager) Apply(ctx context.Context, name, content, expectHash string) (
 				"请换一个编排名称，或先通过导入流程纳管（当前版本暂不支持导入）", n)
 	}
 
-	localHash := Hash(content)
-	if expectHash != "" && expectHash != localHash {
-		// 关键：仍然写盘。不写的话这条"哈希不符"的错误就无从排查，
-		// 用户也看不到实际内容是什么样子。
-		if _, werr := m.ws.Write(n, content); werr != nil {
-			return Result{}, fmt.Errorf("内容哈希与 Hub 声明不一致（本机算得 %s，Hub 声明 %s），且保存文件失败: %w",
-				localHash, expectHash, werr)
-		}
-		return Result{
-			Output: fmt.Sprintf("内容哈希与 Hub 声明不一致（本机算得 %s，Hub 声明 %s），已保存文件但未启动",
-				localHash, expectHash),
-			ExitCode: -1,
-		}, nil
+	// 校验的是**项目哈希**（compose.yml + .env 联合）。
+	// 只校验 content 的话，"只改了 .env"的下发会被当成一致而静默放行，
+	// 用户以为新变量生效了，实际用的还是旧 .env。
+	localHash := HashProject(spec.Content, spec.EnvContent)
+	if spec.ExpectHash != "" && spec.ExpectHash != localHash {
+		// **哈希不符时绝不写盘。**
+		//
+		// 旧实现选择"先落盘再报错以便排查"，那是错的，而且危险：
+		// 落盘会覆盖**正在运行的项目**的配置，于是下一次 stop/restart
+		// 用的就是这份"我们刚刚判定为可疑"的内容——
+		// 用户看到的是"下发失败"，实际却已经被改掉了。
+		// 排查所需的信息（两个哈希值）在错误信息里已经完全够用，
+		// 不需要用户去看磁盘上的文件。
+		return Result{}, fmt.Errorf(
+			"内容哈希与 Hub 声明不一致（本机算得 %s，Hub 声明 %s），已拒绝写入，现有配置未被改动",
+			localHash, spec.ExpectHash)
 	}
 
-	if _, err := m.ws.Write(n, content); err != nil {
+	// **写盘前先让 compose 自己校验一遍。**
+	//
+	// 若把解析不了的 compose.yml 写进项目目录，这个项目之后所有命令都会失败
+	// （包括 down/stop——用户连"停掉它"都做不到，只能登机器手工删文件）。
+	// 校验在临时目录里完成，正式文件一个字节都没动。
+	pc := m.checkConfig(ctx, n, spec.Content, spec.EnvContent)
+	if !pc.OK {
+		return Result{}, errors.New(pc.Reason)
+	}
+
+	// 两个文件一起提交：任一失败都不会留下"新编排 + 旧 env"的半写状态。
+	if _, _, err := m.ws.CommitProject(n, spec.Content, spec.EnvContent); err != nil {
 		return Result{}, err
 	}
 	return m.run(ctx, n, TimeoutLong, "up", "-d", "--remove-orphans"), nil
+}
+
+// projectHash 计算某个已落盘项目的**联合哈希**（compose.yml + .env）。
+//
+// 为什么不直接用 HashFile(compose.yml)：
+// 用户只改 .env 时（换镜像 tag、改密码、改端口），若哈希只看 compose.yml，
+// 界面会一直显示"配置一致"，而实际运行的东西已经变了。
+// 这类"界面说没变、实际变了"的偏差最难排查，因为没有任何报错。
+//
+// **读侧必须持项目锁**：提交是两个 rename（compose.yml 再 .env）。
+// 若在这两步之间读，会拿到「新 compose.yml + 旧 .env」——
+// 一个从未被校验过的组合，它的哈希既不等于旧值也不等于新值，
+// 界面上就显示成"配置已偏离"，把用户引向完全错误的方向。
+func (m *Manager) projectHash(name, cfgPath string) string {
+	var h string
+	_ = m.withProject(context.Background(), name, func() error {
+		h = m.projectHashLocked(name, cfgPath)
+		return nil
+	})
+	return h
+}
+
+// projectHashLocked 是 projectHash 的加锁内实现（调用方必须已持有项目锁）。
+func (m *Manager) projectHashLocked(name, cfgPath string) string {
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		return ""
+	}
+	env, _ := m.ws.ReadEnv(name)
+	return HashProject(string(data), env)
 }
 
 // engineHasProject 判断引擎里是否已有该名字的 compose 项目容器。
@@ -128,20 +246,38 @@ func (m *Manager) engineHasProject(ctx context.Context, name string) bool {
 	return false
 }
 
+// lockedRun 是"持项目锁执行一条命令"的通用包装。
+//
+// 六种动作（down/stop/restart/pull/rebuild/remove）加锁的理由相同：
+// 它们都读取项目目录里的配置文件，并且会改变引擎中容器的状态。
+// 若不与 Apply 互斥，就会出现"up 正在按 A 版配置重建容器，
+// 同时 stop 按 B 版配置停止服务"，两者都报告成功，而结果没人说得清。
+func (m *Manager) lockedRun(ctx context.Context, n string, fn func() (Result, error)) (Result, error) {
+	var res Result
+	err := m.withProject(ctx, n, func() error {
+		var rerr error
+		res, rerr = fn()
+		return rerr
+	})
+	return res, err
+}
+
 // Down 停止并移除容器（保留数据卷，除非 removeVolumes）。
 func (m *Manager) Down(ctx context.Context, name string, removeVolumes bool) (Result, error) {
 	n, err := cleanName(name)
 	if err != nil {
 		return Result{}, err
 	}
-	if err := m.requireExists(n); err != nil {
-		return Result{}, err
-	}
-	args := []string{"down"}
-	if removeVolumes {
-		args = append(args, "-v")
-	}
-	return m.run(ctx, n, TimeoutLong, args...), nil
+	return m.lockedRun(ctx, n, func() (Result, error) {
+		if err := m.requireExists(n); err != nil {
+			return Result{}, err
+		}
+		args := []string{"down"}
+		if removeVolumes {
+			args = append(args, "-v")
+		}
+		return m.run(ctx, n, TimeoutLong, args...), nil
+	})
 }
 
 // Stop 停止容器但不移除。
@@ -150,12 +286,14 @@ func (m *Manager) Stop(ctx context.Context, name string, services []string) (Res
 	if err != nil {
 		return Result{}, err
 	}
-	if err := m.requireExists(n); err != nil {
-		return Result{}, err
-	}
-	args := []string{"stop"}
-	args = appendServices(args, services)
-	return m.run(ctx, n, TimeoutLong, args...), nil
+	return m.lockedRun(ctx, n, func() (Result, error) {
+		if err := m.requireExists(n); err != nil {
+			return Result{}, err
+		}
+		args := []string{"stop"}
+		args = appendServices(args, services)
+		return m.run(ctx, n, TimeoutLong, args...), nil
+	})
 }
 
 // Restart 重启容器。
@@ -164,12 +302,14 @@ func (m *Manager) Restart(ctx context.Context, name string, services []string) (
 	if err != nil {
 		return Result{}, err
 	}
-	if err := m.requireExists(n); err != nil {
-		return Result{}, err
-	}
-	args := []string{"restart"}
-	args = appendServices(args, services)
-	return m.run(ctx, n, TimeoutLong, args...), nil
+	return m.lockedRun(ctx, n, func() (Result, error) {
+		if err := m.requireExists(n); err != nil {
+			return Result{}, err
+		}
+		args := []string{"restart"}
+		args = appendServices(args, services)
+		return m.run(ctx, n, TimeoutLong, args...), nil
+	})
 }
 
 // Pull 拉取镜像（对应界面上的"更新镜像"）。不改动运行中的容器。
@@ -178,10 +318,12 @@ func (m *Manager) Pull(ctx context.Context, name string) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	if err := m.requireExists(n); err != nil {
-		return Result{}, err
-	}
-	return m.run(ctx, n, TimeoutLong, "pull"), nil
+	return m.lockedRun(ctx, n, func() (Result, error) {
+		if err := m.requireExists(n); err != nil {
+			return Result{}, err
+		}
+		return m.run(ctx, n, TimeoutLong, "pull"), nil
+	})
 }
 
 // Rebuild 强制重建：pull + up -d --force-recreate。
@@ -197,26 +339,28 @@ func (m *Manager) Rebuild(ctx context.Context, name string) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	if err := m.requireExists(n); err != nil {
-		return Result{}, err
-	}
+	return m.lockedRun(ctx, n, func() (Result, error) {
+		if err := m.requireExists(n); err != nil {
+			return Result{}, err
+		}
 
-	pull := m.run(ctx, n, TimeoutLong, "pull")
-	up := m.run(ctx, n, TimeoutLong, "up", "-d", "--force-recreate", "--remove-orphans")
+		pull := m.run(ctx, n, TimeoutLong, "pull")
+		up := m.run(ctx, n, TimeoutLong, "up", "-d", "--force-recreate", "--remove-orphans")
 
-	combined := Result{
-		Stdout: up.Stdout,
-		// 以 up 的退出码为准：pull 失败但 up 成功，结果就是成功的。
-		ExitCode: up.ExitCode,
-		TimedOut: pull.TimedOut || up.TimedOut,
-	}
-	parts := make([]string, 0, 2)
-	if pull.ExitCode != 0 {
-		parts = append(parts, "【拉取镜像未成功】\n"+pull.Output)
-	}
-	parts = append(parts, "【启动】\n"+up.Output)
-	combined.Output = truncate(strings.Join(parts, "\n\n"))
-	return combined, nil
+		combined := Result{
+			Stdout: up.Stdout,
+			// 以 up 的退出码为准：pull 失败但 up 成功，结果就是成功的。
+			ExitCode: up.ExitCode,
+			TimedOut: pull.TimedOut || up.TimedOut,
+		}
+		parts := make([]string, 0, 2)
+		if pull.ExitCode != 0 {
+			parts = append(parts, "【拉取镜像未成功】\n"+pull.Output)
+		}
+		parts = append(parts, "【启动】\n"+up.Output)
+		combined.Output = truncate(strings.Join(parts, "\n\n"))
+		return combined, nil
+	})
 }
 
 // Remove 删除编排：down -v，然后删掉本机目录。
@@ -231,14 +375,16 @@ func (m *Manager) Remove(ctx context.Context, name string) (Result, error) {
 		return Result{}, err
 	}
 
-	res := m.run(ctx, n, TimeoutLong, "down", "-v")
-	if err := m.ws.Remove(n); err != nil {
-		return res, err
-	}
-	if res.ExitCode != 0 {
-		res.Output = truncate(res.Output + "\n\n（已删除本机编排文件，但上面的 down 未能正常完成）")
-	}
-	return res, nil
+	return m.lockedRun(ctx, n, func() (Result, error) {
+		res := m.run(ctx, n, TimeoutLong, "down", "-v")
+		if err := m.ws.Remove(n); err != nil {
+			return res, err
+		}
+		if res.ExitCode != 0 {
+			res.Output = truncate(res.Output + "\n\n（已删除本机编排文件，但上面的 down 未能正常完成）")
+		}
+		return res, nil
+	})
 }
 
 // Logs 拉取日志。
@@ -302,6 +448,15 @@ type ProjectStatus struct {
 // 性能说明：每个项目要跑一次 compose ps（约几十毫秒），项目多时会线性变慢。
 // 这里不做并发：并发跑 compose 会在同一 Docker 引擎上互相争抢，
 // 而 compose 项目数量在可预见规模内是个位数，串行完全够用且结果更稳定。
+//
+// 并发说明：**逐个项目非阻塞试锁，拿不到就标 busy**。
+//
+// 为什么不用阻塞等锁：某个项目正在 up（可能十分钟），
+// 列表若排队等它，整个 ComposeList 会一直卡到 15 秒超时，
+// 界面表现成"列表加载失败"——而其它项目其实完全正常。
+// 因此这里用 tryWithProject：拿不到锁就立刻返回 busy，
+// 让用户在列表里看到"这个项目正在操作中"，而不是整张列表挂掉。
+// 每次都只持有一把项目信号量（用完即放），不存在多锁嵌套，也就没有死锁。
 func (m *Manager) List(ctx context.Context) ([]ProjectStatus, error) {
 	projects, err := m.ws.List()
 	if err != nil {
@@ -309,13 +464,23 @@ func (m *Manager) List(ctx context.Context) ([]ProjectStatus, error) {
 	}
 	out := make([]ProjectStatus, 0, len(projects))
 	for _, p := range projects {
-		ps := ProjectStatus{Project: p}
-		cfgPath := composePathIn(p.Dir)
-		if h, herr := HashFile(cfgPath); herr == nil {
-			ps.Hash = h
+		var ps ProjectStatus
+		got := m.tryWithProject(p.Name, func() {
+			ps = ProjectStatus{Project: p}
+			cfgPath := composePathIn(p.Dir)
+			ps.Hash = m.projectHashLocked(p.Name, cfgPath)
+			ps.Services = servicesFromConfig(cfgPath)
+			m.fillStatus(ctx, p.Name, cfgPath, &ps)
+		})
+		if !got {
+			// 该项目正在执行写操作：**不读**它的文件（可能正处在两次 rename 之间），
+			// 也不跑 compose ps（会和正在运行的命令抢引擎）。
+			// 如实告诉用户"正在操作中"，不给一个可能过时的状态。
+			ps = ProjectStatus{Project: p}
+			ps.Status = StatusBusy
+			out = append(out, ps)
+			continue
 		}
-		ps.Services = servicesFromConfig(cfgPath)
-		m.fillStatus(ctx, p.Name, cfgPath, &ps)
 		out = append(out, ps)
 	}
 	return out, nil
@@ -327,24 +492,29 @@ func (m *Manager) Status(ctx context.Context, name string) (ProjectStatus, error
 	if err != nil {
 		return ProjectStatus{}, err
 	}
-	dir, err := m.ws.ProjectDir(n)
+
+	var ps ProjectStatus
+	err = m.withProject(ctx, n, func() error {
+		dir, derr := m.ws.ProjectDir(n)
+		if derr != nil {
+			return derr
+		}
+		info, statErr := os.Stat(filepath.Join(dir, composeFileName))
+		if statErr != nil {
+			return fmt.Errorf("编排 %s 在本机不存在", n)
+		}
+		ps = ProjectStatus{Project: Project{
+			Name: n, Dir: dir, UpdatedAt: info.ModTime().UTC(), HasComposeFile: true,
+		}}
+		cfgPath := composePathIn(dir)
+		ps.Hash = m.projectHashLocked(n, cfgPath)
+		ps.Services = servicesFromConfig(cfgPath)
+		m.fillStatus(ctx, n, cfgPath, &ps)
+		return nil
+	})
 	if err != nil {
 		return ProjectStatus{}, err
 	}
-	info, statErr := os.Stat(filepath.Join(dir, composeFileName))
-	if statErr != nil {
-		return ProjectStatus{}, fmt.Errorf("编排 %s 在本机不存在", n)
-	}
-
-	ps := ProjectStatus{Project: Project{
-		Name: n, Dir: dir, UpdatedAt: info.ModTime().UTC(), HasComposeFile: true,
-	}}
-	cfgPath := composePathIn(dir)
-	if h, herr := HashFile(cfgPath); herr == nil {
-		ps.Hash = h
-	}
-	ps.Services = servicesFromConfig(cfgPath)
-	m.fillStatus(ctx, n, cfgPath, &ps)
 	return ps, nil
 }
 
@@ -377,16 +547,45 @@ func (m *Manager) requireExists(name string) error {
 	return nil
 }
 
+// runnerFor 构造"针对某个项目"的 Runner（含 --env-file 与需剔除的键）。
+//
+// 抽成独立方法有两个原因：
+//   - 便于测试**直接断言**传给 compose 的参数与环境，而不必真的执行 docker
+//     （真执行会让测试依赖宿主机是否有 compose，甚至可能真的启停容器）；
+//   - 让"每次命令都从磁盘重读 .env"这条规则只有一个实现点。
+//
+// 每次从磁盘重读而不是缓存：.env 可能被备份恢复、被用户手工编辑、
+// 被上一次 Apply 替换过。缓存会造成"文件已变但命令还用旧插值"，
+// 那是最难查的一类偏差。
+func (m *Manager) runnerFor(name string) *Runner {
+	r := *m.runner
+
+	if p, err := m.ws.EnvPath(name); err == nil {
+		if _, statErr := os.Stat(p); statErr == nil {
+			r.EnvFile = p
+			if content, rerr := m.ws.ReadEnv(name); rerr == nil {
+				r.EnvExcludeKeys = ParseEnvKeys(content)
+			}
+		}
+	}
+	return &r
+}
+
 // run 在项目目录下执行命令。
 //
 // 工作目录设为项目目录：compose 默认从当前目录向上找 compose.yml，
 // 显式设 Dir 能保证无论调用方在哪个目录，命令作用对象都正确。
+//
+// 有 .env 时显式传 --env-file，并把其中定义的键从继承环境剔除。
+// 剔除是必须的：compose 的插值优先级是 shell 环境 > .env，
+// 不剔除的话 .env 里的值会被 Agent 进程的同名变量压住，
+// 用户改 .env 却"没有任何效果"，且看不到任何报错。
 func (m *Manager) run(ctx context.Context, name string, timeout time.Duration, args ...string) Result {
 	dir, err := m.ws.ProjectDir(name)
 	if err != nil {
 		return Result{Output: err.Error(), ExitCode: -1}
 	}
-	r := *m.runner
+	r := m.runnerFor(name)
 	r.Dir = dir
 	return r.Run(ctx, name, timeout, args...)
 }

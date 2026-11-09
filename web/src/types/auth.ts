@@ -7,8 +7,8 @@
  * - POST /api/auth/logout → 204
  */
 
-/** 用户角色（后端首期只有 admin；保留普通用户以便权限分级扩展） */
-export type UserRole = 'admin' | 'operator' | 'viewer'
+/** 用户角色（后端只有 admin / user 两档，见 hub/internal/user/permission.go） */
+export type UserRole = 'admin' | 'user'
 
 /** 后端返回的当前登录用户；字段名与后端一致使用 snake_case */
 export interface User {

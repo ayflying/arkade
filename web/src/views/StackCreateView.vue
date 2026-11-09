@@ -9,14 +9,24 @@
  * 刻意不引 CodeMirror/Monaco——按项目「不轻易加依赖」的基调，
  * 这里的需求只是「能舒服地贴一段 YAML」，原生 textarea 足够。
  *
+ * ## 为什么 compose 旁边必须有 .env
+ *
+ * compose 里写 `${DB_PASSWORD}` 是最常见写法。若界面上没有 .env 的位置，
+ * 用户把它贴进来后服务直接起不来，报错还只说「变量未设置」，
+ * 完全不知道要去哪配。因此 .env 编辑区是本页的必要组成，不是附加功能。
+ *
+ * 但 .env 里通常就是密码，所以默认收起、默认打码，用户显式展开才可见。
+ * 内容**不写入任何浏览器存储**，离开页面即丢弃（见 onUnmounted）。
+ *
  * 表单校验在前端先做一轮（名称格式、内容非空），
  * 避免用户写完一大段 YAML 提交后才被后端打回。
  */
-import { computed, ref } from 'vue'
+import { computed, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { NAlert, NButton, NForm, NFormItem, NInput } from 'naive-ui'
 import type { FormInst, FormRules } from 'naive-ui'
 import PageHeader from '@/components/common/PageHeader.vue'
+import StackEnvEditor from '@/components/stack/StackEnvEditor.vue'
 import { createStack } from '@/api/stacks'
 import { useCurrentAgent } from '@/composables/useCurrentAgent'
 import { ApiError } from '@/types/api'
@@ -36,6 +46,9 @@ const submitError = ref('')
  * 留空的话连接缝该缩进几格都要靠猜。
  * 注意：必须声明在 form 之前——form 的初始化要立即读它，
  * 若放在后面会命中 const 的暂时性死区（TDZ）而直接报错。
+ *
+ * 示例刻意**不引用 ${VAR}**：给了 `${DB_PASSWORD}` 这类示例，
+ * 用户删掉 .env 后 compose 就跑不起来。默认示例必须是自洽可用的。
  */
 const DEFAULT_COMPOSE = `services:
   web:
@@ -45,8 +58,13 @@ const DEFAULT_COMPOSE = `services:
       - "8080:80"
 `
 
-/** 表单模型 */
-const form = ref({ name: '', content: DEFAULT_COMPOSE })
+/**
+ * 表单模型。
+ *
+ * `envContent` 初始为空：新建时默认不配 .env，
+ * 用户有需要才展开编辑区填。
+ */
+const form = ref({ name: '', content: DEFAULT_COMPOSE, envContent: '' })
 
 /**
  * 编排名校验。
@@ -105,7 +123,10 @@ async function handleSubmit(): Promise<void> {
   try {
     const res = await createStack(agentId.value, {
       name: form.value.name.trim(),
-      content: form.value.content
+      content: form.value.content,
+      // .env 总是随创建一起提交（可为空串）：新建场景没有「保留旧值」的语义，
+      // 不传会让后端无法区分「没配」和「没给」
+      env_content: form.value.envContent
     })
 
     /*
@@ -138,6 +159,18 @@ function goBack(): void {
   if (agentId.value === null) return
   void router.push({ name: 'agent-stacks', params: { id: agentId.value } })
 }
+
+/**
+ * 离开页面时清空 .env 内容。
+ *
+ * .env 里通常是密码，不该在组件销毁后还被闭包引用住。
+ * 这里同时清 compose 内容：它也可能含密钥（如 image 私有仓库凭据），
+ * 且没有「返回后恢复草稿」的需求——本就不做草稿持久化。
+ */
+onUnmounted(() => {
+  form.value.envContent = ''
+  form.value.content = ''
+})
 </script>
 
 <template>
@@ -203,6 +236,20 @@ function goBack(): void {
             />
           </div>
         </n-form-item>
+
+        <!--
+          .env 编辑区：紧贴 compose 编辑器下方。
+          默认收起+打码（里面通常是密码），用户显式展开才编辑。
+          放在 compose 之后而不是之前：用户的注意力顺序是「先写 compose，
+          发现有 ${VAR} 才需要 .env」，顺序反了会让人以为必须先配环境变量。
+        -->
+        <n-form-item label="环境变量 .env">
+          <stack-env-editor
+            v-model="form.envContent"
+            :disabled="submitting"
+            class="stack-create__env"
+          />
+        </n-form-item>
       </n-form>
     </div>
   </div>
@@ -257,5 +304,10 @@ function goBack(): void {
 .editor__input :deep(.n-input__border),
 .editor__input :deep(.n-input__state-border) {
   display: none;
+}
+
+/* .env 编辑区占满整行：它是个独立的折叠块，不是窄输入框 */
+.stack-create__env {
+  width: 100%;
 }
 </style>

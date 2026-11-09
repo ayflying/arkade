@@ -70,15 +70,21 @@ async function fetchStackStats(
    * 未纳管项目优先取 external_stacks（带状态等详情），
    * 后端暂未提供时退回 orphans（只有名字）。
    * 两者是同一批项目，不能相加——否则会重复统计。
+   *
+   * 注意只为取名字，不读 services/running/total：
+   * 这几个字段的形状曾经在 web 类型里写错（services 写成了 number），
+   * 概览统计不依赖它们就不会跟着一起错。
    */
-  const external = Array.isArray(res.external_stacks) ? res.external_stacks.map((s) => s.name) : []
+  const external = Array.isArray(res.external_stacks)
+    ? res.external_stacks.map((s) => s.name).filter((n): n is string => typeof n === 'string')
+    : []
   const orphans = external.length > 0 ? external : (res.orphans ?? [])
   // drift 只看后端给的布尔值，不自己比 config_hash / remote_hash——
   // 后端对空配置、未同步状态可能有额外规则，前端重复判断迟早不一致
   return {
-    total: res.stacks.length,
-    drifted: res.stacks.filter((s) => s.drift === true).map((s) => s.name),
-    orphans
+    total: Array.isArray(res.stacks) ? res.stacks.length : 0,
+    drifted: Array.isArray(res.stacks) ? res.stacks.filter((s) => s.drift === true).map((s) => s.name) : [],
+    orphans: Array.isArray(orphans) ? orphans : []
   }
 }
 
@@ -104,6 +110,7 @@ function emptyCounts(): AgentResourceCounts {
     containers: 0,
     runningContainers: 0,
     stacks: 0,
+    unmanagedStacks: 0,
     images: 0,
     networks: 0,
     volumes: 0
@@ -157,6 +164,8 @@ async function aggregateOne(
   }
   if (stacks.ok) {
     counts.stacks = stacks.value.total
+    // 未纳管项目单独计数：它们不属于「已纳管」，混进 stacks 会让人以为能在这里管理
+    counts.unmanagedStacks = stacks.value.orphans.length
   }
   if (images.ok) counts.images = images.value
   if (networks.ok) counts.networks = networks.value
@@ -190,6 +199,7 @@ export async function loadOverview(limit = OVERVIEW_AGENT_LIMIT): Promise<Overvi
     containers: 0,
     runningContainers: 0,
     stacks: 0,
+    unmanagedStacks: 0,
     images: 0,
     networks: 0,
     volumes: 0
@@ -207,6 +217,7 @@ export async function loadOverview(limit = OVERVIEW_AGENT_LIMIT): Promise<Overvi
     totals.containers += item.counts.containers
     totals.runningContainers += item.counts.runningContainers
     totals.stacks += item.counts.stacks
+    totals.unmanagedStacks += item.counts.unmanagedStacks
     totals.images += item.counts.images
     totals.networks += item.counts.networks
     totals.volumes += item.counts.volumes

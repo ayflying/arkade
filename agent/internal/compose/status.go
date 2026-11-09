@@ -22,6 +22,14 @@ const (
 	StatusPartial = "partial"
 	StatusStopped = "stopped"
 	StatusUnknown = "unknown"
+
+	// StatusBusy 表示该项目正在执行其它操作，本次没有读取它的状态。
+	//
+	// 为什么不复用它 unknown：两者对用户的含义完全不同。
+	// unknown = "我们读了但读不出来"（引擎连不上、项目从没启动）；
+	// busy = "我们没读，因为它正在被操作"——用户应当稍等再看，
+	// 而不是去排查引擎故障。混成一个值会把用户引向错误的排查方向。
+	StatusBusy = "busy"
 )
 
 // psEntry 是 `docker compose ps --format json` 输出的单个元素。

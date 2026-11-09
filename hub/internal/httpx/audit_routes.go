@@ -61,6 +61,12 @@ var auditRoutes = map[string]auditRoute{
 	"/api/agents/{agentID}/stacks": {
 		Action: audit.ActionStackCreate,
 	},
+	"/api/agents/{agentID}/stacks/import": {
+		Action: audit.ActionStackCreate,
+	},
+	"/api/agents/{agentID}/stacks/import-preview": {
+		Action: audit.ActionStackAction,
+	},
 	// 编排的子动作（up/down/restart/pull…）统一记为 stack.action，
 	// 具体子动作写进 detail。理由见 audit/actions.go 的注释：
 	// 拆成十几个动作会让审计列表难以浏览，而用户关心的是"谁动了我的编排"。

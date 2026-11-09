@@ -28,6 +28,24 @@ export const useAuthStore = defineStore('auth', () => {
   const displayName = computed<string>(() => user.value?.display_name || user.value?.username || '')
 
   /**
+   * 是否是全局管理员（admin）。
+   *
+   * 后端只有两个角色：`admin`（全局管理，不受服务器范围限制）与
+   * `user`（权限完全来自所属用户组在该 Agent 上的授权），
+   * 三档授权 view < operate < manage。
+   * 见 hub/internal/user/permission.go。
+   *
+   * ⚠️ **不要**用它判断「能不能改某台服务器的编排/配置」：
+   * 普通用户被授予该 Agent 的 manage 后同样可以改，而前端目前没有
+   * 「查询我对某个 Agent 的权限档位」的接口，按角色猜会让有权限的用户
+   * 看不到入口。这类入口一律照常显示，由后端 403 兜底。
+   *
+   * 它只适用于与具体 Agent 无关的**全局**能力（用户、用户组管理——
+   * 后端这些接口都走 requireAdmin）。
+   */
+  const isAdmin = computed(() => user.value?.role === 'admin')
+
+  /**
    * 登录。
    * 失败直接抛给页面（页面负责用 n-message 展示中文文案），store 不吞错。
    */
@@ -79,5 +97,16 @@ export const useAuthStore = defineStore('auth', () => {
     initialized.value = true
   }
 
-  return { user, initialized, loggingIn, isLoggedIn, displayName, login, logout, fetchMe, clearLocal }
+  return {
+    user,
+    initialized,
+    loggingIn,
+    isLoggedIn,
+    isAdmin,
+    displayName,
+    login,
+    logout,
+    fetchMe,
+    clearLocal
+  }
 })

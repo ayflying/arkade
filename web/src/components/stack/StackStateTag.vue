@@ -46,6 +46,13 @@ const STATE_MAP: Record<string, StateMeta> = {
   // 部分运行是关键告警状态：说明只有部分服务起来了，需要用户介入
   partial: { label: '部分运行', type: 'warning' },
   offline: { label: '离线', type: 'info' },
+  /*
+   * 操作中：Agent 正在执行该项目的某个操作，此刻读到的状态是半写状态。
+   * 必须是独立的第三态——归进「运行中」会让用户以为一切正常，
+   * 归进「已停止」会让他去点启动从而与进行中的操作打架。
+   * 用 warning 色提示「稍等，正在处理」。
+   */
+  busy: { label: '操作中', type: 'warning' },
   unknown: { label: '未知', type: 'info' }
 }
 

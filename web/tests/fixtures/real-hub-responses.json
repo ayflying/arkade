@@ -1,0 +1,161 @@
+{
+  "_comment": "真实后端响应样本。字段形状逐条抄自 hub/internal/httpx/handlers_compose.go 与 handlers_compose_common.go，不是前端自造。用于验证 api 层解包与兜底。",
+  "listStacks": {
+    "_source": "handleListStacks -> respondJSON{agent_id, stacks, agent_online, orphans, external_stacks}",
+    "agent_id": "ag-1",
+    "stacks": [
+      {
+        "agent_id": "ag-1",
+        "name": "my-app",
+        "status": "running",
+        "config_hash": "abc123",
+        "remote_hash": "abc123",
+        "drift": false,
+        "services": ["web", "db"],
+        "running": 2,
+        "total": 2,
+        "version": 3,
+        "updated_at": 1700000000,
+        "synced_at": 1700000100
+      },
+      {
+        "_comment": "busy：Agent 正在执行操作，此刻读到的是半写状态。必须原样透传，不能被改写成 running/stopped。",
+        "agent_id": "ag-1",
+        "name": "busy-app",
+        "status": "busy",
+        "config_hash": "def456",
+        "remote_hash": "def456",
+        "drift": false,
+        "services": ["web"],
+        "running": 1,
+        "total": 1,
+        "version": 1,
+        "updated_at": 1700000200,
+        "synced_at": 1700000200
+      }
+    ],
+    "agent_online": true,
+    "orphans": ["act-runner"],
+    "external_stacks": [
+      { "name": "act-runner", "status": "running", "services": ["runner"], "running": 1, "total": 1, "managed": false },
+      { "name": "prod-db", "status": "unknown", "services": [], "running": 0, "total": 0, "managed": false }
+    ]
+  },
+  "getStack": {
+    "_source": "handleGetStack -> respondJSON{stack: toStackView(...)}（详情不含 content）",
+    "stack": {
+      "agent_id": "ag-1",
+      "name": "my-app",
+      "status": "running",
+      "config_hash": "abc123",
+      "remote_hash": "abc123",
+      "drift": false,
+      "services": ["web", "db"],
+      "running": 2,
+      "total": 2,
+      "version": 3,
+      "updated_at": 1700000000,
+      "synced_at": 1700000100
+    }
+  },
+  "getStackConfig": {
+    "_source": "handleGetStackConfig -> JSON{content, env_content, version}",
+    "content": "services:\n  web:\n    image: nginx:1.27\n",
+    "env_content": "DB_PASSWORD=s3cret\n",
+    "version": 3
+  },
+  "createStack": {
+    "_source": "handleCreateStack -> {stack, sync_ok, sync_hint, result}",
+    "stack": {
+      "agent_id": "ag-1",
+      "name": "new-app",
+      "status": "offline",
+      "config_hash": "h1",
+      "remote_hash": "",
+      "drift": false,
+      "services": [],
+      "running": 0,
+      "total": 0,
+      "version": 1,
+      "updated_at": 1700000000,
+      "synced_at": 0
+    },
+    "sync_ok": false,
+    "sync_hint": "编排已保存，但 Agent 当前离线，稍后可重新下发",
+    "result": null
+  },
+  "updateStack": {
+    "_source": "handleUpdateStack -> {stack, sync_ok, sync_hint, result}",
+    "stack": {
+      "agent_id": "ag-1",
+      "name": "my-app",
+      "status": "running",
+      "config_hash": "h2",
+      "remote_hash": "h2",
+      "drift": false,
+      "services": ["web"],
+      "running": 1,
+      "total": 1,
+      "version": 4,
+      "updated_at": 1700000005,
+      "synced_at": 1700000006
+    },
+    "sync_ok": true,
+    "sync_hint": "",
+    "result": { "status": "running", "output": "ok" }
+  },
+  "actionResponse": {
+    "_source": "composeOpResultToView -> {agent_id, name, status, config_hash, output}",
+    "agent_id": "ag-1",
+    "name": "my-app",
+    "status": "running",
+    "config_hash": "h2",
+    "output": "Container my-app-web-1 Started"
+  },
+  "deleteStack": {
+    "_source": "handleDeleteStack -> {name, sync_ok, sync_hint, result, config_hash}",
+    "name": "my-app",
+    "sync_ok": true,
+    "sync_hint": "",
+    "result": { "status": "stopped", "output": "" },
+    "config_hash": "h2"
+  },
+  "previewImport": {
+    "_source": "handleImportStackPreview -> {name, config_hash, can_import, blockers, warnings}",
+    "name": "act-runner",
+    "config_hash": "pv1",
+    "can_import": false,
+    "blockers": ["compose 使用了 build:，需要宿主上的 Dockerfile，无法导入"],
+    "warnings": ["服务 runner 未声明 restart 策略"]
+  },
+  "importStack": {
+    "_source": "handleImportStack -> {stack, sync_ok, sync_hint, adopted}",
+    "stack": {
+      "agent_id": "ag-1",
+      "name": "act-runner",
+      "status": "running",
+      "config_hash": "pv1",
+      "remote_hash": "pv1",
+      "drift": false,
+      "services": ["runner"],
+      "running": 1,
+      "total": 1,
+      "version": 1,
+      "updated_at": 1700000000,
+      "synced_at": 1700000010
+    },
+    "sync_ok": true,
+    "sync_hint": "仅导入配置，未启动、停止或重建任何容器",
+    "adopted": true
+  },
+  "degraded": {
+    "_comment": "字段大面积缺失的畸形响应：验证所有取值都有兜底，绝不让 undefined 漏到界面",
+    "listStacks": { "agent_online": false },
+    "getStack": {},
+    "getStackConfig": {},
+    "createStack": {},
+    "updateStack": {},
+    "previewImport": { "name": "x" },
+    "importStack": {}
+  }
+}

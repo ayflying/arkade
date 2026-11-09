@@ -119,6 +119,8 @@ func NewRouter(d Deps) http.Handler {
 			// 同一前缀下不同动作的权限要求不同，路径分组表达不了这种差异。
 			priv.Get("/agents/{agentID}/stacks", handleListStacks(d))
 			priv.Post("/agents/{agentID}/stacks", handleCreateStack(d))
+			priv.Post("/agents/{agentID}/stacks/import-preview", handleImportStackPreview(d))
+			priv.Post("/agents/{agentID}/stacks/import", handleImportStack(d))
 			priv.Get("/agents/{agentID}/stacks/{name}", handleGetStack(d))
 			priv.Put("/agents/{agentID}/stacks/{name}", handleUpdateStack(d))
 			priv.Delete("/agents/{agentID}/stacks/{name}", handleDeleteStack(d))
