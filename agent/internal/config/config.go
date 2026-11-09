@@ -110,6 +110,28 @@ func applyEnvOverrides(c *Config) {
 	}
 }
 
+// TokenFromFile 判断配置文件里是否真的写了 token（而不是靠环境变量注入）。
+//
+// 为什么要专门查一遍：Load 之后 Token 字段已经被环境变量覆盖过，
+// 单看最终值分不清来源。这里直接读一次原始文件，只做安全检查用途——
+// 读取失败一律返回 false，不为一个提醒功能引入新的启动失败点。
+func TokenFromFile(path string) bool {
+	if strings.TrimSpace(path) == "" {
+		return false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	raw := struct {
+		Token string `toml:"token"`
+	}{}
+	if _, err := toml.Decode(string(data), &raw); err != nil {
+		return false
+	}
+	return strings.TrimSpace(raw.Token) != ""
+}
+
 // applyDefaults 填充默认值。数据目录还要展开 ~ 与环境变量，方便运维手写。
 func (c *Config) applyDefaults() {
 	if strings.TrimSpace(c.HubURL) == "" {

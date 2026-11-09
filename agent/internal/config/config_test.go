@@ -220,3 +220,44 @@ func TestExpandHome(t *testing.T) {
 		t.Fatalf("~/ 未展开: %q", got)
 	}
 }
+
+// TestTokenFromFile 覆盖「配置文件里是否写了凭据」的判定。
+//
+// 这个判定用于启动时的安全提醒：凭据应当走环境变量注入，
+// 写进配置文件会随备份与分发扩散。判定错会造成漏报，所以要有测试盯住。
+func TestTokenFromFile(t *testing.T) {
+	dir := t.TempDir()
+
+	write := func(name, content string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+			t.Fatalf("写测试文件失败: %v", err)
+		}
+		return p
+	}
+
+	withToken := write("with.toml", "hub_url = \"ws://h/agent/connect\"\ntoken = \"secret-value-123456\"\n")
+	emptyToken := write("empty.toml", "hub_url = \"ws://h/agent/connect\"\ntoken = \"\"\n")
+	noToken := write("none.toml", "hub_url = \"ws://h/agent/connect\"\n")
+	broken := write("broken.toml", "this is not toml ===\n")
+
+	cases := []struct {
+		name string
+		path string
+		want bool
+	}{
+		{"写了令牌", withToken, true},
+		{"令牌留空", emptyToken, false},
+		{"没有令牌字段", noToken, false},
+		{"文件不存在", filepath.Join(dir, "missing.toml"), false},
+		{"文件格式损坏", broken, false},
+		{"路径为空", "", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := TokenFromFile(c.path); got != c.want {
+				t.Fatalf("TokenFromFile(%q) = %v，期望 %v", c.path, got, c.want)
+			}
+		})
+	}
+}

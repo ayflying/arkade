@@ -1,17 +1,18 @@
-# Arkade 调试环境编排（Hub + Agent 同机）
+# Arkade 容器编排（Hub + Agent）
 #
-# 用途：在一台装有 Docker 的机器上，把控制面（Hub）与被管代理（Agent）一起跑起来，
-# 用于验证「Hub → Agent → 本机容器」整条链路。**这不是生产部署模板**：
-#   - 生产环境下 Agent 部署在各自被管的服务器上，Hub 单独一台；
-#   - 这里的 Agent 挂载了宿主机 docker.sock，仅用于本机自测。
+# 凭据只在编排层出现：全部通过同目录下的 .env 注入进容器环境变量，
+# 程序配置文件里一律留空。这样凭据只有一处来源，不会散落在多个文件里。
 #
-# 用法（仓库根目录）：
-#   cp deploy/docker/.env.example deploy/docker/.env    # 改掉两个密码/令牌
-#   docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/.env up -d --build
-#   浏览器打开 http://<机器IP>:8080
+# 用法（在仓库根目录）：
+#   cp deploy/docker/.env.example deploy/docker/.env    # 填两个凭据
+#   docker compose -f deploy/docker/docker-compose.yml up -d --build
+#   浏览器打开 http://<机器IP>:${ARKADE_HUB_PORT:-8080}
+#
+# 说明：compose 会自动读取与本文件同目录的 .env，
+# 因此不需要每次都手写 --env-file（少一个容易漏的参数）。
 #
 # 清理：
-#   docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/.env down -v --rmi local
+#   docker compose -f deploy/docker/docker-compose.yml down -v --rmi local
 
 name: arkade-debug
 
@@ -28,12 +29,18 @@ services:
     restart: unless-stopped
     ports:
       - "${ARKADE_HUB_PORT:-8080}:8080"
+    # env_file 与下面的 environment 的区别：
+    #   env_file 把文件里的全部键值注入容器；
+    #   environment 里的 ${VAR} 由 compose 在宿主侧解析后写入。
+    # 两者都需要：前者保证 .env 里新增的变量也能进容器，
+    # 后者用 :? 语法在宿主侧做必填校验，缺凭据时直接拒绝启动而不是带空令牌跑起来。
+    env_file:
+      - .env
     environment:
-      # 密码与令牌只从环境变量注入，不写进配置文件——配置文件会被挂载到卷里，
-      # 明文落盘等于把凭据留在磁盘上。
-      ARKADE_INITIAL_PASS: ${ARKADE_INITIAL_PASS:?必须设置 ARKADE_INITIAL_PASS（见 deploy/docker/.env.example）}
-      ARKADE_AGENT_TOKEN: ${ARKADE_AGENT_TOKEN:?必须设置 ARKADE_AGENT_TOKEN}
-      # 覆盖配置里的监听地址，容器内必须监听 0.0.0.0 才能被端口映射访问。
+      # 必填校验：缺这两项时 compose 会中止并给出提示，不会静默启动一个没有凭据的容器。
+      ARKADE_INITIAL_PASS: ${ARKADE_INITIAL_PASS:?必须在 deploy/docker/.env 里设置 ARKADE_INITIAL_PASS}
+      ARKADE_AGENT_TOKEN: ${ARKADE_AGENT_TOKEN:?必须在 deploy/docker/.env 里设置 ARKADE_AGENT_TOKEN}
+      # 覆盖配置里的监听地址：容器内必须监听 0.0.0.0 才能被端口映射访问。
       ARKADE_LISTEN: 0.0.0.0:8080
     volumes:
       - hub-data:/data
@@ -58,10 +65,12 @@ services:
     restart: unless-stopped
     depends_on:
       hub:
-        # 等 Hub 真正健康再起 Agent，避免开局就进入重连退避循环刷日志。
+        # 等 Hub 真正健康再起 Agent，避免开局进入重连退避循环刷日志。
         condition: service_healthy
+    env_file:
+      - .env
     environment:
-      ARKADE_AGENT_TOKEN: ${ARKADE_AGENT_TOKEN:?必须设置 ARKADE_AGENT_TOKEN}
+      ARKADE_AGENT_TOKEN: ${ARKADE_AGENT_TOKEN:?必须在 deploy/docker/.env 里设置 ARKADE_AGENT_TOKEN}
     volumes:
       - agent-data:/opt/arkade/agent
       - ./agent.config.toml:/opt/arkade/agent/agent.toml:ro

@@ -19,26 +19,36 @@
 
 ## 使用
 
+凭据只配在编排层（`.env`），程序配置文件里一律留空——配置只有一处来源，不用两头改。
+
 ```bash
 cd <仓库根目录>
 
-# 1. 准备环境变量（必须改掉两个凭据）
+# 1. 准备凭据（只在这一次填写，之后启动不用再管）
 cp deploy/docker/.env.example deploy/docker/.env
+#    编辑 .env，填 ARKADE_INITIAL_PASS 与 ARKADE_AGENT_TOKEN
+chmod 600 deploy/docker/.env
 
-# 2. 构建并启动
-docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/.env up -d --build
+# 2. 构建并启动（compose 自动读取同目录的 .env，不需要 --env-file）
+docker compose -f deploy/docker/docker-compose.yml up -d --build
 
 # 3. 看状态
-docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/.env ps
+docker compose -f deploy/docker/docker-compose.yml ps
 curl http://127.0.0.1:8080/healthz
 
 # 4. 浏览器打开 http://<机器IP>:8080，用 .env 里的管理员账号登录
 ```
 
+改动 `.env` 后需要重建容器才生效（环境变量在容器创建时注入）：
+
+```bash
+docker compose -f deploy/docker/docker-compose.yml up -d --force-recreate
+```
+
 ## 清理（不留残留）
 
 ```bash
-docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/.env down -v --rmi local
+docker compose -f deploy/docker/docker-compose.yml down -v --rmi local
 ```
 
 `-v` 删除命名卷（数据库与 Agent 身份），`--rmi local` 删除本次构建的镜像。
@@ -50,6 +60,29 @@ docker volume ls --filter name=arkade
 docker network ls --filter name=arkade
 docker images --filter reference='arkade-*'
 ```
+
+## 凭据怎么流转
+
+```
+deploy/docker/.env            ← 唯一填写凭据的地方（已被 .gitignore 排除）
+        │  compose 读取
+        ▼
+容器环境变量                   ← 启动时注入
+  ARKADE_INITIAL_PASS
+  ARKADE_AGENT_TOKEN
+        │  程序启动时读取
+        ▼
+进程内存                       ← 不落盘
+```
+
+配置文件（`hub.config.toml` / `agent.config.toml`）里的 `agent_token`、`initial_pass`、
+`token` 全部保持空字符串，它们只是占位，实际值由环境变量覆盖。
+
+两个关键保障：
+
+1. **缺凭据直接拒绝启动**：compose 用 `${VAR:?提示}` 语法在宿主侧校验，`.env` 没填就中止；
+   Hub 自己也会校验（缺 `ARKADE_INITIAL_PASS` 时拒绝启动），不会带着空令牌跑起来。
+2. **`.env` 不入库**：`.gitignore` 拦截 `.env`，只放行 `.env.example`。
 
 ## 关键设计说明
 
