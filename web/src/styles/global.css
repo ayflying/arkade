@@ -1,0 +1,56 @@
+/**
+ * 全局主题与基础样式
+ *
+ * 采用 CSS 变量 + Naive UI 主题覆盖（sharedTheme）两层：
+ * - 这里只管布局骨架、滚动条、表格等通用样式；
+ * - 组件内部样式一律 scoped，避免污染。
+ */
+
+/* 让浏览器原生元素也走 Naive 的字体栈，中文优先思源/系统字体 */
+:root {
+  --arkade-page-bg: #f5f7fa;
+  --arkade-header-height: 56px;
+  --arkade-content-max-width: 1440px;
+  --arkade-mono-font: 'JetBrains Mono', 'Cascadia Mono', Consolas, 'Courier New', monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--arkade-page-bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 细滚动条：日志抽屉内容很长，默认滚动条太粗会显得笨重 */
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.18);
+  border-radius: 4px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.3);
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* 让代码/日志区域复用等宽字体 */
+.mono-text {
+  font-family: var(--arkade-mono-font);
+}

@@ -1,0 +1,25 @@
+{
+  "name": "arkade-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Arkade（容器方舟）控制面前端：Vue 3 + TypeScript + Vite + Pinia + Naive UI",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "typecheck": "vue-tsc --noEmit",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "naive-ui": "^2.45.3",
+    "pinia": "^4.1.0",
+    "vue": "^3.5.45",
+    "vue-router": "^5.4.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.10",
+    "typescript": "~5.9.3",
+    "vite": "^8.3.6",
+    "vue-tsc": "^3.3.14"
+  }
+}

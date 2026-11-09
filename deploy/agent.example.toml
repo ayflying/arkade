@@ -1,0 +1,51 @@
+# Arkade Agent 示例配置
+#
+# 复制到 /etc/arkade/agent.toml 并按需修改，权限建议 0640 且属主为运行用户：
+#   install -d -m 0750 -o arkade -g arkade /etc/arkade /opt/arkade/agent
+#   install -m 0640 -o arkade -g arkade agent.example.toml /etc/arkade/agent.toml
+#
+# 字段说明见右侧注释；未知字段会被直接拒绝（防拼写错误被静默忽略）。
+
+# Hub 的反向连接地址，必须是 ws:// 或 wss://（http/https 会被拒绝并提示改写）。
+# 生产环境务必用 wss://，Agent 令牌走的是长连接请求头。
+hub_url = "wss://hub.example.com:8443/agent/connect"
+
+# 注册令牌：在 Hub 的 Agent 注册页面创建后复制。令牌属于敏感信息，
+# 不要提交到版本库，也不要写进 world-readable 的文件。
+token = "在此填入 Hub 下发的 Agent 令牌"
+
+# Agent ID：留空即可。首次连接成功后 Hub 会在 HelloAck 中下发，
+# Agent 会把它原子写入 <data_dir>/agent_id，重启后继续复用同一个身份。
+# agent_id = ""
+
+# 数据目录：存放 agent_id 与容器归属登记容器，后续编排文件也在此目录下。
+data_dir = "/opt/arkade/agent"
+
+# 运行时套接字覆盖。留空则自动发现，顺序为：
+#   $DOCKER_HOST → /var/run/docker.sock
+#   → $XDG_RUNTIME_DIR/podman/podman.sock → /run/user/<uid>/podman/podman.sock
+#   → /run/podman/podman.sock
+# 显式填写后如果探测失败，Agent 会直接报错，不会静默降级为"没有运行时"。
+# socket = "/var/run/docker.sock"
+# rootless Podman 的典型值：
+# socket = "/run/user/1000/podman/podman.sock"
+# Windows/macOS 本地开发可指向 TCP（仅限本机调试）：
+# socket = "tcp://127.0.0.1:2375"
+
+# 运行时类型偏好：auto / docker / podman。只影响探测顺序，最终类型以探测结果为准。
+runtime_kind = "auto"
+# 自动发现时优先尝试 Podman 套接字（rootless Podman 机器上建议开）。
+prefer_podman = false
+
+# 兜底心跳间隔（秒）。Hub 在 HelloAck 中给出 heartbeat_sec 后以其为准；
+# 心跳连续失败 3 次判定断线，随后按 1s→2s→4s…上限 60s 退避重连。
+heartbeat_sec = 15
+
+# 日志：level 可选 debug / info / warn / error，format 可选 text / json。
+# text 适合 systemd/journalctl 直接阅读，json 适合日志采集器。
+log_level = "info"
+log_format = "text"
+
+# 跳过 TLS 证书校验。仅用于自签名证书的测试环境，生产必须为 false，
+# 正确做法是把 Hub 证书加入系统信任链。
+insecure_tls = false

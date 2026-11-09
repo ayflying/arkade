@@ -48,21 +48,62 @@ Arkade（中文名：容器方舟）是一个用于管理多台服务器上容�
 - [04 路线图](docs/04-roadmap.md) — 分期计划与验收口径
 - [05 已决策项](docs/05-decisions.md) — 已拍板的技术与范围决策（开发以此为准）
 
-## 目录结构（规划）
+## 目录结构
 
 ```
 arkade/
 ├── README.md
 ├── docs/              # 设计文档
-├── hub/               # 主程序（Go）
-├── agent/             # 代理程序（Go）
+├── protocol/          # 共享协议模块（信封、方法名、载荷定义，Hub 与 Agent 共用）
+├── hub/               # 主程序（Go，控制面）
+├── agent/             # 代理程序（Go，部署在被管服务器）
 ├── web/               # 前端（Vue 3）
-└── deploy/            # 部署脚本与编排
+└── deploy/            # 配置模板与 systemd 单元
+```
+
+## 快速开始（阶段一）
+
+前置：Go 1.24+、Node 20+、pnpm。
+
+```bash
+# 1. 构建前端
+cd web && pnpm install && pnpm build
+
+# 2. 准备 Hub 配置
+cd ../hub && go build -o bin/arkade-hub ./cmd/hub
+./bin/arkade-hub -init-config -c config.toml   # 生成模板后修改
+
+# 3. 启动 Hub（初始管理员密码必须显式提供，代码内无默认密码）
+ARKADE_INITIAL_PASS='你的密码至少8位' ./bin/arkade-hub -c config.toml
+
+# 4. 构建并启动 Agent（在被管服务器上）
+cd ../agent && go build -o bin/arkade-agent ./cmd/agent
+./bin/arkade-agent run -c agent.toml
+
+# 5. 浏览器打开 http://127.0.0.1:8080 ，用配置里的管理员账号登录
+```
+
+Agent 离线时仍可本地管理（决策 D-05）：
+
+```bash
+./arkade-agent ps                 # 列出本机容器
+./arkade-agent start <id|name>
+./arkade-agent stop <id|name>
+./arkade-agent logs <id|name> -n 100
 ```
 
 ## 项目状态
 
-设计阶段。代码骨架尚未开始，功能细节持续在后续对话中细化。
+**阶段一骨架已打通**（Hub + Agent + 前端三层能连上、能看能管）：
+
+- Hub：登录鉴权（bcrypt + 会话 Cookie）、Agent 连接管理、容器操作下发、SQLite 迁移器、SPA 托管
+- Agent：Docker / Podman 运行时抽象、反向连接 + 指数退避重连、心跳、本地 CLI 离线自治
+- 前端：登录页、服务器列表、容器列表（启停二次确认 + 日志抽屉）
+- 端到端验证：真实 Hub 与真实 Agent 通过 WebSocket 完成握手、心跳保活、请求往返与离线拒绝
+
+**尚未实现**（按路线图推进）：编排双份存储、接管、镜像与仓库、迁移、审计与权限管理界面、WebSocket 实时推送。
+
+**已知限制**：运行时层只用假引擎做过单元测试，尚未在真实 Docker / Podman 守护进程上验证；`go test -race` 因本机缺少 CGO 工具链暂不可运行。
 
 ## 命名说明
 

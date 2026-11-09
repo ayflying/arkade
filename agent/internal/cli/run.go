@@ -1,0 +1,90 @@
+package cli
+
+import (
+	"context"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"arkade/agent/internal/config"
+	"arkade/agent/internal/handler"
+	"arkade/agent/internal/runtime"
+)
+
+// cmdRun 实现 `arkade-agent run`：服务模式，连回 Hub。
+//
+// 生命周期：
+//
+//	读配置 → 校验 → 建运行时 → 建注册表 → 建连接器 → 阻塞运行
+//	收到 SIGINT/SIGTERM → 取消 context → 正常退出（systemd 依赖这个行为）
+func cmdRun(args []string, stderr io.Writer) int {
+	fs := flag.NewFlagSet("run", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	cfgPath := fs.String("c", "", "配置文件路径（必填）")
+	if err := fs.Parse(args); err != nil {
+		return exitUsage
+	}
+
+	if *cfgPath == "" {
+		fmt.Fprintln(stderr, "错误: run 子命令必须用 -c 指定配置文件，例如: arkade-agent run -c /etc/arkade/agent.toml")
+		return exitUsage
+	}
+
+	cfg, err := config.Load(*cfgPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "错误: %v\n", err)
+		return exitFail
+	}
+	// 服务模式才需要 hub_url/token；本地命令刻意不做这项校验（见 config.Validate 注释）。
+	if err := cfg.Validate(); err != nil {
+		fmt.Fprintf(stderr, "错误: %v\n", err)
+		return exitFail
+	}
+
+	log, err := newServiceLogger(cfg)
+	if err != nil {
+		fmt.Fprintf(stderr, "错误: %v\n", err)
+		return exitFail
+	}
+
+	rt, probeErr := createRuntime(cfg)
+	if probeErr != nil {
+		// 服务模式下不因为运行时探测失败就退出：Agent 仍应连上 Hub 并上报
+		// "这台机器引擎不可用"，否则运维只能上机器看日志才知道原因。
+		log.Warn("运行时探测失败，将以「无运行时」状态继续运行", "error", probeErr)
+		rt = runtime.NewNone("")
+	}
+	info, _ := rt.Info(context.Background())
+	if info.Kind == runtime.KindNone {
+		log.Warn("本机未检测到 Docker / Podman，容器相关命令将返回 unsupported")
+	} else {
+		log.Info("运行时探测完成",
+			"类型", string(info.Kind), "版本", info.Version,
+			"端点", info.Endpoint, "rootless", info.Rootless)
+	}
+
+	// 注册表在服务模式与本地模式里都是同一份构造方式，见 localSetup。
+	reg := handler.NewRegistry()
+	handler.RegisterDefaults(reg, rt)
+
+	agent, err := buildLinkAgent(cfg, log, rt, reg)
+	if err != nil {
+		fmt.Fprintf(stderr, "错误: 构造连接器失败: %v\n", err)
+		return exitFail
+	}
+
+	// 信号处理：systemd stop 发 SIGTERM，Ctrl+C 发 SIGINT，两者都走优雅退出。
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	log.Info("Agent 启动", "版本", Version, "hub", cfg.HubURL, "数据目录", cfg.DataDir)
+	if err := agent.Run(ctx); err != nil {
+		log.Error("连接循环异常退出", "error", err)
+		return exitFail
+	}
+	log.Info("Agent 已停止")
+	return exitOK
+}

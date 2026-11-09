@@ -1,0 +1,55 @@
+[Unit]
+# Arkade Agent：被管服务器上的代理程序，主动反向连回 Hub。
+#
+# 关键设计（务必保留）：
+#   - After/Wants=docker.service：Agent 启动时会探测运行时，先起引擎能避免
+#     首连上报 RuntimeNone 造成界面上的"瞬时无引擎"。
+#   - 但如果机器上是 Podman，可以把 docker.service 换成 podman.socket；
+#     两者都没有时本行也不会导致启动失败（Wants 是弱依赖）。
+Description=Arkade Agent（容器远程管理代理）
+Documentation=https://github.com/arkade/arkade
+After=network-online.target docker.service
+Wants=network-online.target docker.service
+
+[Service]
+# 专用低权限用户运行；需要访问 docker.sock 时把用户加入 docker 组：
+#   usermod -aG docker arkade
+Type=simple
+User=arkade
+Group=arkade
+
+# 环境变量文件放令牌以外的可覆盖项时可选用：
+# EnvironmentFile=-/etc/arkade/agent.env
+ExecStart=/usr/local/bin/arkade-agent run -c /etc/arkade/agent.toml
+# 本地 CLI 也要能读到同一个数据目录，因此工作目录固定为其父目录。
+WorkingDirectory=/opt/arkade
+
+# 停止行为：Agent 收到 SIGTERM 后主动关连接再退出，给 15 秒足够。
+KillSignal=SIGTERM
+TimeoutStopSec=15
+
+# 断线重连由 Agent 内部完成，进程异常退出时由 systemd 兜底拉起；
+# 退避交给 Agent 自己算（1s→2s→…→60s），这里只需要一个短延迟避免瞬间风暴。
+Restart=always
+RestartSec=5s
+# 连续 10 次启动失败才进入 failed 状态，避免启动即崩时无限刷日志。
+StartLimitBurst=10
+StartLimitIntervalSec=120
+
+# 最小权限约束：写路径只允许数据目录与 /run（运行时套接字所在）。
+# 注意不要加 ProtectSystem=strict 却忘了 ReadWritePaths，否则 Agent 无法写 agent_id。
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/arkade
+# 需要访问 /var/run/docker.sock 时不要启用 PrivateDevices 之外的过度限制；
+# 若要使用 rootless Podman 的 /run/user/<uid>/podman/podman.sock，
+# 还需在该用户的 systemd 用户会话里启用 podman.socket（见 deploy/README.md）。
+
+# 资源上限：Agent 是常驻控制面组件，不该吃掉整台机器。
+MemoryMax=512M
+TasksMax=256
+
+[Install]
+WantedBy=multi-user.target

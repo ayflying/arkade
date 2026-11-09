@@ -1,0 +1,18 @@
+# 依赖
+node_modules/
+
+# 构建产物（Hub 会自行构建，不提交）
+dist/
+
+# 本地环境
+*.local
+.env.local
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 日志
+*.log
