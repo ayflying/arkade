@@ -16,6 +16,7 @@ import (
 	"sync"
 
 	"arkade/agent/internal/compose"
+	"arkade/agent/internal/imagetransfer"
 	"arkade/agent/internal/runtime"
 	"arkade/protocol/envelope"
 )
@@ -123,6 +124,19 @@ func (r *Registry) Dispatch(ctx context.Context, req *envelope.Envelope) *envelo
 // 传 nil 时自动用静默日志器——测试里大多不关心日志，
 // 强制每个调用点都构造一个日志器是没有必要的噪音。
 func RegisterDefaults(reg *Registry, rt runtime.Runtime, composeMgr *compose.Manager, log *slog.Logger) {
+	RegisterDefaultsWithTransfer(reg, rt, composeMgr, nil, log)
+}
+
+// RegisterDefaultsWithTransfer 与 RegisterDefaults 相同，但额外注册镜像传输方法。
+//
+// 为什么保留 RegisterDefaults 并让新函数接管实现：现有调用点（含大量测试）
+// 一行都不用改——这正是"可选能力不绑架现有代码"的落地方式。
+// 需要传输能力的调用方改用本函数并传入已构造好的 imagetransfer.Manager。
+//
+// imageMgr 为 nil 时不注册传输方法：没有传输临时区就无法落盘归档，
+// 注册了也只会在调用时失败。
+func RegisterDefaultsWithTransfer(reg *Registry, rt runtime.Runtime, composeMgr *compose.Manager,
+	imageMgr *imagetransfer.Manager, log *slog.Logger) {
 	if log == nil {
 		log = slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
 	}
@@ -141,6 +155,24 @@ func RegisterDefaults(reg *Registry, rt runtime.Runtime, composeMgr *compose.Man
 	reg.Register(envelope.MethodNetworkRemove, newNetworkRemoveHandler(rt))
 	reg.Register(envelope.MethodVolumeList, newVolumeListHandler(rt))
 	reg.Register(envelope.MethodVolumeRemove, newVolumeRemoveHandler(rt))
+
+	// 镜像传输（拉取 / 导出 / 导入）：与编排完全无关，因此**必须注册在
+	// 下面的 composeMgr == nil 提前返回之前**——否则没有编排数据目录时，
+	// 镜像传输会连带变成 unsupported，而它本来只需要 data_dir 建 transfers 目录。
+	//
+	// imageMgr 为 nil 表示没有可用的传输临时区（例如本地 CLI 未给数据目录）：
+	// 此时不注册，Hub 得到 unsupported，比"上传到一半才发现没地方写"清楚。
+	if imageMgr != nil {
+		reg.Register(envelope.MethodImagePull, newImagePullHandler(imageMgr))
+		reg.Register(envelope.MethodImageSave, newImageSaveHandler(imageMgr))
+		reg.Register(envelope.MethodImageLoadBegin, newImageLoadBeginHandler(imageMgr))
+		reg.Register(envelope.MethodImageChunkPut, newImageChunkPutHandler(imageMgr))
+		reg.Register(envelope.MethodImageLoadCommit, newImageLoadCommitHandler(imageMgr))
+		reg.Register(envelope.MethodImageChunkGet, newImageChunkGetHandler(imageMgr))
+		reg.Register(envelope.MethodImageTaskStatus, newImageTaskStatusHandler(imageMgr))
+		reg.Register(envelope.MethodImageTaskCancel, newImageTaskCancelHandler(imageMgr))
+		reg.Register(envelope.MethodImageTaskRelease, newImageTaskReleaseHandler(imageMgr))
+	}
 
 	if composeMgr == nil {
 		return

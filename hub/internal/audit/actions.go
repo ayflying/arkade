@@ -33,6 +33,11 @@ const (
 	ActionStackAction = "stack.action"
 
 	// 资源
+	ActionImagePull     = "image.pull"
+	ActionImageExport   = "image.export"
+	ActionImageImport   = "image.import"
+	ActionImageMigrate  = "image.migrate"
+	ActionImageCancel   = "image.cancel"
 	ActionImageRemove   = "image.remove"
 	ActionNetworkRemove = "network.remove"
 	ActionVolumeRemove  = "volume.remove"
@@ -84,6 +89,11 @@ var labels = map[string]string{
 	ActionStackDelete: "删除编排",
 	ActionStackAction: "操作编排",
 
+	ActionImagePull:     "提交镜像拉取",
+	ActionImageExport:   "提交镜像导出",
+	ActionImageImport:   "提交镜像导入",
+	ActionImageMigrate:  "提交镜像迁移",
+	ActionImageCancel:   "取消镜像任务",
 	ActionImageRemove:   "删除镜像",
 	ActionNetworkRemove: "删除网络",
 	ActionVolumeRemove:  "删除存储卷",

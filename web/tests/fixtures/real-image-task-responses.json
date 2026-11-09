@@ -1,0 +1,182 @@
+{
+  "_source": "Lead 定稿的镜像任务 API。每个用例注明来源的接口，字段逐条对齐，不增不减。",
+  "_api": [
+    "GET  /api/image-tasks?agent_id={id}      -> {tasks: ImageTask[]}",
+    "GET  /api/image-tasks/{id}               -> {task: ImageTask}",
+    "POST /api/image-tasks/{id}/cancel        -> {task: ImageTask}",
+    "GET  /api/image-tasks/{id}/download      -> 浏览器原生下载（Cookie 鉴权，非预签名）",
+    "POST /api/agents/{id}/images/pull        -> 202 {task}",
+    "POST /api/agents/{id}/images/export      -> 202 {task}",
+    "POST /api/agents/{id}/images/migrate     -> 202 {task}",
+    "POST /api/agents/{id}/images/import      -> 202 {task}（raw File body, application/x-tar）"
+  ],
+
+  "pull": {
+    "_comment": "POST /images/pull 的 202 响应。进行中：progress 有真实值，download_ready=false。",
+    "task": {
+      "id": "task-pull-1",
+      "kind": "pull",
+      "agent_id": "ag-1",
+      "status": "running",
+      "phase": "下载层 2/5",
+      "message": "",
+      "progress": 0.4,
+      "bytes_done": 41943040,
+      "bytes_total": 104857600,
+      "created_at": "2026-11-10T02:30:00Z",
+      "download_ready": false
+    }
+  },
+
+  "taskNullProgress": {
+    "_comment": "GET /image-tasks/{id}：某些阶段算不出百分比，progress 与 bytes_total 均为 null。null = 未知，不能被兜成 0。",
+    "task": {
+      "id": "task-null",
+      "kind": "import",
+      "agent_id": "ag-1",
+      "status": "running",
+      "phase": "写入镜像层",
+      "message": "",
+      "progress": null,
+      "bytes_done": 1048576,
+      "bytes_total": null,
+      "created_at": "2026-11-10T02:31:00Z",
+      "download_ready": false
+    }
+  },
+
+  "exportAccepted": {
+    "_comment": "POST /images/export 的 202：刚接受，文件还没生成，download_ready 必须是 false。",
+    "task": {
+      "id": "task-export-1",
+      "kind": "export",
+      "agent_id": "ag-1",
+      "status": "pending",
+      "phase": "排队中",
+      "message": "",
+      "progress": null,
+      "bytes_done": 0,
+      "bytes_total": null,
+      "created_at": "2026-11-10T02:32:00Z",
+      "download_ready": false
+    }
+  },
+
+  "exportDone": {
+    "_comment": "导出完成：download_ready=true，此时界面才显示下载链接（30 分钟后过期）。",
+    "task": {
+      "id": "task-export-1",
+      "kind": "export",
+      "agent_id": "ag-1",
+      "status": "succeeded",
+      "phase": "导出完成",
+      "message": "已生成 redis:7 的镜像归档",
+      "progress": 1,
+      "bytes_done": 125829120,
+      "bytes_total": 125829120,
+      "created_at": "2026-11-10T02:32:00Z",
+      "finished_at": "2026-11-10T02:33:10Z",
+      "download_ready": true
+    }
+  },
+
+  "migrate": {
+    "_comment": "POST /images/migrate 的 202：跨服务器复制，不启动容器、不删源。",
+    "task": {
+      "id": "task-migrate-1",
+      "kind": "migrate",
+      "agent_id": "ag-1",
+      "target_agent_id": "ag-2",
+      "status": "running",
+      "phase": "复制到目标服务器",
+      "message": "",
+      "progress": 0.25,
+      "bytes_done": 31457280,
+      "bytes_total": 125829120,
+      "created_at": "2026-11-10T02:34:00Z",
+      "download_ready": false
+    }
+  },
+
+  "list": {
+    "_comment": "GET /image-tasks?agent_id=ag-1 —— 一个已完成、一个进行中。",
+    "tasks": [
+      {
+        "id": "task-export-1",
+        "kind": "export",
+        "agent_id": "ag-1",
+        "status": "succeeded",
+        "phase": "导出完成",
+        "message": "已生成归档",
+        "progress": 1,
+        "bytes_done": 125829120,
+        "bytes_total": 125829120,
+        "created_at": "2026-11-10T02:32:00Z",
+        "finished_at": "2026-11-10T02:33:10Z",
+        "download_ready": true
+      },
+      {
+        "id": "task-pull-1",
+        "kind": "pull",
+        "agent_id": "ag-1",
+        "status": "running",
+        "phase": "下载层 2/5",
+        "message": "",
+        "progress": 0.4,
+        "bytes_done": 41943040,
+        "bytes_total": 104857600,
+        "created_at": "2026-11-10T02:30:00Z",
+        "download_ready": false
+      }
+    ]
+  },
+
+  "canceled": {
+    "_comment": "POST /image-tasks/{id}/cancel 的响应：状态变 canceled。注意取消不回滚已写入的部分。",
+    "task": {
+      "id": "task-pull-1",
+      "kind": "pull",
+      "agent_id": "ag-1",
+      "status": "canceled",
+      "phase": "已取消",
+      "message": "用户取消",
+      "progress": 0.4,
+      "bytes_done": 41943040,
+      "bytes_total": 104857600,
+      "created_at": "2026-11-10T02:30:00Z",
+      "finished_at": "2026-11-10T02:35:00Z",
+      "download_ready": false
+    }
+  },
+
+  "importAccepted": {
+    "_comment": "POST /images/import 的 202 响应。前端发 raw tar + X-Archive-Size: File.size，Hub 侧仍需自行校验实际字节数。",
+    "task": {
+      "id": "task-import-1",
+      "kind": "import",
+      "agent_id": "ag-1",
+      "status": "running",
+      "phase": "写入镜像层",
+      "message": "",
+      "progress": null,
+      "bytes_done": 0,
+      "bytes_total": 314572800,
+      "created_at": "2026-11-10T02:36:00Z",
+      "download_ready": false
+    }
+  },
+
+  "degraded": {
+    "_comment": "字段缺失时的降级响应：界面不能出现 undefined，progress 缺失也必须是 null 而不是 0。",
+    "task": {
+      "id": "",
+      "kind": "pull",
+      "agent_id": "",
+      "status": "pending",
+      "phase": "",
+      "message": "",
+      "bytes_done": 0
+    },
+    "list": {}
+  }
+}

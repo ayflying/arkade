@@ -76,7 +76,8 @@ func cmdRun(args []string, stderr io.Writer) int {
 
 	// 注册表在服务模式与本地模式里都是同一份构造方式，见 localSetup。
 	reg := handler.NewRegistry()
-	handler.RegisterDefaults(reg, rt, buildComposeManager(cfg, rt), log)
+	imageMgr := buildImageTransferManager(cfg, rt)
+	handler.RegisterDefaultsWithTransfer(reg, rt, buildComposeManager(cfg, rt), imageMgr, log)
 
 	agent, err := buildLinkAgent(cfg, log, rt, reg)
 	if err != nil {
@@ -87,6 +88,17 @@ func cmdRun(args []string, stderr io.Writer) int {
 	// 信号处理：systemd stop 发 SIGTERM，Ctrl+C 发 SIGINT，两者都走优雅退出。
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// 后台清扫传输临时区：没有它，Hub 崩溃或浏览器关闭后留下的几 GB 归档
+	// 会永久占着配额，后续传输全被拒且用户看不出原因。
+	// 必须放在 ctx 就绪之后——见 imagetransfer/sweeper.go 的说明。
+	if imageMgr != nil {
+		go imageMgr.RunSweeper(ctx)
+		// 优雅退出时清掉本进程留下的临时归档（见 Close 的说明）：
+		// 不清理的话它们要等到"下次启动"才会被 cleanupOrphans 收走，
+		// 而下次启动可能是几天后。
+		defer imageMgr.Close()
+	}
 
 	log.Info("Agent 启动", "版本", Version, "hub", cfg.HubURL, "数据目录", cfg.DataDir)
 	if err := agent.Run(ctx); err != nil {

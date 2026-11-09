@@ -15,19 +15,21 @@ import (
 	"arkade/hub/internal/agentlink"
 	"arkade/hub/internal/auth"
 	"arkade/hub/internal/config"
+	"arkade/hub/internal/imagetask"
 	"arkade/hub/internal/store"
 	"arkade/hub/internal/user"
 )
 
 // App 是组装完成的 Hub 运行体。
 type App struct {
-	cfg      config.Config
-	log      *slog.Logger
-	db       *store.DB
-	registry *agentlink.Registry
-	server   *http.Server
-	agentSrv *agentlink.Server
-	authSvc  *auth.Service
+	cfg        config.Config
+	log        *slog.Logger
+	db         *store.DB
+	registry   *agentlink.Registry
+	server     *http.Server
+	agentSrv   *agentlink.Server
+	authSvc    *auth.Service
+	imageTasks *imagetask.Manager
 }
 
 // NewApp 构造 Hub。所有依赖在此一次性创建，失败时返回明确原因。
@@ -58,7 +60,9 @@ func NewApp(ctx context.Context, cfg config.Config, log *slog.Logger, version st
 	agentSrv.SetEnrollmentGuard(guard)
 	ops := agentlink.NewOps(reg)
 
+	imageTasks := imagetask.New(agentlink.NewImageBackend(ops))
 	router := NewRouter(Deps{
+		ImageTasks: imageTasks,
 		Log:        log,
 		DB:         db,
 		Auth:       authSvc,
@@ -83,13 +87,14 @@ func NewApp(ctx context.Context, cfg config.Config, log *slog.Logger, version st
 	}
 
 	return &App{
-		cfg:      cfg,
-		log:      log,
-		db:       db,
-		registry: reg,
-		server:   httpSrv,
-		agentSrv: agentSrv,
-		authSvc:  authSvc,
+		cfg:        cfg,
+		log:        log,
+		db:         db,
+		registry:   reg,
+		server:     httpSrv,
+		agentSrv:   agentSrv,
+		authSvc:    authSvc,
+		imageTasks: imageTasks,
 	}, nil
 }
 
@@ -108,6 +113,9 @@ func (a *App) ListenAndServe() error {
 
 // Shutdown 优雅关闭：先停止接收新请求，再关闭数据库。
 func (a *App) Shutdown(ctx context.Context) error {
+	if a.imageTasks != nil {
+		_ = a.imageTasks.Close()
+	}
 	err := a.server.Shutdown(ctx)
 	if cerr := a.db.Close(); cerr != nil && err == nil {
 		err = cerr

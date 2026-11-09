@@ -77,6 +77,9 @@ type statusRecorder struct {
 	sawSyncOK bool
 }
 
+// 保留底层流式deadline能力，归档上传不能被包装器遮断取消。
+func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
+
 func (r *statusRecorder) WriteHeader(code int) {
 	if r.wroteHeader {
 		return

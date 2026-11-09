@@ -43,6 +43,9 @@ func requestLogger(log *slog.Logger) func(http.Handler) http.Handler {
 	}
 }
 
+// Unwrap使ResponseController可穿过日志包装设置流式请求deadline。
+func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
 // statusWriter 捕获实际写出的状态码，供日志使用。
 //
 // 关键点：必须透传 Hijacker 接口。WebSocket 升级依赖 http.Hijacker 接管底层连接，

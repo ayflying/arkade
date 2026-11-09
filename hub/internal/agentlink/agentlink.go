@@ -58,6 +58,8 @@ var slowMethodTimeouts = map[string]time.Duration{
 	// 导入预检可能包含Compose解析，须等待Agent短超时返回，而非默认15秒先超时。
 	envelope.MethodComposePreview: 1 * time.Minute,
 	envelope.MethodComposeAdopt:   2 * time.Minute,
+ // 大归档提交的完整SHA校验在Agent落盘后执行，不能以普通15秒先超时。
+ envelope.MethodImageLoadCommit: 2*time.Minute,
 }
 
 // requestTimeoutFor 返回某个方法的等待上限。

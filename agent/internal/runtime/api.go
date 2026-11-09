@@ -16,6 +16,23 @@ const (
 	pathNetworks = "/networks"    // 网络列表（注意：不是 /networks/json）
 	pathVolumes  = "/volumes"     // 存储卷列表
 
+	// 镜像传输端点（拉取 / 导出 / 导入）。
+	//
+	// 三者都是**流**：
+	//   - /images/create 返回 NDJSON 进度流（每行一个 JSON 对象）；
+	//   - /images/{name}/get 返回打包好的 tar 流（可能是几 GB）；
+	//   - /images/load 接收 tar 流，返回 NDJSON 结果流。
+	// 因此它们都走 client 的 openStream/postStream/openUpload，
+	// **绝不能**走会把响应体全读进内存的 do()。
+	//
+	// Podman 的兼容层同样实现了这三条端点；但导出格式细节
+	// （是否含 parent 层、多架构 manifest 的处理）与 Docker 可能有差异，
+	// 因此跨引擎迁移只承诺"能尝试 load 并如实报告结果"，不承诺字节级等价。
+	pathImageCreate  = "/images/create" // POST ?fromImage=&tag=&platform=
+	pathImageGet     = "/images/"       // GET  {name}/get，返回 tar 流
+	pathImageLoad    = "/images/load"   // POST 接收 tar 流
+	pathImageInspect = "/images/"       // GET  {name}/json
+
 	actionStart   = "/start"
 	actionStop    = "/stop"    // 支持 ?t=<秒> 优雅退出超时
 	actionRestart = "/restart" // 支持 ?t=<秒> 停止超时，之后再启动

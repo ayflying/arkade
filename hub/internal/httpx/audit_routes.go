@@ -76,6 +76,12 @@ var auditRoutes = map[string]auditRoute{
 		SubAction:   true,
 	},
 
+	// ---- 镜像异步任务：不记录归档正文/仓库凭据 ----
+	"/api/agents/{agentID}/images/pull":    {Action: "image.pull"},
+	"/api/agents/{agentID}/images/export":  {Action: "image.export"},
+	"/api/agents/{agentID}/images/import":  {Action: "image.import"},
+	"/api/agents/{agentID}/images/migrate": {Action: "image.migrate"},
+	"/api/image-tasks/{taskID}/cancel":     {Action: "image.cancel", TargetParam: "taskID"},
 	// ---- 资源 ----
 	"/api/agents/{agentID}/images/{imageID}": {
 		Action:      audit.ActionImageRemove,

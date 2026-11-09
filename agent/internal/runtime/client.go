@@ -148,6 +148,88 @@ func (c *client) do(ctx context.Context, method, path string, body io.Reader) ([
 // maxResponseBytes 是单次响应体上限（16 MiB），远超正常控制面使用量。
 const maxResponseBytes = 16 << 20
 
+// openStream 发起请求并**把响应体交给调用方流式消费**。
+//
+// ============================ 为什么不复用 do() ============================
+//
+// do() 用 io.ReadAll(io.LimitReader(body, 16 MiB)) 把整个响应读进内存。
+// 这对控制面是合适的（响应都是小 JSON），但对 `docker save` 是致命的：
+// 归档是几百 MB 到几 GB 的 tar 流，要么被 16 MiB 截断（得到损坏归档，
+// 而且看起来像"下载完成"），要么去掉限制后直接把 Agent 的堆撑爆。
+//
+// 所以镜像归档必须走这条**不缓冲**的路径：返回 io.ReadCloser，
+// 由调用方边读边写盘/边分块发送，内存占用与归档大小无关。
+//
+// 责任划分：调用方**必须**关闭返回的 ReadCloser（本函数不代为关闭，
+// 因为关闭时机取决于消费进度）。非 2xx 时本函数会读一小段错误体、
+// 关闭 body 并返回 statusError——错误体是小 JSON，可以安全缓冲。
+func (c *client) openStream(ctx context.Context, method, path string) (io.ReadCloser, error) {
+	req, err := http.NewRequestWithContext(ctx, method, c.url(path), nil)
+	if err != nil {
+		return nil, fmt.Errorf("构造运行时请求失败: %w", err)
+	}
+	resp, err := c.httpc.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("连接运行时失败(%s %s): %w", method, path, err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// 错误体是小的 JSON 文本，可以限量缓冲；正常响应体绝不能被缓冲。
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		_ = resp.Body.Close()
+		return nil, &statusError{Status: resp.StatusCode, Body: strings.TrimSpace(string(body)), Path: path}
+	}
+	return resp.Body, nil
+}
+
+// postStream 发起 POST 并流式返回响应体（用于 /images/create 的 NDJSON 进度流）。
+func (c *client) postStream(ctx context.Context, path string) (io.ReadCloser, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url(path), nil)
+	if err != nil {
+		return nil, fmt.Errorf("构造运行时请求失败: %w", err)
+	}
+	resp, err := c.httpc.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("连接运行时失败(%s): %w", path, err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		_ = resp.Body.Close()
+		return nil, &statusError{Status: resp.StatusCode, Body: strings.TrimSpace(string(body)), Path: path}
+	}
+	return resp.Body, nil
+}
+
+// openUpload 发起一个**流式上传**请求（用于 /images/load）。
+//
+// body 由调用方提供（通常是磁盘上的归档文件句柄），本函数不做任何缓冲。
+// Content-Length 由调用方通过 size 指定：不设时走 chunked 编码，
+// 某些引擎版本对 load 的 chunked 支持不一致，明确给出长度更稳。
+func (c *client) openUpload(ctx context.Context, path, contentType string, body io.Reader, size int64) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url(path), body)
+	if err != nil {
+		return nil, fmt.Errorf("构造运行时请求失败: %w", err)
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	if size > 0 {
+		req.ContentLength = size
+	}
+	resp, err := c.httpc.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("连接运行时失败(%s): %w", path, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+	if err != nil {
+		return nil, fmt.Errorf("读取运行时响应失败(%s): %w", path, err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return data, &statusError{Status: resp.StatusCode, Body: strings.TrimSpace(string(data)), Path: path}
+	}
+	return data, nil
+}
+
 // statusError 承载运行时的非 2xx 响应。
 type statusError struct {
 	Status int

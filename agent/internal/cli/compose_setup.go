@@ -13,6 +13,7 @@ import (
 
 	"arkade/agent/internal/compose"
 	"arkade/agent/internal/config"
+	"arkade/agent/internal/imagetransfer"
 	"arkade/agent/internal/runtime"
 )
 
@@ -43,6 +44,28 @@ func buildComposeManager(cfg config.Config, rt runtime.Runtime) *compose.Manager
 		ListContainerLabels(context.Context) ([]compose.ContainerLabels, error)
 	}); ok {
 		mgr.SetLabelSource(src)
+	}
+	return mgr
+}
+
+// buildImageTransferManager 构造镜像传输管理器。
+//
+// 与 buildComposeManager 的区别：**只依赖 data_dir 与运行时**，
+// 不依赖 docker 子进程、也不依赖 compose 的任何配置。
+// 因此这里的判断刻意独立：编排不可用（例如没有 compose 二进制）时，
+// 镜像传输仍应可用——它只调用引擎 HTTP API。
+//
+// 返回 nil 表示"没有可用的传输临时区"，注册表会跳过传输方法，
+// Hub 侧得到 unsupported，比"上传到一半才发现没地方写"清楚得多。
+func buildImageTransferManager(cfg config.Config, rt runtime.Runtime) *imagetransfer.Manager {
+	if !dataDirUsable(cfg.DataDir) {
+		return nil
+	}
+	mgr, err := imagetransfer.NewManager(cfg.DataDir, rt, imagetransfer.DefaultLimits())
+	if err != nil {
+		// 构造失败（建目录/改权限失败）不阻断 Agent 启动：
+		// 传输是可选能力，让它降级为 unsupported，而不是整个 Agent 起不来。
+		return nil
 	}
 	return mgr
 }

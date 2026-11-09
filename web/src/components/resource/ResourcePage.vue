@@ -62,8 +62,14 @@ const emit = defineEmits<{
 
 <template>
   <div class="resource-page">
+  <!--
+    页头右侧：默认只有「刷新」。
+    actions 插槽放在刷新**之前**，让操作按钮靠左、刷新靠最右，
+    符合「主要操作 → 次要工具」的阅读顺序。
+  -->
     <page-header :title="title" :subtitle="subtitle">
       <template #actions>
+        <slot name="actions" />
         <n-button size="small" :disabled="!online" :loading="loading" @click="emit('refresh')">
           刷新
         </n-button>
@@ -108,6 +114,15 @@ const emit = defineEmits<{
         <n-tag :bordered="false" size="small">正在加载…</n-tag>
       </div>
     </div>
+
+    <!--
+      表格下方的附加区域（目前只有镜像页用它放「镜像任务」列表）。
+      放在表格之后而不是之前：主内容是资源列表，任务列表是进度信息，
+      用户来这一页首先关心的是有哪些镜像。
+    -->
+    <div v-if="$slots.extra" class="resource-page__extra">
+      <slot name="extra" />
+    </div>
   </div>
 </template>
 
@@ -136,5 +151,10 @@ const emit = defineEmits<{
 .table-skeleton {
   padding: 32px;
   text-align: center;
+}
+
+/* 表格下方附加区：与表格拉开距离，避免看起来是表格的一部分 */
+.resource-page__extra {
+  margin-top: 16px;
 }
 </style>

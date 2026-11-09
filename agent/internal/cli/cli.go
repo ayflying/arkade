@@ -129,7 +129,32 @@ func prepareLocal(args []string, stderr io.Writer, extraFlag func(*flag.FlagSet)
 	reg := handler.NewRegistry()
 	// 本地一次性命令（container ls 之类）不需要服务日志，
 	// 传 nil 由 RegisterDefaults 用静默日志器兜底。
-	handler.RegisterDefaults(reg, rt, buildComposeManager(cfg, rt), nil)
+	//
+	// ============================ 镜像传输在本地 CLI 里不注册 ============================
+	//
+	// 镜像传输是**异步任务**模型：pull/save 立即返回 task_id，
+	// 真正的执行在后台 goroutine 里，进度靠 image.task.status 轮询。
+	//
+	// 本地 CLI 是短命进程：命令执行完就退出。一旦在这里注册，
+	// 会出现两个都不正确的选择：
+	//
+	//   - 进程退出时不管后台任务 → 留下**无主任务**：
+	//     归档文件躺在 transfers 目录里没人认领，也没有任何东西
+	//     能再查询那个 task_id（它只存在于已退出的进程内存里）。
+	//     用户看到"已开始"，然后什么都不会发生。
+	//
+	//   - 进程等待任务完成 → CLI 从"一条命令"变成"一个后台服务"，
+	//     必须自己实现轮询、超时、信号处理，等于把 Hub 的职责
+	//     复制一份到本地命令里，行为必然与在线模式逐渐分叉。
+	//
+	// 因此本地 CLI **明确不提供**镜像传输（Hub 得到 unsupported，
+	// 用户改用常驻 Agent）。这不是"还没做"，而是刻意的边界：
+	// 异步任务需要一个比单条命令活得更久的宿主，而常驻 Agent 正是那个宿主。
+	//
+	// 需要本机离线导出/导入时，直接用 docker save / docker load——
+	// 那本来就是这些引擎自带的能力，不需要我们中转一层。
+	handler.RegisterDefaultsWithTransfer(reg, rt,
+		buildComposeManager(cfg, rt), nil, nil)
 	return &localSetup{rt: rt, registry: reg, cfg: cfg}, pa, exitOK, true
 }
 

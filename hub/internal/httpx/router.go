@@ -19,11 +19,13 @@ import (
 
 	"arkade/hub/internal/agentlink"
 	"arkade/hub/internal/auth"
+	"arkade/hub/internal/imagetask"
 	"arkade/hub/internal/store"
 )
 
 // Deps 是路由装配所需依赖，集中传入便于测试替换。
 type Deps struct {
+	ImageTasks *imagetask.Manager
 	Log        *slog.Logger
 	DB         *store.DB
 	Auth       *auth.Service
@@ -49,6 +51,9 @@ type Deps struct {
 
 // NewRouter 构造根路由。
 func NewRouter(d Deps) http.Handler {
+	if d.ImageTasks == nil {
+		d.ImageTasks = imagetask.New(agentlink.NewImageBackend(d.Ops))
+	}
 	r := chi.NewRouter()
 	r.Use(recoverer(d.Log))
 	r.Use(requestLogger(d.Log))
@@ -89,6 +94,14 @@ func NewRouter(d Deps) http.Handler {
 			priv.Get("/auth/me", handleMe(d))
 
 			priv.Get("/agents", handleListAgents(d))
+			priv.Get("/image-tasks", handleListImageTasks(d))
+			priv.Get("/image-tasks/{taskID}", handleGetImageTask(d))
+			priv.Post("/image-tasks/{taskID}/cancel", handleCancelImageTask(d))
+			priv.Get("/image-tasks/{taskID}/download", handleDownloadImage(d))
+			priv.Post("/agents/{agentID}/images/pull", handleStartImageTask(d, "pull"))
+			priv.Post("/agents/{agentID}/images/export", handleStartImageTask(d, "export"))
+			priv.Post("/agents/{agentID}/images/migrate", handleStartImageTask(d, "migrate"))
+			priv.Post("/agents/{agentID}/images/import", handleUploadImage(d))
 			// 操作审计：admin 看全部，非 admin 只看自己的（权限在 handler 内收紧）。
 			priv.Get("/audit", handleListAudit(d))
 			priv.Get("/audit/actions", handleListAuditActions(d))

@@ -1,10 +1,18 @@
 package runtime
 
-// image.go 实现镜像相关端点。
+// image.go 实现镜像的**列表与删除**端点。
 //
-// 只做列表与删除两件事。不提供"拉取镜像"——镜像拉取是编排动作的一部分
-// （compose pull 会按 compose 文件里的引用去拉），单独暴露一个自由
-// 拉取任意镜像的接口会扩大攻击面而收益很低。
+// 关于"拉取/导出/导入"：这三件事不在这里，而在 image_transfer_engine.go。
+// 分文件而不是塞进本文件，是因为它们的形态完全不同——
+// 本文件都是"小 JSON 一问一答"，而传输是**流**：
+// 拉取是 NDJSON 进度流、导出是多 GB 的 tar 流、导入是接收 tar 流。
+// 它们必须走 client 的不缓冲路径（openStream/postStream/openUpload），
+// 绝不能走会把响应体读进内存的 do()。
+//
+// 这里曾经写过一句"不提供拉取镜像，因为收益低"——那是**错的**判断，
+// 已废弃。用户明确需要跨机的镜像迁移，拉取是其中第一环。
+// 真正的边界不在"要不要做"，而在怎么安全地做：只支持公共仓库、
+// 不收凭据、流式不缓冲、有硬性磁盘限额（见 image_transfer_runtime.go）。
 
 import (
 	"context"
@@ -22,7 +30,7 @@ type imageListResp struct {
 	RepoTags    []string          `json:"RepoTags"`
 	RepoDigests []string          `json:"RepoDigests"`
 	Size        int64             `json:"Size"`
-	Created     int64             `json:"Created"`
+	Created     flexUnixTime      `json:"Created"` // 整数或 RFC3339 串，见 parse_time.go
 	Labels      map[string]string `json:"Labels"`
 }
 
@@ -59,7 +67,7 @@ func toImage(r imageListResp) Image {
 		ID:       r.ID,
 		Tags:     tags,
 		Size:     r.Size,
-		Created:  r.Created,
+		Created:  r.Created.unix(),
 		Dangling: len(tags) == 0,
 	}
 }

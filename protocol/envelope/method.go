@@ -65,6 +65,45 @@ const (
 	// 不读取宿主机上的任何配置文件（Agent 在容器内本就读不到）。
 	MethodComposePreview = "compose.preview" // 预检：能否导入某个已发现的外部编排
 	MethodComposeAdopt   = "compose.adopt"   // 导入：把外部编排显式纳管（只落盘，不启动）
+
+	// 镜像传输：拉取 / 导出 / 导入（跨 Agent 迁移的字节搬运）。
+	//
+	// ============================ 为什么是分块 RPC ============================
+	//
+	// 镜像归档是几百 MB 到几 GB 的二进制。控制连接是**信令通道**：
+	// 单条入站消息上限 8 MiB、单条写超时 10 秒、出站队列仅 32 条。
+	// 把归档塞进一个 JSON 信封（base64 还会再膨胀 33%）必然先在几十 MB 处
+	// 撞上这三条限制，而且首次失败的现场是"连接被断开"，
+	// 排查起来会误以为是网络问题。
+	//
+	// 因此字节走**分块 RPC**：每块 ≤ 256 KiB，单块远低于消息上限，
+	// 也远小于任何合理的内存预算。好处是：
+	//   - Agent 侧**永远不把整个归档读进内存**（流式落盘 / 流式读出）；
+	//   - 每块天然可重试，断线只需重发当前块；
+	//   - **不新增入站端口**，保持 Agent 反连 Hub 的既有网络形态
+	//     （Agent 在 NAT 后面，任何"让 Hub 连 Agent"的方案都不成立）。
+	//
+	// ============================ 任务生命周期 ============================
+	//
+	//	pull / save / load.begin  →  返回 task（pending → running → 终态）
+	//	chunk.put（load 方向）    →  按 offset 幂等追加
+	//	chunk.get（save 方向）    →  按 offset 读一块
+	//	load.commit               →  校验后异步 load，返回 task
+	//	task.status               →  轮询进度（也可由 Agent 主动推）
+	//	task.cancel / task.release → 取消 / 释放资源
+	//
+	// 任务只绑定**当前 Agent 的管理器**：task_id 由 Agent 自己生成，
+	// 因此 release/cancel 只可能作用于本进程创建的任务，
+	// 不存在"凭外部 id 操作别人的任务"这种越权路径。
+	MethodImagePull        = "image.pull"         // 从公共 registry 拉取镜像
+	MethodImageSave        = "image.save"         // 导出镜像为归档（Agent 侧落盘）
+	MethodImageLoadBegin   = "image.load.begin"   // 开始一次导入：声明大小与校验和
+	MethodImageChunkPut    = "image.chunk.put"    // 上传一块归档字节（load 方向）
+	MethodImageLoadCommit  = "image.load.commit"  // 提交导入：校验后异步 load
+	MethodImageChunkGet    = "image.chunk.get"    // 读取一块归档字节（save 方向）
+	MethodImageTaskStatus  = "image.task.status"  // 查询任务进度
+	MethodImageTaskCancel  = "image.task.cancel"  // 取消任务
+	MethodImageTaskRelease = "image.task.release" // 释放任务占用的临时归档
 )
 
 // Hub → Agent 的本地通道方法名（Agent 内部 CLI 复用同一套处理器）。
@@ -100,4 +139,16 @@ const (
 
 	LocalMethodComposePreview = MethodComposePreview
 	LocalMethodComposeAdopt   = MethodComposeAdopt
+
+	// 镜像传输同样走同一套处理器：本地 CLI 也能导出/导入，
+	// 与在线行为逐字节一致（决策 D-05）。
+	LocalMethodImagePull        = MethodImagePull
+	LocalMethodImageSave        = MethodImageSave
+	LocalMethodImageLoadBegin   = MethodImageLoadBegin
+	LocalMethodImageChunkPut    = MethodImageChunkPut
+	LocalMethodImageLoadCommit  = MethodImageLoadCommit
+	LocalMethodImageChunkGet    = MethodImageChunkGet
+	LocalMethodImageTaskStatus  = MethodImageTaskStatus
+	LocalMethodImageTaskCancel  = MethodImageTaskCancel
+	LocalMethodImageTaskRelease = MethodImageTaskRelease
 )
