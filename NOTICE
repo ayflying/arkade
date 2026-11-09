@@ -1,0 +1,24 @@
+Arkade（容器方舟）
+Copyright 2026 Arkade Authors
+
+本产品包含由 Arkade 项目原创开发的软件。
+
+本产品采用 Apache License 2.0 授权，许可证全文见项目根目录的 LICENSE 文件，
+或访问 http://www.apache.org/licenses/LICENSE-2.0
+
+依据 Apache License 2.0 第 4(d) 条，任何再分发本作品或其衍生作品的行为，
+都必须保留本 NOTICE 文件的内容，或以可读形式附于分发物中。
+
+---
+
+## 第三方组件声明
+
+本项目在运行、构建时使用了若干开源第三方组件，其许可条款以各组件自身
+仓库声明为准。主要依赖类别如下：
+
+- Docker Engine API 客户端及 Podman 兼容层（Apache License 2.0）
+- Go 标准库及社区通用库（BSD 3-Clause / MIT / Apache 2.0）
+- Vue 3、Vite、TypeScript、Pinia 前端工具链（MIT）
+
+完整依赖清单请参阅各模块下的 go.mod / package.json 及其锁文件。
+组件升级后如有新增，应同步更新本节。

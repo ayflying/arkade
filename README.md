@@ -118,4 +118,10 @@ Agent 离线时仍可本地管理（决策 D-05）：
 Apache 2.0 既允许商用与闭源二次开发，也自带专利授权与商标条款，
 比 MIT 更适合"要接进企业环境"的基础设施类项目。
 
+再分发本项目时，请按协议要求保留 [NOTICE](NOTICE) 文件中的署名信息。
+
 Copyright 2026 Arkade Authors
+
+## 安全
+
+发现安全问题请勿公开提交 Issue，请按 [SECURITY.md](SECURITY.md) 中的渠道私下报告。
