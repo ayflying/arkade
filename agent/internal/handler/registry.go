@@ -13,6 +13,7 @@ import (
 	"sort"
 	"sync"
 
+	"arkade/agent/internal/compose"
 	"arkade/agent/internal/runtime"
 	"arkade/protocol/envelope"
 )
@@ -106,14 +107,41 @@ func (r *Registry) Dispatch(ctx context.Context, req *envelope.Envelope) *envelo
 	return resp
 }
 
-// RegisterDefaults 把阶段一的方法一次性注册到注册表。
+// RegisterDefaults 把全部支持的方法一次性注册到注册表。
 //
 // 之所以用"一个注册函数"而不是让调用方逐个 Register：方法集合与能力清单
 // 必须严格对应，集中注册可以保证 hello 上报的能力与实际能处理的方法不会脱节。
-func RegisterDefaults(reg *Registry, rt runtime.Runtime) {
+//
+// composeMgr 为 nil 时不注册编排方法：没有数据目录就无法落盘编排文件，
+// 注册了也只会在调用时失败。这种情况在本地 CLI 模式里可能出现，
+// 此时 Hub 侧会得到 unsupported，提示比"下载后写文件失败"清楚得多。
+func RegisterDefaults(reg *Registry, rt runtime.Runtime, composeMgr *compose.Manager) {
 	reg.Register(envelope.MethodRuntimeInfo, newRuntimeInfoHandler(rt))
 	reg.Register(envelope.LocalMethodContainerList, newListHandler(rt))
 	reg.Register(envelope.LocalMethodContainerStart, newStartHandler(rt))
 	reg.Register(envelope.LocalMethodContainerStop, newStopHandler(rt))
 	reg.Register(envelope.LocalMethodContainerLogs, newLogsHandler(rt))
+
+	// 镜像 / 网络 / 存储卷：纯代理能力，只要有运行时就能提供。
+	reg.Register(envelope.MethodImageList, newImageListHandler(rt))
+	reg.Register(envelope.MethodImageRemove, newImageRemoveHandler(rt))
+	reg.Register(envelope.MethodNetworkList, newNetworkListHandler(rt))
+	reg.Register(envelope.MethodNetworkRemove, newNetworkRemoveHandler(rt))
+	reg.Register(envelope.MethodVolumeList, newVolumeListHandler(rt))
+	reg.Register(envelope.MethodVolumeRemove, newVolumeRemoveHandler(rt))
+
+	if composeMgr == nil {
+		return
+	}
+	reg.Register(envelope.MethodComposeList, newComposeListHandler(composeMgr))
+	reg.Register(envelope.MethodComposeUp, newComposeUpHandler(composeMgr))
+	reg.Register(envelope.MethodComposeDown, newComposeDownHandler(composeMgr))
+	reg.Register(envelope.MethodComposeStop, newComposeStopHandler(composeMgr))
+	reg.Register(envelope.MethodComposeRestart, newComposeRestartHandler(composeMgr))
+	reg.Register(envelope.MethodComposePull, newComposePullHandler(composeMgr))
+	reg.Register(envelope.MethodComposeRebuild, newComposeRebuildHandler(composeMgr))
+	reg.Register(envelope.MethodComposeRemove, newComposeRemoveHandler(composeMgr))
+	reg.Register(envelope.MethodComposeBackup, newComposeBackupHandler(composeMgr))
+	reg.Register(envelope.MethodComposeLogs, newComposeLogsHandler(composeMgr))
+	reg.Register(envelope.MethodComposePS, newComposePSHandler(composeMgr))
 }

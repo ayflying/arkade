@@ -1,0 +1,94 @@
+package cli
+
+// compose_setup.go 负责把编排能力装配进注册表。
+//
+// 单独成文件的原因：装配逻辑在两个入口（run 服务模式、本地 CLI 模式）
+// 里都要用，且需要决定"docker 子进程该连哪个套接字"这个容易出错的判断。
+// 把它写成一处，两个入口就不会各写一套而出现行为差异。
+
+import (
+	"context"
+	"os"
+	"strings"
+
+	"arkade/agent/internal/compose"
+	"arkade/agent/internal/config"
+	"arkade/agent/internal/runtime"
+)
+
+// buildComposeManager 构造编排管理器。
+//
+// 这里处理的是整套方案里最容易断的一环：**Agent 连引擎的路径与
+// compose 子进程连引擎的路径是两条独立的路**。
+//
+//   - Agent 主程序通过 cfg.Socket（或自动发现的结果）连 Docker API；
+//   - compose 是独立子进程，只认环境变量 DOCKER_HOST。
+//
+// 如果不把 Agent 实际连上的端点显式传给子进程，那么当用户配置了非默认
+// 套接字（rootless Podman、tcp 端点、docker 装在不常见路径）时，
+// Agent 自己工作正常，compose 却去连默认的 /var/run/docker.sock 然后失败——
+// 表现是"Agent 明明能看容器，compose 却说连不上引擎"。
+// 这种分裂症状极难排查，所以这里必须显式传递。
+func buildComposeManager(cfg config.Config, rt runtime.Runtime) *compose.Manager {
+	if !dataDirUsable(cfg.DataDir) {
+		// 数据目录不可用时返回 nil，注册表会跳过编排方法，
+		// Hub 侧得到 unsupported 而不是一堆写文件失败的错误。
+		return nil
+	}
+	return compose.NewManager(cfg.DataDir, dockerHostFor(rt))
+}
+
+// dockerHostFor 推导要传给 compose 子进程的 DOCKER_HOST。
+//
+// 返回空字符串表示"不覆盖"，让 compose 沿用当前进程环境或它自己的默认值。
+//
+// 取值优先级：
+//  1. Agent 实际探测并连接成功的端点（最权威——这正是主程序在用的那条路）；
+//  2. 环境变量 DOCKER_HOST（探测层也会读它，保持一致）；
+//  3. 空（交给 compose 默认逻辑）。
+func dockerHostFor(rt runtime.Runtime) string {
+	if rt != nil && !runtime.IsNone(rt) {
+		if info, err := rt.Info(context.Background()); err == nil {
+			if ep := normalizeDockerHost(info.Endpoint); ep != "" {
+				return ep
+			}
+		}
+	}
+	return normalizeDockerHost(os.Getenv("DOCKER_HOST"))
+}
+
+// normalizeDockerHost 校验端点形态，非 unix:// / tcp:// 前缀一律丢弃。
+//
+// 为什么丢弃而不是照抄：Info.Endpoint 在探测层里是「脱敏后的描述」，
+// 将来若有人把它改成 "unix socket /var/run/docker.sock" 这类人类可读文本，
+// 照抄进 DOCKER_HOST 会让 compose 直接崩掉。宁可退回默认值，
+// 也不要传一个格式错误的值——错误的 DOCKER_HOST 比不设更糟。
+func normalizeDockerHost(ep string) string {
+	ep = strings.TrimSpace(ep)
+	switch {
+	case strings.HasPrefix(ep, "unix://"), strings.HasPrefix(ep, "tcp://"):
+		return ep
+	default:
+		return ""
+	}
+}
+
+// dataDirUsable 检查数据目录是否可用于写编排文件。
+//
+// 只做"能建目录 / 能写"这一件事的探测，不做更复杂的权限推理：
+// 真正的写入失败会在具体操作时暴露，这里只需挡掉"路径明显不可用"的情况。
+func dataDirUsable(dir string) bool {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return false
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		// 目录不存在时尝试创建——Agent 首次启动时数据目录可能还没建。
+		if os.IsNotExist(err) {
+			return os.MkdirAll(dir, 0o755) == nil
+		}
+		return false
+	}
+	return info.IsDir()
+}

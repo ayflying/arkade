@@ -140,6 +140,27 @@ func (n *noneRuntime) Logs(_ context.Context, _ string, _ LogOptions) (LogResult
 	return LogResult{}, ErrNone
 }
 
+// ListImages 无运行时返回空列表。
+//
+// 与 List 同理：列出"没有镜像"比报错更容易理解，也让界面能正常渲染空态。
+// 但**删除类操作必须返回 ErrNone**——静默成功会误导用户以为已经删掉了。
+func (n *noneRuntime) ListImages(_ context.Context) ([]Image, error) { return nil, nil }
+
+// RemoveImage 返回 ErrNone。
+func (n *noneRuntime) RemoveImage(_ context.Context, _ string, _ bool) error { return ErrNone }
+
+// ListNetworks 无运行时返回空列表。
+func (n *noneRuntime) ListNetworks(_ context.Context) ([]Network, error) { return nil, nil }
+
+// RemoveNetwork 返回 ErrNone。
+func (n *noneRuntime) RemoveNetwork(_ context.Context, _ string) error { return ErrNone }
+
+// ListVolumes 无运行时返回空列表。
+func (n *noneRuntime) ListVolumes(_ context.Context) ([]Volume, error) { return nil, nil }
+
+// RemoveVolume 返回 ErrNone。
+func (n *noneRuntime) RemoveVolume(_ context.Context, _ string) error { return ErrNone }
+
 // IsNone 判断是否为"无运行时"实现，供上层快速分流。
 //
 // 用类型断言而不是 errors.As：Runtime 是业务接口，不实现 error，

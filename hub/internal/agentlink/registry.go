@@ -103,7 +103,7 @@ func (r *Registry) Call(ctx context.Context, agentID, method string, payload any
 		return nil, &ConnError{Code: envelope.CodeAgentOffline, Message: "消息发送失败，Agent 可能已断开", Wrapped: err}
 	}
 
-	timeoutCtx, cancel := timeoutContext(ctx, DefaultRequestTimeout)
+	timeoutCtx, cancel := timeoutContext(ctx, requestTimeoutFor(method))
 	defer cancel()
 
 	return c.waitResponse(timeoutCtx, id, ch, method)

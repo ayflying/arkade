@@ -89,3 +89,30 @@ export function httpPost<T>(path: string, body?: unknown): Promise<T> {
     body: body === undefined ? undefined : JSON.stringify(body)
   })
 }
+
+/** PUT 请求：用于「整体替换」语义，如保存编排配置、设置组成员 */
+export function httpPut<T>(path: string, body?: unknown): Promise<T> {
+  return request<T>(path, {
+    method: 'PUT',
+    body: body === undefined ? undefined : JSON.stringify(body)
+  })
+}
+
+/** PATCH 请求：用于「局部更新」语义，如只改用户显示名而不动其他字段 */
+export function httpPatch<T>(path: string, body?: unknown): Promise<T> {
+  return request<T>(path, {
+    method: 'PATCH',
+    body: body === undefined ? undefined : JSON.stringify(body)
+  })
+}
+
+/**
+ * DELETE 请求。
+ *
+ * 注意：契约里删除类接口返回 204 无响应体，
+ * request() 已在 204 分支返回 undefined，因此这里把返回类型定为 void，
+ * 避免调用方误以为还能拿到被删除的对象。
+ */
+export function httpDelete(path: string): Promise<void> {
+  return request<void>(path, { method: 'DELETE' })
+}

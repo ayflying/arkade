@@ -10,6 +10,12 @@ const (
 	pathContainers      = "/containers/json" // 容器列表，?all=1 含已停止容器
 	pathContainerPrefix = "/containers/"     // 容器操作前缀，后接 {id}/action
 
+	// 镜像 / 网络 / 存储卷端点（阶段三新增）。
+	// 路径与容器端点同属 Docker 兼容 API，Podman 也实现了它们。
+	pathImages   = "/images/json" // 镜像列表
+	pathNetworks = "/networks"    // 网络列表（注意：不是 /networks/json）
+	pathVolumes  = "/volumes"     // 存储卷列表
+
 	actionStart  = "/start"
 	actionStop   = "/stop"   // 支持 ?t=<秒> 优雅退出超时
 	actionKill   = "/kill"   // force 停止走 kill

@@ -65,6 +65,19 @@ type Runtime interface {
 	Remove(ctx context.Context, idOrName string, force bool) error
 	// Logs 拉取日志，返回已按行拆分的文本（不含结尾空行噪声）。
 	Logs(ctx context.Context, idOrName string, opts LogOptions) (LogResult, error)
+
+	// ListImages 列出镜像（含悬空镜像）。
+	ListImages(ctx context.Context) ([]Image, error)
+	// RemoveImage 删除镜像；force 语义与 docker rmi -f 一致。
+	RemoveImage(ctx context.Context, imageID string, force bool) error
+	// ListNetworks 列出网络。
+	ListNetworks(ctx context.Context) ([]Network, error)
+	// RemoveNetwork 删除网络。
+	RemoveNetwork(ctx context.Context, networkID string) error
+	// ListVolumes 列出存储卷，并标注是否被容器使用。
+	ListVolumes(ctx context.Context) ([]Volume, error)
+	// RemoveVolume 删除存储卷（数据丢失操作，不允许删除使用中的卷）。
+	RemoveVolume(ctx context.Context, name string) error
 }
 
 // LogResult 是 LimitLines 之后的日志结果。

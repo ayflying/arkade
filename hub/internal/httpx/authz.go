@@ -19,11 +19,14 @@ import (
 
 // loadGrants 加载当前用户通过用户组获得的授权列表。
 // 查询失败时返回空列表：权限系统异常时应当「什么都做不了」而不是「什么都能做」。
+//
+// 用的是 ListUserGrants（按用户查），不是 ListGroupGrants（按组查）。
+// 这两者曾因为同名不同义导致权限判定静默失效，现已改名区分，勿再混用。
 func loadGrants(r *http.Request, d Deps, u user.User) []user.GroupGrant {
 	if u.Role == user.RoleAdmin {
 		return nil // admin 不需要逐条授权
 	}
-	grants, err := d.DB.ListGroupGrants(r.Context(), u.ID)
+	grants, err := d.DB.ListUserGrants(r.Context(), u.ID)
 	if err != nil {
 		d.Log.Error("查询用户组授权失败，按无权限处理", "err", err, "user", u.Username)
 		return nil

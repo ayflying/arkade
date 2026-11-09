@@ -1,16 +1,33 @@
 /**
  * 全局主题与基础样式
  *
- * 采用 CSS 变量 + Naive UI 主题覆盖（sharedTheme）两层：
+ * 采用 CSS 变量 + Naive UI 主题覆盖（styles/theme.ts）两层：
  * - 这里只管布局骨架、滚动条、表格等通用样式；
  * - 组件内部样式一律 scoped，避免污染。
+ *
+ * 变量命名约定：`--arkade-<领域>-<属性>`，新增颜色/尺寸请在此集中声明，
+ * 不要在组件里写死色值——响应式布局改造后，侧边栏/顶栏/抽屉的配色必须能一处调整。
  */
 
 /* 让浏览器原生元素也走 Naive 的字体栈，中文优先思源/系统字体 */
 :root {
+  /* 背景与文字 */
   --arkade-page-bg: #f5f7fa;
+  --arkade-surface-bg: #ffffff;
+  --arkade-text-primary: #1f2225;
+  --arkade-text-secondary: #4a4f56;
+  --arkade-text-tertiary: #8b9099;
+  --arkade-text-disabled: #b5b9c0;
+  --arkade-border-color: #eef0f3;
+  --arkade-primary: #2080f0;
+
+  /* 骨架尺寸：侧边栏宽度的唯一来源（在 useResponsive.ts 中也有同值常量，
+     这里供纯 CSS 场景使用，两处改动需同步） */
   --arkade-header-height: 56px;
+  --arkade-sider-width: 220px;
+  --arkade-sider-width-collapsed: 64px;
   --arkade-content-max-width: 1440px;
+
   --arkade-mono-font: 'JetBrains Mono', 'Cascadia Mono', Consolas, 'Courier New', monospace;
 }
 
@@ -29,6 +46,12 @@ body,
 body {
   background: var(--arkade-page-bg);
   -webkit-font-smoothing: antialiased;
+  /*
+   * 全局防横向溢出兜底：布局改造后若某个子元素（如宽表格）意外撑破容器，
+   * 这里会阻止 body 出现横向滚动条。注意它只是兜底，
+   * 真正该做的是在各滚动容器上设置 min-width: 0（见各视图的表格容器）。
+   */
+  overflow-x: hidden;
 }
 
 /* 细滚动条：日志抽屉内容很长，默认滚动条太粗会显得笨重 */
@@ -53,4 +76,106 @@ body {
 /* 让代码/日志区域复用等宽字体 */
 .mono-text {
   font-family: var(--arkade-mono-font);
+}
+
+/*
+ * 表格滚动容器：窄屏下 NDataTable 靠 scroll-x 在内部横向滚动，
+ * 但前提是它的祖先容器不会被内容撑开——flex/grid 子项默认 min-width: auto，
+ * 会被内容的最小宽度撑破，导致外层 overflow-x 失效。这里统一兜住。
+ */
+.arkade-table-scroll {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+/*
+ * 表格单元格通用样式。
+ *
+ * 为什么放在全局而不是组件 scoped 里：这些类名是用 h() 在 render 函数里
+ * 给单元格元素加的，scoped 样式带有 data-v 属性选择器，匹配不到
+ * 运行时创建的节点，会静默失效。若每个页面都写 :deep 包裹又太啰嗦，
+ * 因此统一提到全局。类名带 arkade- 前缀避免与 Naive 内部类冲突。
+ */
+.arkade-cell-strong {
+  font-weight: 500;
+  color: var(--arkade-text-primary);
+}
+
+.arkade-cell-mono {
+  display: inline-block;
+  max-width: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+  font-family: var(--arkade-mono-font);
+  font-size: 12px;
+  color: var(--arkade-text-secondary);
+}
+
+.arkade-cell-muted {
+  font-size: 12px;
+  color: var(--arkade-text-tertiary);
+}
+
+/* 长文本单行省略（表格内大量使用） */
+.arkade-cell-ellipsis {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+/* 单元格内多个标签并排：允许换行，避免撑高行 */
+.arkade-tag-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/*
+ * 表格里的「可点击名称」链接。
+ * 用 <a> 而非 <n-button>：在表格里按钮太重，链接更轻、更符合「点进详情」的预期。
+ */
+.arkade-link {
+  color: var(--arkade-primary);
+  cursor: pointer;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.arkade-link:hover {
+  text-decoration: underline;
+}
+
+/* 名称 + 状态标签并排（编排列表的「名称 + 配置漂移」） */
+.arkade-inline-tags {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/*
+ * 带勾选项的确认框内容（utils/confirm.ts 里用 h() 渲染，故为全局样式）。
+ * 勾选后才出现的警示用红色，确保危险选项被选中时视觉上足够刺眼。
+ */
+.confirm-with-option__text {
+  margin: 0 0 12px;
+  white-space: pre-line;
+  line-height: 1.6;
+}
+
+.confirm-with-option__hint {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: #fff2f0;
+  border-left: 3px solid #d03050;
+  color: #d03050;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-line;
 }

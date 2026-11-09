@@ -76,7 +76,7 @@ func cmdRun(args []string, stderr io.Writer) int {
 
 	// 注册表在服务模式与本地模式里都是同一份构造方式，见 localSetup。
 	reg := handler.NewRegistry()
-	handler.RegisterDefaults(reg, rt)
+	handler.RegisterDefaults(reg, rt, buildComposeManager(cfg, rt))
 
 	agent, err := buildLinkAgent(cfg, log, rt, reg)
 	if err != nil {

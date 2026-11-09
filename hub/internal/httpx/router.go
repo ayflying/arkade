@@ -76,6 +76,48 @@ func NewRouter(d Deps) http.Handler {
 			priv.Post("/agents/{agentID}/containers/{containerID}/start", handleContainerStart(d))
 			priv.Post("/agents/{agentID}/containers/{containerID}/stop", handleContainerStop(d))
 			priv.Get("/agents/{agentID}/containers/{containerID}/logs", handleContainerLogs(d))
+
+			// 容器编排（docker compose）。
+			// 权限分档：列表/详情/日志/ps 要 view，动作要 operate，创建/更新/删除要 manage。
+			// 分档在各自的 handler 里判断（requirePermission），不在这里按路径分组——
+			// 同一前缀下不同动作的权限要求不同，路径分组表达不了这种差异。
+			priv.Get("/agents/{agentID}/stacks", handleListStacks(d))
+			priv.Post("/agents/{agentID}/stacks", handleCreateStack(d))
+			priv.Get("/agents/{agentID}/stacks/{name}", handleGetStack(d))
+			priv.Put("/agents/{agentID}/stacks/{name}", handleUpdateStack(d))
+			priv.Delete("/agents/{agentID}/stacks/{name}", handleDeleteStack(d))
+			priv.Get("/agents/{agentID}/stacks/{name}/config", handleGetStackConfig(d))
+			priv.Post("/agents/{agentID}/stacks/{name}/actions", handleStackAction(d))
+			priv.Get("/agents/{agentID}/stacks/{name}/logs", handleStackLogs(d))
+			priv.Get("/agents/{agentID}/stacks/{name}/ps", handleStackPS(d))
+
+			// 镜像 / 网络 / 存储卷（实时透传 Agent，Hub 不缓存）。
+			priv.Get("/agents/{agentID}/images", handleListImages(d))
+			priv.Delete("/agents/{agentID}/images/{imageID}", handleRemoveImage(d))
+			priv.Get("/agents/{agentID}/networks", handleListNetworks(d))
+			priv.Delete("/agents/{agentID}/networks/{networkID}", handleRemoveNetwork(d))
+			priv.Get("/agents/{agentID}/volumes", handleListVolumes(d))
+			priv.Delete("/agents/{agentID}/volumes/{name}", handleRemoveVolume(d))
+
+			// 用户管理（仅 admin，闸门在各自的 handler 里，见 requireAdmin）。
+			// 不在这里做角色分组的原因：chi 的 Group 只能按路径前缀划分，
+			// 而这些路径与普通业务接口同级；用 handler 内统一闸门更直观，
+			// 也不会因为新增子路由时忘了套上某个中间件而漏掉权限校验。
+			priv.Get("/users", handleListUsers(d))
+			priv.Post("/users", handleCreateUser(d))
+			priv.Patch("/users/{userID}", handleUpdateUser(d))
+			priv.Put("/users/{userID}/password", handleResetPassword(d))
+			priv.Delete("/users/{userID}", handleDeleteUser(d))
+
+			// 用户组管理（仅 admin）。
+			priv.Get("/groups", handleListGroups(d))
+			priv.Post("/groups", handleCreateGroup(d))
+			priv.Patch("/groups/{groupID}", handleUpdateGroup(d))
+			priv.Delete("/groups/{groupID}", handleDeleteGroup(d))
+			priv.Get("/groups/{groupID}/members", handleListGroupMembers(d))
+			priv.Put("/groups/{groupID}/members", handleSetGroupMembers(d))
+			priv.Get("/groups/{groupID}/grants", handleListGroupGrants(d))
+			priv.Put("/groups/{groupID}/grants", handleSetGroupGrants(d))
 		})
 	})
 

@@ -27,6 +27,21 @@ type fakeRuntime struct {
 	lastStop     string
 	lastForce    bool
 	lastLogsOpts runtime.LogOptions
+
+	// 资源类方法的固定返回与记录（供 resources_test.go 使用）。
+	images            []runtime.Image
+	imagesErr         error
+	imageRemoveErr    error
+	lastImageRemove   string
+	lastImageForce    bool
+	networks          []runtime.Network
+	networksErr       error
+	networkRemoveErr  error
+	lastNetworkRemove string
+	volumes           []runtime.Volume
+	volumesErr        error
+	volumeRemoveErr   error
+	lastVolumeRemove  string
 }
 
 func (f *fakeRuntime) Info(context.Context) (runtime.Info, error) {
@@ -61,10 +76,52 @@ func (f *fakeRuntime) Logs(_ context.Context, _ string, opts runtime.LogOptions)
 	return f.logsRes, f.logsErr
 }
 
+// 资源类方法：编排/资源的专项测试见 compose_test.go 与 resources_test.go，
+// 这里给最小实现即可（fakeRuntime 被多个测试复用，补全接口才能编译）。
+func (f *fakeRuntime) ListImages(context.Context) ([]runtime.Image, error) {
+	if f.imagesErr != nil {
+		return nil, f.imagesErr
+	}
+	return f.images, nil
+}
+
+func (f *fakeRuntime) RemoveImage(_ context.Context, id string, force bool) error {
+	f.lastImageRemove = id
+	f.lastImageForce = force
+	return f.imageRemoveErr
+}
+
+func (f *fakeRuntime) ListNetworks(context.Context) ([]runtime.Network, error) {
+	if f.networksErr != nil {
+		return nil, f.networksErr
+	}
+	return f.networks, nil
+}
+
+func (f *fakeRuntime) RemoveNetwork(_ context.Context, id string) error {
+	f.lastNetworkRemove = id
+	return f.networkRemoveErr
+}
+
+func (f *fakeRuntime) ListVolumes(context.Context) ([]runtime.Volume, error) {
+	if f.volumesErr != nil {
+		return nil, f.volumesErr
+	}
+	return f.volumes, nil
+}
+
+func (f *fakeRuntime) RemoveVolume(_ context.Context, name string) error {
+	f.lastVolumeRemove = name
+	return f.volumeRemoveErr
+}
+
 // newTestRegistry 构造带默认处理器的注册表。
+//
+// composeMgr 传 nil：本文件的用例只测容器类方法，编排方法不注册即可
+// （注册表对未注册方法返回 unsupported，不影响已有断言）。
 func newTestRegistry(rt runtime.Runtime) *Registry {
 	reg := NewRegistry()
-	RegisterDefaults(reg, rt)
+	RegisterDefaults(reg, rt, nil)
 	return reg
 }
 
@@ -320,8 +377,13 @@ func TestRuntimeInfoPayload(t *testing.T) {
 func TestRegistryMethodsSorted(t *testing.T) {
 	reg := newTestRegistry(&fakeRuntime{})
 	methods := reg.Methods()
-	if len(methods) != 5 {
-		t.Fatalf("注册方法数 = %d，期望 5: %v", len(methods), methods)
+	// 本测试的注册表不挂编排（composeMgr 为 nil），因此只应包含
+	// 容器 5 个 + 资源 6 个 = 11 个方法。
+	// 编排方法数由 compose 专项测试验证，这里固定数字是为了让
+	// "悄悄多注册/漏注册一个方法"能被立刻发现。
+	const wantCount = 11
+	if len(methods) != wantCount {
+		t.Fatalf("注册方法数 = %d，期望 %d: %v", len(methods), wantCount, methods)
 	}
 	for i := 1; i < len(methods); i++ {
 		if methods[i-1] > methods[i] {
@@ -334,6 +396,12 @@ func TestRegistryMethodsSorted(t *testing.T) {
 		envelope.LocalMethodContainerStart,
 		envelope.LocalMethodContainerStop,
 		envelope.LocalMethodContainerLogs,
+		envelope.MethodImageList,
+		envelope.MethodImageRemove,
+		envelope.MethodNetworkList,
+		envelope.MethodNetworkRemove,
+		envelope.MethodVolumeList,
+		envelope.MethodVolumeRemove,
 	} {
 		if !reg.Has(want) {
 			t.Fatalf("缺少方法 %s", want)

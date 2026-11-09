@@ -127,7 +127,7 @@ func prepareLocal(args []string, stderr io.Writer, extraFlag func(*flag.FlagSet)
 	}
 
 	reg := handler.NewRegistry()
-	handler.RegisterDefaults(reg, rt)
+	handler.RegisterDefaults(reg, rt, buildComposeManager(cfg, rt))
 	return &localSetup{rt: rt, registry: reg, cfg: cfg}, pa, exitOK, true
 }
 

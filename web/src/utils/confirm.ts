@@ -14,6 +14,8 @@
  * 即「默认不执行危险操作」，宁可让用户重试也不要越过确认。
  */
 
+import { h, ref } from 'vue'
+import { NCheckbox } from 'naive-ui'
 import { getDialog } from './feedback'
 
 export interface ConfirmOptions {
@@ -63,6 +65,117 @@ export function confirmAction(options: ConfirmOptions): Promise<boolean> {
         finish(false)
       },
       // 点遮罩/按 ESC/右上角关闭：一律视为取消（不执行危险操作）
+      onMaskClick: () => finish(false),
+      onClose: () => finish(false)
+    })
+  })
+}
+
+export interface ConfirmWithOptionOptions {
+  /** 标题 */
+  title: string
+  /** 正文说明 */
+  content: string
+  /** 勾选项的文案 */
+  optionLabel: string
+  /** 勾选项是否默认勾上；危险操作应保持 false */
+  optionDefault?: boolean
+  /**
+   * 勾选后追加展示的警示文案。
+   *
+   * 为什么勾选后才显示：不勾选时它是无关信息，会稀释主要说明；
+   * 一旦用户主动选择动危险选项，警示必须立刻出现在他眼前。
+   */
+  optionHint?: string
+  positiveText?: string
+  negativeText?: string
+  danger?: boolean
+}
+
+/** 带勾选项的确认结果 */
+export interface ConfirmWithOptionResult {
+  /** 用户是否点了确认 */
+  confirmed: boolean
+  /** 勾选项的最终状态（未确认时为 false） */
+  optionChecked: boolean
+}
+
+/**
+ * 弹出带一个勾选项的确认框。
+ *
+ * 用于「删除编排」这类场景：主操作需要确认，但其中还有一个**默认关闭**的
+ * 附加危险操作（是否连带删除数据卷），必须由用户主动勾选。
+ *
+ * 这样设计的理由：用户点「删除」的意图通常是「删掉这个编排」，
+ * 不一定想连数据一起清掉。默认删卷太激进，且不可恢复；
+ * 业界惯例（docker compose down 不加 -v 也不删卷）同样是保留。
+ */
+export function confirmWithOption(
+  options: ConfirmWithOptionOptions
+): Promise<ConfirmWithOptionResult> {
+  const dialog = getDialog()
+  // 拿不到 dialog：按「未确认」处理，绝不越过确认执行危险操作
+  if (!dialog) return Promise.resolve({ confirmed: false, optionChecked: false })
+
+  return new Promise<ConfirmWithOptionResult>((resolve) => {
+    let settled = false
+    let dialogIns: ReturnType<typeof dialog.info> | null = null
+
+    /*
+     * 勾选状态用 ref 保存，而不是普通变量。
+     * 原因：复选框与「勾选后才出现的警示」都要跟着状态变化重新渲染，
+     * 普通变量不会触发 Vue 更新，用户勾了之后界面毫无反应。
+     * 用 ref 后，content 是一个函数式 VNode，读取 checked.value 时会自动追踪依赖。
+     */
+    const checked = ref(options.optionDefault === true)
+
+    const finish = (confirmed: boolean): void => {
+      if (settled) return
+      settled = true
+      dialogIns?.destroy()
+      resolve({ confirmed, optionChecked: confirmed && checked.value })
+    }
+
+    /**
+     * 组装正文：说明文字 + 复选框 +（勾选后）警示。
+     *
+     * 用 render 函数而不是模板，因为 Naive UI 的 content 接受 VNode。
+     * 这里返回的是渲染函数，每次 checked 变化都会重新执行，
+     * 于是警示文案能随勾选状态实时出现/消失。
+     */
+    const renderContent = (): ReturnType<typeof h> =>
+      h('div', { class: 'confirm-with-option' }, [
+        h('p', { class: 'confirm-with-option__text' }, options.content),
+        h(
+          NCheckbox,
+          {
+            checked: checked.value,
+            onUpdateChecked: (value: boolean) => {
+              checked.value = value
+            }
+          },
+          { default: () => options.optionLabel }
+        ),
+        // 只有勾选后才显示警示：未勾选时它属于噪声
+        checked.value && options.optionHint !== undefined
+          ? h('p', { class: 'confirm-with-option__hint' }, options.optionHint)
+          : null
+      ])
+
+    dialogIns = dialog[options.danger === true ? 'warning' : 'info']({
+      title: options.title,
+      // 传函数：让对话框内容在依赖变化时重新求值
+      content: renderContent,
+      positiveText: options.positiveText ?? '确定',
+      negativeText: options.negativeText ?? '取消',
+      onPositiveClick: (e: MouseEvent) => {
+        e?.preventDefault?.()
+        finish(true)
+      },
+      onNegativeClick: (e: MouseEvent) => {
+        e?.preventDefault?.()
+        finish(false)
+      },
       onMaskClick: () => finish(false),
       onClose: () => finish(false)
     })

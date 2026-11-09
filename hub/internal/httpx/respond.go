@@ -67,6 +67,10 @@ func respondError(w http.ResponseWriter, log *slog.Logger, code, message string)
 }
 
 // statusForCode 把协议错误码映射到 HTTP 状态码。
+//
+// 除 protocol 包提供的协议码外，Hub 自己的业务语义码也在这里统一映射：
+// conflict（唯一约束冲突、如用户名/组名重复）→ 409。前端需要区分
+// 「参数不对(400)」与「名字被占了(409)」，两者的用户引导完全不同。
 func statusForCode(code string) int {
 	switch code {
 	case envelope.CodeUnauthorized:
@@ -77,6 +81,8 @@ func statusForCode(code string) int {
 		return http.StatusNotFound
 	case envelope.CodeBadRequest:
 		return http.StatusBadRequest
+	case codeConflict:
+		return http.StatusConflict
 	case envelope.CodeAgentOffline, envelope.CodeTimeout, envelope.CodeAgentBusy, envelope.CodeRuntimeFailed:
 		return http.StatusServiceUnavailable
 	case envelope.CodeUnsupported:

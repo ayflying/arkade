@@ -56,3 +56,21 @@ export function toastError(text: string): void {
 export function toastSuccess(text: string): void {
   getMessage()?.success(text)
 }
+
+/**
+ * 安全弹警告提示。
+ *
+ * 与 toastError 的区别：这不代表操作失败，而是「操作完成了，但有需要你注意的地方」。
+ * 典型场景是编排保存：内容已存进 Hub，但 Agent 离线导致尚未下发到服务器
+ * （后端用 sync_ok:false + sync_hint 表达）。用错误色会误导用户以为白写了。
+ *
+ * 文字可能较长（后端的 sync_hint 是一整句中文说明），因此延长显示时长。
+ */
+export function toastWarning(text: string): void {
+  const message = getMessage()
+  if (message) {
+    message.warning(text, { duration: 6000 })
+  } else {
+    console.warn('[Arkade]', text)
+  }
+}

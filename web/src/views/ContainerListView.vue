@@ -254,7 +254,12 @@ onMounted(async () => {
       </n-button>
     </div>
 
-    <div class="table-card">
+    <!--
+      表格容器：窄屏下六列（名称/镜像/状态/来源/端口/操作）总宽超出视口，
+      由 NDataTable 的 scroll-x 在内部横向滚动；容器上的 min-width: 0
+      见 global.css 的 .arkade-table-scroll 说明（缺了它横向滚动会失效）。
+    -->
+    <div class="table-card arkade-table-scroll">
       <n-data-table
         v-if="containers.length > 0 || loading"
         :columns="columns"
@@ -264,6 +269,7 @@ onMounted(async () => {
         :bordered="false"
         :single-line="false"
         size="medium"
+        :scroll-x="1080"
       />
       <empty-state
         v-else-if="loaded"

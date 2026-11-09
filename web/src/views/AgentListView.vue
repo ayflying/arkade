@@ -91,7 +91,12 @@ onMounted(() => {
       </n-button>
     </div>
 
-    <div class="table-card">
+    <!--
+      表格容器：窄屏（手机/平板）下表格列宽总和会超出视口，
+      由 NDataTable 的 scroll-x 在内部横向滚动，容器负责兜住宽度。
+      class 里的 min-width: 0 见 global.css 的 .arkade-table-scroll 说明。
+    -->
+    <div class="table-card arkade-table-scroll">
       <n-data-table
         v-if="store.agents.length > 0 || store.loading"
         :columns="columns"
@@ -102,6 +107,7 @@ onMounted(() => {
         :bordered="false"
         :single-line="false"
         size="medium"
+        :scroll-x="960"
       />
       <empty-state v-else-if="store.loaded" description="还没有任何服务器接入。请在服务器上启动 Agent 并指向本 Hub。">
         <template #extra>

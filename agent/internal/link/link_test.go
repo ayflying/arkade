@@ -45,6 +45,18 @@ func (testRuntime) Logs(context.Context, string, runtime.LogOptions) (runtime.Lo
 	return runtime.LogResult{Lines: []string{"hello"}}, nil
 }
 
+// 资源类方法：本测试只关心 hello/heartbeat 链路，这里返回空实现即可。
+func (testRuntime) ListImages(context.Context) ([]runtime.Image, error) { return nil, nil }
+func (testRuntime) RemoveImage(context.Context, string, bool) error     { return nil }
+func (testRuntime) ListNetworks(context.Context) ([]runtime.Network, error) {
+	return nil, nil
+}
+func (testRuntime) RemoveNetwork(context.Context, string) error { return nil }
+func (testRuntime) ListVolumes(context.Context) ([]runtime.Volume, error) {
+	return nil, nil
+}
+func (testRuntime) RemoveVolume(context.Context, string) error { return nil }
+
 // echoDispatcher 是对 Hub 请求的处理：把方法名回显，用于验证路由链路通畅。
 func echoDispatcher(_ context.Context, req *envelope.Envelope) *envelope.Envelope {
 	resp, err := envelope.NewResponse(req, map[string]string{"echo": req.Method})

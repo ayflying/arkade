@@ -23,6 +23,36 @@ const (
 
 	// 运行时探测
 	MethodRuntimeInfo = "runtime.info" // 上报运行时类型与版本（docker / podman）
+
+	// 镜像
+	MethodImageList   = "image.list"   // 列出镜像
+	MethodImageRemove = "image.remove" // 删除镜像（危险操作）
+
+	// 网络
+	MethodNetworkList   = "network.list"   // 列出网络
+	MethodNetworkRemove = "network.remove" // 删除网络（危险操作）
+
+	// 存储卷
+	MethodVolumeList   = "volume.list"   // 列出存储卷
+	MethodVolumeRemove = "volume.remove" // 删除存储卷（危险操作，数据丢失）
+
+	// 容器编排（docker compose）
+	//
+	// 设计边界：这里只管**执行**，不管编排文件存在哪。
+	// 编排文件的内容由 Hub 下发（payload 里带完整 YAML），
+	// Agent 负责落到本机数据目录后调用 docker compose 执行。
+	// 这样 Agent 不需要访问 Hub 的数据库，也不用处理分布式同步。
+	MethodComposeList    = "compose.list"    // 列出本机已有的编排项目及状态
+	MethodComposeUp      = "compose.up"      // 启动/更新一个编排（内部走 compose up -d）
+	MethodComposeDown    = "compose.down"    // 停止并移除容器（保留数据卷）
+	MethodComposeStop    = "compose.stop"    // 停止容器（不移除）
+	MethodComposeRestart = "compose.restart" // 重启容器
+	MethodComposePull    = "compose.pull"    // 拉取镜像（对应"更新镜像"）
+	MethodComposeRebuild = "compose.rebuild" // 强制重建（pull + up --force-recreate）
+	MethodComposeRemove  = "compose.remove"  // 删除编排：down -v + 删除本机文件
+	MethodComposeBackup  = "compose.backup"  // 备份编排文件与关联数据卷清单
+	MethodComposeLogs    = "compose.logs"    // 查看某个服务的日志
+	MethodComposePS      = "compose.ps"      // 查看该编排下的容器状态
 )
 
 // Hub → Agent 的本地通道方法名（Agent 内部 CLI 复用同一套处理器）。
@@ -35,4 +65,23 @@ const (
 	LocalMethodContainerRemove = MethodContainerRemove
 	LocalMethodContainerLogs   = MethodContainerLogs
 	LocalMethodRuntimeInfo     = MethodRuntimeInfo
+
+	LocalMethodImageList     = MethodImageList
+	LocalMethodImageRemove   = MethodImageRemove
+	LocalMethodNetworkList   = MethodNetworkList
+	LocalMethodNetworkRemove = MethodNetworkRemove
+	LocalMethodVolumeList    = MethodVolumeList
+	LocalMethodVolumeRemove  = MethodVolumeRemove
+
+	LocalMethodComposeList    = MethodComposeList
+	LocalMethodComposeUp      = MethodComposeUp
+	LocalMethodComposeDown    = MethodComposeDown
+	LocalMethodComposeStop    = MethodComposeStop
+	LocalMethodComposeRestart = MethodComposeRestart
+	LocalMethodComposePull    = MethodComposePull
+	LocalMethodComposeRebuild = MethodComposeRebuild
+	LocalMethodComposeRemove  = MethodComposeRemove
+	LocalMethodComposeBackup  = MethodComposeBackup
+	LocalMethodComposeLogs    = MethodComposeLogs
+	LocalMethodComposePS      = MethodComposePS
 )
