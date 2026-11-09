@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -107,6 +108,24 @@ func applyEnvOverrides(c *Config) {
 	}
 	if v := strings.TrimSpace(os.Getenv("ARKADE_AGENT_NAME")); v != "" {
 		c.Name = v
+	}
+	// 运行时相关：留空表示"不覆盖"，保持自动发现行为。
+	if v := strings.TrimSpace(os.Getenv("ARKADE_SOCKET")); v != "" {
+		c.Socket = v
+	}
+	if v := strings.TrimSpace(os.Getenv("ARKADE_RUNTIME_KIND")); v != "" {
+		c.RuntimeKind = v
+	}
+	if v := strings.TrimSpace(os.Getenv("ARKADE_HEARTBEAT_SEC")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			c.HeartbeatSec = n
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv("ARKADE_LOG_LEVEL")); v != "" {
+		c.LogLevel = v
+	}
+	if v := strings.TrimSpace(os.Getenv("ARKADE_LOG_FORMAT")); v != "" {
+		c.LogFormat = v
 	}
 }
 

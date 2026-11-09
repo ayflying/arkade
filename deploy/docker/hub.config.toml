@@ -1,26 +1,31 @@
-# Arkade Hub 调试配置（容器内路径）
+# Arkade Hub 容器内配置
 #
-# 注意：路径都是**容器内**路径，不是宿主机路径。
-# 数据库放在 /data 卷上，容器重建后数据仍在。
+# 【重要】本文件只提供「容器内路径」这类无法用环境变量表达的内置默认值。
+# 所有可调项都由 docker-compose.yml 里的 ${ARKADE_*} 环境变量覆盖，
+# 改配置请改 .env，不要改这里（改这里容易和编排层的设置打架，且需要重新挂载）。
+#
+# 路径都是**容器内**路径，不是宿主机路径。
 
 [server]
+# 实际监听地址由编排层的 ARKADE_LISTEN 覆盖（默认 0.0.0.0:8080）。
 # 容器内必须监听 0.0.0.0，否则端口映射进不来。
-# 这里不写死也可以，docker-compose 里用 ARKADE_LISTEN 覆盖，两者等效。
 addr = "0.0.0.0:8080"
+# 由 ARKADE_BASE_URL 覆盖。
 base_url = "http://127.0.0.1:8080"
 timeout = "30s"
 
 [database]
+# 数据库放在 /data 卷上，容器重建后数据仍在。由 ARKADE_DB_PATH 覆盖。
 path = "/data/hub.db"
 
 [auth]
+# 由 ARKADE_SESSION_TTL 覆盖（支持 30m / 24h / 72h 写法）。
 session_ttl = "24h"
-# 令牌与初始密码留空：由环境变量 ARKADE_AGENT_TOKEN / ARKADE_INITIAL_PASS 注入，
-# 避免凭据写到磁盘上。
+# 凭据必须留空：由 ARKADE_AGENT_TOKEN / ARKADE_INITIAL_PASS 注入，避免明文落盘。
 agent_token = ""
 initial_user = "admin"
 initial_pass = ""
 
 [web]
-# 镜像构建阶段已把前端产物放在 /app/web/dist
+# 镜像构建阶段已把前端产物放在 /app/web/dist。由 ARKADE_WEB_DIST 覆盖。
 dist = "/app/web/dist"

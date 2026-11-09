@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -44,7 +45,7 @@ func run() error {
 		return nil
 	}
 
-	logger := newLogger(*logLevel)
+	logger := newLogger(resolveLogLevel(*logLevel))
 
 	if *initCfg {
 		return writeTemplate(*configPath, logger)
@@ -92,6 +93,21 @@ func run() error {
 		logger.Info("已安全退出")
 		return nil
 	}
+}
+
+// resolveLogLevel 决定日志级别，优先级：命令行参数 > 环境变量 ARKADE_LOG_LEVEL > 默认 info。
+//
+// 为什么要读环境变量 -log-level 的默认值是 "info"，无法区分"用户显式写了 -log-level info"
+// 和"没写"。这里用 flag 的默认值判断是否被显式指定：未指定时才让环境变量生效，
+// 这样容器编排里设 ARKADE_LOG_LEVEL 就能生效，命令行仍可临时压过它。
+func resolveLogLevel(flagValue string) string {
+	if flagValue != "" && flagValue != "info" {
+		return flagValue
+	}
+	if v := strings.TrimSpace(os.Getenv("ARKADE_LOG_LEVEL")); v != "" {
+		return v
+	}
+	return flagValue
 }
 
 // newLogger 构造结构化日志器。

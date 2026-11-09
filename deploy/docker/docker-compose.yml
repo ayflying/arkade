@@ -1,10 +1,16 @@
 # Arkade 容器编排（Hub + Agent）
 #
-# 凭据只在编排层出现：全部通过同目录下的 .env 注入进容器环境变量，
-# 程序配置文件里一律留空。这样凭据只有一处来源，不会散落在多个文件里。
+# 【编排规范】所有可配置项都收敛到本文件，取值一律用 ${VAR} 形式从环境变量读取，
+# 实际值放在同目录的 .env 里。程序配置文件（*.config.toml）不再承载任何可配置项，
+# 只保留内置默认值，全部由下面的 ${} 覆盖。
+#
+# 这样做的原因：
+#   - 换环境只改 .env，不用去改多个 toml 再重新构建；
+#   - 凭据只有一处来源，不会散落在多个文件里；
+#   - 每个变量的默认值与是否必填，在本文件里一眼可见。
 #
 # 用法（在仓库根目录）：
-#   cp deploy/docker/.env.example deploy/docker/.env    # 填两个凭据
+#   cp deploy/docker/.env.example deploy/docker/.env    # 按需修改
 #   docker compose -f deploy/docker/docker-compose.yml up -d --build
 #   浏览器打开 http://<机器IP>:${ARKADE_HUB_PORT:-8080}
 #
@@ -14,7 +20,7 @@
 # 清理：
 #   docker compose -f deploy/docker/docker-compose.yml down -v --rmi local
 
-name: arkade-debug
+name: ${ARKADE_PROJECT_NAME:-arkade-debug}
 
 services:
   hub:
@@ -24,33 +30,37 @@ services:
       dockerfile: hub/Dockerfile
       args:
         VERSION: ${ARKADE_VERSION:-0.1.0}
-    image: arkade-hub:debug
-    container_name: arkade-hub-debug
-    restart: unless-stopped
+    image: ${ARKADE_HUB_IMAGE:-arkade-hub:debug}
+    container_name: ${ARKADE_HUB_CONTAINER:-arkade-hub-debug}
+    restart: ${ARKADE_RESTART_POLICY:-unless-stopped}
     ports:
       - "${ARKADE_HUB_PORT:-8080}:8080"
-    # env_file 与下面的 environment 的区别：
-    #   env_file 把文件里的全部键值注入容器；
-    #   environment 里的 ${VAR} 由 compose 在宿主侧解析后写入。
-    # 两者都需要：前者保证 .env 里新增的变量也能进容器，
-    # 后者用 :? 语法在宿主侧做必填校验，缺凭据时直接拒绝启动而不是带空令牌跑起来。
+    # env_file 与 environment 的分工：
+    #   env_file 把 .env 里的全部键值注入容器（新增变量无需改本文件也能进容器）；
+    #   environment 用 ${VAR:?...} 在宿主侧做必填校验，缺凭据时直接拒绝启动。
     env_file:
       - .env
     environment:
-      # 必填校验：缺这两项时 compose 会中止并给出提示，不会静默启动一个没有凭据的容器。
+      # ---- 必填凭据 ----
       ARKADE_INITIAL_PASS: ${ARKADE_INITIAL_PASS:?必须在 deploy/docker/.env 里设置 ARKADE_INITIAL_PASS}
       ARKADE_AGENT_TOKEN: ${ARKADE_AGENT_TOKEN:?必须在 deploy/docker/.env 里设置 ARKADE_AGENT_TOKEN}
-      # 覆盖配置里的监听地址：容器内必须监听 0.0.0.0 才能被端口映射访问。
-      ARKADE_LISTEN: 0.0.0.0:8080
+      # ---- 可调项 ----
+      # 容器内必须监听 0.0.0.0 才能被端口映射访问，因此这里显式覆盖配置文件的默认值。
+      ARKADE_LISTEN: ${ARKADE_HUB_LISTEN:-0.0.0.0:8080}
+      # 会话有效期，支持 30m / 24h / 72h 这类写法。
+      ARKADE_SESSION_TTL: ${ARKADE_SESSION_TTL:-72h}
+      # 日志级别与格式（debug/info/warn/error，text/json）。
+      ARKADE_LOG_LEVEL: ${ARKADE_LOG_LEVEL:-info}
+      ARKADE_LOG_FORMAT: ${ARKADE_LOG_FORMAT:-text}
     volumes:
       - hub-data:/data
       - ./hub.config.toml:/data/config.toml:ro
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
-      interval: 10s
-      timeout: 3s
-      start_period: 10s
-      retries: 5
+      interval: ${ARKADE_HEALTH_INTERVAL:-10s}
+      timeout: ${ARKADE_HEALTH_TIMEOUT:-3s}
+      start_period: ${ARKADE_HEALTH_START_PERIOD:-10s}
+      retries: ${ARKADE_HEALTH_RETRIES:-5}
     networks:
       - arkade
 
@@ -60,9 +70,9 @@ services:
       dockerfile: agent/Dockerfile
       args:
         VERSION: ${ARKADE_VERSION:-0.1.0}
-    image: arkade-agent:debug
-    container_name: arkade-agent-debug
-    restart: unless-stopped
+    image: ${ARKADE_AGENT_IMAGE:-arkade-agent:debug}
+    container_name: ${ARKADE_AGENT_CONTAINER:-arkade-agent-debug}
+    restart: ${ARKADE_RESTART_POLICY:-unless-stopped}
     depends_on:
       hub:
         # 等 Hub 真正健康再起 Agent，避免开局进入重连退避循环刷日志。
@@ -70,22 +80,36 @@ services:
     env_file:
       - .env
     environment:
+      # ---- 必填凭据 ----
       ARKADE_AGENT_TOKEN: ${ARKADE_AGENT_TOKEN:?必须在 deploy/docker/.env 里设置 ARKADE_AGENT_TOKEN}
+      # ---- 可调项 ----
+      # 服务器显示名。容器 hostname 就是容器 ID，不显式指定的话每次重建名字都会漂移。
+      ARKADE_AGENT_NAME: ${ARKADE_AGENT_NAME:-arkade-debug-node}
+      # Hub 地址用服务名 hub，不能写 127.0.0.1（那指向 Agent 容器自身）。
+      ARKADE_HUB_URL: ${ARKADE_AGENT_HUB_URL:-ws://hub:8080/agent/connect}
+      ARKADE_DATA_DIR: ${ARKADE_AGENT_DATA_DIR:-/opt/arkade/agent}
+      # 运行时套接字留空表示自动发现（$DOCKER_HOST → docker.sock → podman.sock）。
+      ARKADE_SOCKET: ${ARKADE_AGENT_SOCKET:-}
+      ARKADE_RUNTIME_KIND: ${ARKADE_AGENT_RUNTIME_KIND:-auto}
+      # 兜底心跳间隔；Hub 在握手应答里给出值后以其为准。
+      ARKADE_HEARTBEAT_SEC: ${ARKADE_AGENT_HEARTBEAT_SEC:-15}
+      ARKADE_LOG_LEVEL: ${ARKADE_LOG_LEVEL:-info}
+      ARKADE_LOG_FORMAT: ${ARKADE_LOG_FORMAT:-text}
     volumes:
       - agent-data:/opt/arkade/agent
       - ./agent.config.toml:/opt/arkade/agent/agent.toml:ro
       # 挂载宿主机 Docker 套接字：Agent 必须通过它操作本机容器。
       # 这是调试专用的「同机自管」形态，生产环境不会这样部署。
-      - /var/run/docker.sock:/var/run/docker.sock
+      - ${ARKADE_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
     networks:
       - arkade
 
 volumes:
   hub-data:
-    name: arkade-debug-hub-data
+    name: ${ARKADE_HUB_VOLUME:-arkade-debug-hub-data}
   agent-data:
-    name: arkade-debug-agent-data
+    name: ${ARKADE_AGENT_VOLUME:-arkade-debug-agent-data}
 
 networks:
   arkade:
-    name: arkade-debug-net
+    name: ${ARKADE_NETWORK:-arkade-debug-net}

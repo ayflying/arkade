@@ -261,3 +261,82 @@ func TestTokenFromFile(t *testing.T) {
 		})
 	}
 }
+
+// TestEnvOverrides 覆盖环境变量注入路径。
+//
+// 容器编排里所有可调项都通过 ARKADE_* 环境变量透传（见 deploy/docker/docker-compose.yml），
+// 因此每个变量都必须真的能覆盖配置文件的值：漏一个，编排里写了也不生效，
+// 而且这种失效是静默的——只能靠测试盯住。
+func TestEnvOverrides(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "agent.toml")
+	// 故意用与期望值不同的内容，确保断言看到的是环境变量生效的结果。
+	content := "hub_url = \"ws://from-file/agent/connect\"\ntoken = \"file-token\"\ndata_dir = \"" +
+		strings.ReplaceAll(dir, "\\", "/") + "/d\"\nname = \"from-file\"\nruntime_kind = \"auto\"\nheartbeat_sec = 5\nlog_level = \"warn\"\nlog_format = \"json\"\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("写配置失败: %v", err)
+	}
+
+	t.Setenv("ARKADE_AGENT_TOKEN", "env-token-value")
+	t.Setenv("ARKADE_HUB_URL", "ws://from-env/agent/connect")
+	t.Setenv("ARKADE_DATA_DIR", "/tmp/env-data")
+	t.Setenv("ARKADE_AGENT_NAME", "from-env")
+	t.Setenv("ARKADE_SOCKET", "/var/run/docker.sock")
+	t.Setenv("ARKADE_RUNTIME_KIND", "docker")
+	t.Setenv("ARKADE_HEARTBEAT_SEC", "30")
+	t.Setenv("ARKADE_LOG_LEVEL", "debug")
+	t.Setenv("ARKADE_LOG_FORMAT", "text")
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("加载配置失败: %v", err)
+	}
+
+	cases := []struct{ field, got, want string }{
+		{"Token", cfg.Token, "env-token-value"},
+		{"HubURL", cfg.HubURL, "ws://from-env/agent/connect"},
+		{"DataDir", cfg.DataDir, "/tmp/env-data"},
+		{"Name", cfg.Name, "from-env"},
+		{"Socket", cfg.Socket, "/var/run/docker.sock"},
+		{"RuntimeKind", cfg.RuntimeKind, "docker"},
+		{"LogLevel", cfg.LogLevel, "debug"},
+		{"LogFormat", cfg.LogFormat, "text"},
+	}
+	for _, c := range cases {
+		if c.got != c.want {
+			t.Errorf("%s 未被环境变量覆盖: 实际 %q，期望 %q", c.field, c.got, c.want)
+		}
+	}
+	if cfg.HeartbeatSec != 30 {
+		t.Errorf("HeartbeatSec 未被覆盖: 实际 %d，期望 30", cfg.HeartbeatSec)
+	}
+}
+
+// TestEnvOverridesEmptyIgnored 验证空环境变量不会清空已有配置。
+//
+// 编排文件里会出现 VAR= 这种留空写法（表示"用默认行为"），
+// 如果空值被当作有效覆盖，套接字这类字段就会被清掉，自动发现随之失效。
+func TestEnvOverridesEmptyIgnored(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "agent.toml")
+	content := "hub_url = \"ws://keep-me/agent/connect\"\ntoken = \"t\"\ndata_dir = \"" +
+		strings.ReplaceAll(dir, "\\", "/") + "/d\"\nsocket = \"/run/podman/podman.sock\"\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("写配置失败: %v", err)
+	}
+
+	t.Setenv("ARKADE_SOCKET", "")
+	t.Setenv("ARKADE_AGENT_NAME", "")
+	t.Setenv("ARKADE_RUNTIME_KIND", "")
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("加载配置失败: %v", err)
+	}
+	if cfg.Socket != "/run/podman/podman.sock" {
+		t.Errorf("空环境变量不应清空 socket，实际 %q", cfg.Socket)
+	}
+	if cfg.HubURL != "ws://keep-me/agent/connect" {
+		t.Errorf("空环境变量不应影响 hub_url，实际 %q", cfg.HubURL)
+	}
+}

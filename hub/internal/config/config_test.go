@@ -176,3 +176,57 @@ func TestParseDuration(t *testing.T) {
 		})
 	}
 }
+
+// TestApplyEnv 覆盖 Hub 侧的环境变量注入路径。
+//
+// 容器编排里所有可调项都通过 ARKADE_* 透传（见 deploy/docker/docker-compose.yml），
+// 少支持一个变量，编排里写了也不生效，且失效是静默的，所以逐个盯死。
+func TestApplyEnv(t *testing.T) {
+	t.Setenv("ARKADE_AGENT_TOKEN", "env-token-0123456789")
+	t.Setenv("ARKADE_INITIAL_PASS", "EnvPass123!")
+	t.Setenv("ARKADE_INITIAL_USER", "envadmin")
+	t.Setenv("ARKADE_DB_PATH", "/tmp/env-hub.db")
+	t.Setenv("ARKADE_LISTEN", "0.0.0.0:9090")
+	t.Setenv("ARKADE_BASE_URL", "https://env.example.com")
+	t.Setenv("ARKADE_SESSION_TTL", "48h")
+	t.Setenv("ARKADE_WEB_DIST", "/tmp/env-web")
+
+	cfg := Config{}
+	applyEnv(&cfg)
+
+	if cfg.Auth.AgentToken != "env-token-0123456789" {
+		t.Errorf("AgentToken 未生效: %q", cfg.Auth.AgentToken)
+	}
+	if cfg.Auth.InitialPass != "EnvPass123!" {
+		t.Errorf("InitialPass 未生效: %q", cfg.Auth.InitialPass)
+	}
+	if cfg.Auth.InitialUser != "envadmin" {
+		t.Errorf("InitialUser 未生效: %q", cfg.Auth.InitialUser)
+	}
+	if cfg.Database.Path != "/tmp/env-hub.db" {
+		t.Errorf("DB Path 未生效: %q", cfg.Database.Path)
+	}
+	if cfg.Server.Addr != "0.0.0.0:9090" {
+		t.Errorf("监听地址未生效: %q", cfg.Server.Addr)
+	}
+	if cfg.Server.BaseURL != "https://env.example.com" {
+		t.Errorf("BaseURL 未生效: %q", cfg.Server.BaseURL)
+	}
+	// 48h 这种人类可读写法必须能解析（.env 里写的就是这种）。
+	if cfg.Auth.SessionTTL != 48*time.Hour {
+		t.Errorf("SessionTTL 未生效: %v", cfg.Auth.SessionTTL)
+	}
+	if cfg.Web.Dist != "/tmp/env-web" {
+		t.Errorf("Web.Dist 未生效: %q", cfg.Web.Dist)
+	}
+}
+
+// TestApplyEnvSessionTTLSeconds 验证旧的纯秒数写法仍然兼容。
+func TestApplyEnvSessionTTLSeconds(t *testing.T) {
+	t.Setenv("ARKADE_SESSION_TTL_SEC", "3600")
+	cfg := Config{}
+	applyEnv(&cfg)
+	if cfg.Auth.SessionTTL != time.Hour {
+		t.Fatalf("秒数写法应生效，实际 %v", cfg.Auth.SessionTTL)
+	}
+}

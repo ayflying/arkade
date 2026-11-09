@@ -61,30 +61,58 @@ docker network ls --filter name=arkade
 docker images --filter reference='arkade-*'
 ```
 
-## 凭据怎么流转
+## 配置怎么流转
+
+**所有可配置项都在编排文件里用 `${VAR}` 形式声明，实际值放 `.env`。**
+程序配置文件只保留本地直跑的默认值，容器里一律被环境变量覆盖。
 
 ```
-deploy/docker/.env            ← 唯一填写凭据的地方（已被 .gitignore 排除）
-        │  compose 读取
+deploy/docker/.env              ← 唯一填写实际值的地方（已被 .gitignore 排除）
+        │  compose 读取 ${VAR}
         ▼
-容器环境变量                   ← 启动时注入
-  ARKADE_INITIAL_PASS
-  ARKADE_AGENT_TOKEN
+docker-compose.yml              ← 声明有哪些变量、默认值是什么、哪些必填
+        │  注入
+        ▼
+容器环境变量                     ← 启动时写进进程环境
+  ARKADE_INITIAL_PASS / ARKADE_AGENT_TOKEN / ...
         │  程序启动时读取
         ▼
-进程内存                       ← 不落盘
+进程内存                         ← 凭据不落盘
 ```
 
-配置文件（`hub.config.toml` / `agent.config.toml`）里的 `agent_token`、`initial_pass`、
-`token` 全部保持空字符串，它们只是占位，实际值由环境变量覆盖。
+改配置的流程永远是：改 `.env` → `docker compose ... up -d --force-recreate`。
+不需要改 toml，也不需要重新构建镜像。
+
+完整变量清单见 [`.env.example`](.env.example)，每个变量都有注释。几个关键项：
+
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `ARKADE_INITIAL_PASS` | 必填 | 初始管理员密码 |
+| `ARKADE_AGENT_TOKEN` | 必填 | Agent 接入令牌，两侧必须一致 |
+| `ARKADE_HUB_PORT` | `8080` | Hub 对外端口 |
+| `ARKADE_SESSION_TTL` | `72h` | 会话有效期，支持 `30m`/`24h` |
+| `ARKADE_AGENT_NAME` | `arkade-debug-node` | 服务器显示名（不设会用容器 ID，重建后漂移） |
+| `ARKADE_LOG_LEVEL` | `info` | `debug`/`info`/`warn`/`error` |
+| `ARKADE_HUB_CONTAINER` 等 | `arkade-*-debug` | 容器/镜像/卷/网络名，改掉可让多套环境并存 |
 
 两个关键保障：
 
-1. **缺凭据直接拒绝启动**：compose 用 `${VAR:?提示}` 语法在宿主侧校验，`.env` 没填就中止；
+1. **缺凭据直接拒绝启动**：compose 用 `${VAR:?提示}` 在宿主侧校验，`.env` 没填就中止；
    Hub 自己也会校验（缺 `ARKADE_INITIAL_PASS` 时拒绝启动），不会带着空令牌跑起来。
 2. **`.env` 不入库**：`.gitignore` 拦截 `.env`，只放行 `.env.example`。
 
 ## 关键设计说明
+
+### 为什么变量全部收敛到编排文件
+
+早期做法是「toml 一份、编排环境变量一份」，结果同一个配置项有两个来源，
+改了一处以为生效、实际被另一处覆盖；而且换环境要同时改多个文件。
+现在统一成：**编排文件声明变量，`.env` 提供值，程序只读环境变量**。
+每个变量的默认值和是否必填都在一个文件里看得见。
+
+配套地，两侧程序都支持用 `ARKADE_*` 环境变量覆盖任意可调项
+（`hub/internal/config.applyEnv`、`agent/internal/config.applyEnvOverrides`），
+并有单元测试逐个变量盯住——漏支持一个，编排里写了也会静默失效。
 
 ### 构建上下文必须传仓库根目录
 
@@ -96,6 +124,9 @@ deploy/docker/.env            ← 唯一填写凭据的地方（已被 .gitignor
 配置文件会被挂载进容器、随卷备份，明文写进去等于把凭据永久留在磁盘。
 `hub.config.toml` 与 `agent.config.toml` 里的 `agent_token`、`initial_pass` 都留空，
 由 `ARKADE_AGENT_TOKEN` / `ARKADE_INITIAL_PASS` 注入。
+
+如果还是有人把令牌写进配置文件，Agent 启动时会打印安全提醒（只提醒不拒绝启动，
+避免存量部署突然起不来）。
 
 ### Agent 以 root 运行
 

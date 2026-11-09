@@ -84,7 +84,11 @@ func Load(path string) (Config, error) {
 	return cfg, nil
 }
 
-// applyEnv 只允许极少数必须外部注入的字段走环境变量（密码与 Token 不适合写进文件）。
+// applyEnv 应用环境变量覆盖。
+//
+// 约定（容器编排统一走这条路）：所有可配置项都能用 ARKADE_* 环境变量覆盖，
+// 配置文件只提供本地运行的默认值。编排文件里用 ${VAR} 把这些变量透传进来，
+// 换环境只改 .env，不必改配置或重建镜像。
 func applyEnv(cfg *Config) {
 	if v := os.Getenv("ARKADE_AGENT_TOKEN"); v != "" {
 		cfg.Auth.AgentToken = v
@@ -92,16 +96,33 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("ARKADE_INITIAL_PASS"); v != "" {
 		cfg.Auth.InitialPass = v
 	}
+	if v := os.Getenv("ARKADE_INITIAL_USER"); v != "" {
+		cfg.Auth.InitialUser = v
+	}
 	if v := os.Getenv("ARKADE_DB_PATH"); v != "" {
 		cfg.Database.Path = v
 	}
 	if v := os.Getenv("ARKADE_LISTEN"); v != "" {
 		cfg.Server.Addr = v
 	}
+	if v := os.Getenv("ARKADE_BASE_URL"); v != "" {
+		cfg.Server.BaseURL = v
+	}
+	// 会话有效期同时支持两种写法：
+	//   ARKADE_SESSION_TTL=72h   人类可读，推荐；
+	//   ARKADE_SESSION_TTL_SEC=0 纯秒数，保留兼容旧脚本。
+	if v := os.Getenv("ARKADE_SESSION_TTL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			cfg.Auth.SessionTTL = d
+		}
+	}
 	if v := os.Getenv("ARKADE_SESSION_TTL_SEC"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			cfg.Auth.SessionTTL = time.Duration(n) * time.Second
 		}
+	}
+	if v := os.Getenv("ARKADE_WEB_DIST"); v != "" {
+		cfg.Web.Dist = v
 	}
 }
 
