@@ -22,9 +22,10 @@ import (
 // 这是 PATCH 语义的必要条件——如果用零值表示"不改"，
 // 就无法把 note 清空成空串（空串与"没传"不可区分）。
 type AgentAdminFields struct {
-	DisplayName *string
-	Note        *string
-	Labels      *map[string]string
+	DirectAddress *string
+	DisplayName   *string
+	Note          *string
+	Labels        *map[string]string
 }
 
 // UpdateAgentAdmin 更新管理员可编辑字段，返回更新后的记录。
@@ -44,6 +45,10 @@ func (d *DB) UpdateAgentAdmin(ctx context.Context, id string, fields AgentAdminF
 	var sets []string
 	var args []any
 
+	if fields.DirectAddress != nil {
+		sets = append(sets, "direct_address = ?")
+		args = append(args, *fields.DirectAddress)
+	}
 	if fields.DisplayName != nil {
 		sets = append(sets, "display_name = ?")
 		args = append(args, *fields.DisplayName)

@@ -19,44 +19,49 @@
  * 前端自己筛等于把归属规则实现两遍，迟早与后端不一致。
  */
 import { computed, h } from 'vue'
+import { useRouter } from 'vue-router'
 import { NDataTable, NEmpty } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
+import ContainerPortCell from '@/components/container/ContainerPortCell.vue'
 import ContainerStateTag from '@/components/container/ContainerStateTag.vue'
 import type { Container } from '@/types/container'
 import { formatAbsoluteTime, formatRelativeTime } from '@/utils/formatTime'
 
 interface Props {
   containers: Container[]
+  /** 所属服务器：名称链接要用它拼详情路由 */
+  agentId: string
+  /** 服务器直连地址；端口链接靠它生成，空表示不可生成 */
+  directAddress: string
 }
 
 const props = defineProps<Props>()
 
-/** 端口可能是空串，也可能是多项，用标签展示更易读 */
-function renderPort(ports: string): ReturnType<typeof h> {
-  const text = ports.trim()
-  if (text === '') {
-    return h('span', { class: 'ext-containers__muted' }, '—')
-  }
-  // docker 的端口串可能是多段（0.0.0.0:8080->80/tcp, 0.0.0.0:8443->443/tcp）
-  const parts = text
-    .split(',')
-    .map((p) => p.trim())
-    .filter((p) => p !== '')
-  return h(
-    'span',
-    { class: 'ext-containers__ports' },
-    parts.map((p) => h('code', { class: 'ext-containers__port' }, p))
-  )
+const router = useRouter()
+
+/** 进入容器详情（与主容器列表一致的入口） */
+function goDetail(containerId: string): void {
+  if (props.agentId === '' || containerId === '') return
+  void router.push({
+    name: 'agent-container-detail',
+    params: { id: props.agentId, containerId }
+  })
 }
+
+/** 端口列已改用 ContainerPortCell，这里不再解析 ports 文本 */
 
 const columns = computed<DataTableColumns<Container>>(() => [
   {
     title: '名称',
     key: 'name',
     minWidth: 180,
-    // 名称缺失时退回显示 ID，总比一格空白有用
+    // 名称可点击进详情；缺失时退回显示 ID，总比一格空白有用
     render: (row) =>
-      h('span', { class: 'arkade-cell-mono' }, row.name !== '' ? row.name : row.id)
+      h(
+        'a',
+        { class: 'arkade-link arkade-cell-mono', onClick: () => goDetail(row.id) },
+        row.name !== '' ? row.name : row.id
+      )
   },
   {
     title: '镜像',
@@ -75,7 +80,16 @@ const columns = computed<DataTableColumns<Container>>(() => [
     title: '端口',
     key: 'ports',
     minWidth: 200,
-    render: (row) => renderPort(row.ports)
+    /*
+     * 复用与主容器列表同一个单元格：外部项目的容器也是容器，
+     * 端口该不该给链接、通配地址怎么替换，规则必须完全一致。
+     * 这里不再显示原始 ports 文本（`0.0.0.0:8080->80/tcp` 那种点了必坏）。
+     */
+    render: (row) =>
+      h(ContainerPortCell, {
+        container: row,
+        directAddress: props.directAddress
+      })
   },
   {
     title: '创建时间',

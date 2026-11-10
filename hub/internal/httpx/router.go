@@ -119,6 +119,7 @@ func NewRouter(d Deps) http.Handler {
 			priv.Post("/agents/{agentID}/enable", handleEnableAgent(d))
 
 			priv.Get("/agents/{agentID}/containers", handleListContainers(d))
+			priv.Get("/agents/{agentID}/containers/{containerID}", handleContainerDetail(d))
 			priv.Post("/agents/{agentID}/containers/{containerID}/start", handleContainerStart(d))
 			priv.Post("/agents/{agentID}/containers/{containerID}/stop", handleContainerStop(d))
 			// 重启与启停同级（operate）：不销毁对象、不改纳管关系。

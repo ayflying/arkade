@@ -40,8 +40,12 @@ const META: Record<AutoAdoptStatus, { label: string; type: 'default' | 'info' | 
     /*
      * skipped：Hub 判断这个项目不适合自动接管（例如用了 build、
      * 或配置里有它不理解的写法）。不是故障，用中性灰。
+     *
+     * 文案用「配置未登记」而不是「暂不接管」：用户看到的是「这东西在
+     * Arkade 里没有配置记录」，而不是「Arkade 拒绝接管它」。
+     * 前者是事实描述，后者暗示了一个并不存在的准入门槛。
      */
-    skipped: { label: '暂不接管', type: 'default' },
+    skipped: { label: '配置未登记', type: 'default' },
     /*
      * failed：尝试过但失败了，用户可能需要看一眼原因并手动处理。
      * 用 error 色把它和「暂时不接管」区分开——前者要关注，后者不用。

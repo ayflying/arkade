@@ -26,9 +26,10 @@ import (
 // 全部用指针：nil = 本次不改。
 // 这样"把备注清空"（传空串）与"不动备注"（不传字段）才能区分开。
 type agentAdminPatchRequest struct {
-	DisplayName *string            `json:"display_name"`
-	Note        *string            `json:"note"`
-	Labels      *map[string]string `json:"labels"`
+	DirectAddress *string            `json:"direct_address"`
+	DisplayName   *string            `json:"display_name"`
+	Note          *string            `json:"note"`
+	Labels        *map[string]string `json:"labels"`
 }
 
 // 字段长度上限。
@@ -58,6 +59,14 @@ func handlePatchAgent(d Deps) http.HandlerFunc {
 		}
 
 		fields := store.AgentAdminFields{}
+		if req.DirectAddress != nil {
+			v, err := normalizeDirectAddress(*req.DirectAddress)
+			if err != nil {
+				badRequest(w, d, "%s", err.Error())
+				return
+			}
+			fields.DirectAddress = &v
+		}
 		if req.DisplayName != nil {
 			v := strings.TrimSpace(*req.DisplayName)
 			if len([]rune(v)) > maxAgentDisplayNameLen {

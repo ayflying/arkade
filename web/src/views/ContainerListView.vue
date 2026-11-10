@@ -19,6 +19,7 @@ import type { DataTableColumns } from 'naive-ui'
 import AgentStatusTag from '@/components/agent/AgentStatusTag.vue'
 import ContainerLogDrawer from '@/components/container/ContainerLogDrawer.vue'
 import ContainerOriginTag from '@/components/container/ContainerOriginTag.vue'
+import ContainerPortCell from '@/components/container/ContainerPortCell.vue'
 import ContainerRowActions from '@/components/container/ContainerRowActions.vue'
 import ContainerStateTag from '@/components/container/ContainerStateTag.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
@@ -42,6 +43,23 @@ const agentId = computed<string>(() => String(route.params.id ?? ''))
 
 /** 当前服务器对象；可能为 undefined（直接刷新本页且 store 尚未加载时） */
 const agent = computed(() => agentsStore.findById(agentId.value))
+
+/**
+ * 服务器直连地址；未配置时为空串。
+ *
+ * 端口链接靠它把 `0.0.0.0` 这类通配绑定换成真正可访问的主机，
+ * 所以为空时**不生成任何链接**——见 utils/portLinks 的规则。
+ */
+const currentAgentDirectAddress = computed<string>(() => agent.value?.direct_address ?? '')
+
+/** 进入容器详情 */
+function goDetail(containerId: string): void {
+  if (agentId.value === '' || containerId === '') return
+  void router.push({
+    name: 'agent-container-detail',
+    params: { id: agentId.value, containerId }
+  })
+}
 
 const { containers, loading, errorText, loaded, busy, load, runAction, removeContainer } = useContainers(
   () => agentId.value
@@ -85,7 +103,16 @@ const columns = computed<DataTableColumns<Container>>(() => [
     key: 'name',
     minWidth: 160,
     ellipsis: { tooltip: true },
-    render: (row) => row.name || row.id
+    /*
+     * 名称可点击进详情。以前只能看列表，想查挂载和网络没有入口；
+     * 现在详情页有独立的 manage 权限，403 时日志仍可看。
+     */
+    render: (row) =>
+      h(
+        'a',
+        { class: 'arkade-link arkade-cell-mono', onClick: () => goDetail(row.id) },
+        row.name !== '' ? row.name : row.id
+      )
   },
   {
     title: '镜像',
@@ -115,8 +142,16 @@ const columns = computed<DataTableColumns<Container>>(() => [
     title: '端口',
     key: 'ports',
     minWidth: 220,
-    ellipsis: { tooltip: true },
-    render: (row) => row.ports || '—'
+    /*
+     * 不再显示后端原始的 ports 文本：其中 0.0.0.0 是通配绑定，
+     * 拼成链接必然打不开。改为按结构化 published_ports 渲染，
+     * 只有确定可达的才做成链接（规则见 utils/portLinks）。
+     */
+    render: (row) =>
+      h(ContainerPortCell, {
+        container: row,
+        directAddress: currentAgentDirectAddress.value
+      })
   },
   {
     title: '操作',

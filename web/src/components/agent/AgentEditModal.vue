@@ -46,6 +46,13 @@ const displayName = ref('')
 const note = ref('')
 /** 标签文本，每行 key=value */
 const labelsText = ref('')
+/**
+ * 直连地址：用户在浏览器里能打开这台服务器的地址。
+ *
+ * 只填主机部分（`10.0.0.5` 或 `[2001:db8::1]`），不要带 http://、路径或端口。
+ * 容器的端口链接靠它把 `0.0.0.0` 这种通配绑定换成真实可达的地址。
+ */
+const directAddress = ref('')
 const saving = ref(false)
 const errorText = ref('')
 
@@ -100,6 +107,7 @@ watch(
     displayName.value = agent?.display_name ?? ''
     note.value = agent?.note ?? ''
     labelsText.value = labelsToText(agent?.labels ?? {})
+    directAddress.value = agent?.direct_address ?? ''
   },
   { immediate: true }
 )
@@ -143,6 +151,17 @@ async function handleSave(): Promise<void> {
   const prevLabelsText = labelsToText(props.agent.labels ?? {})
   const nextLabelsText = labelsToText(parsed.labels)
   if (nextLabelsText !== prevLabelsText) payload.labels = parsed.labels
+
+  /*
+   * 直连地址：只做 trim，格式交给后端校验。
+   *
+   * 前端不自己拦格式，是因为规则会随需求演进（IPv6、域名、端口），
+   * 两边各写一套校验迟早不一致；而后端拒绝时给出的原文更准确。
+   * 清空同样如实提交空串，让后端决定是否允许。
+   */
+  const nextAddress = directAddress.value.trim()
+  const prevAddress = (props.agent.direct_address ?? '').trim()
+  if (nextAddress !== prevAddress) payload.direct_address = nextAddress
 
   if (Object.keys(payload).length === 0) {
     // 没有任何改动：直接关闭，不发一个空 PATCH 制造无意义的审计记录
@@ -191,6 +210,19 @@ async function handleSave(): Promise<void> {
       </n-form-item>
       <div class="agent-edit-modal__hint">
         留空则显示 Agent 上报的原始名称。
+      </div>
+
+      <n-form-item label="直连地址">
+        <n-input
+          v-model:value="directAddress"
+          placeholder="例如：10.0.0.12 或 [2001:db8::1]"
+          :disabled="saving"
+          clearable
+        />
+      </n-form-item>
+      <div class="agent-edit-modal__hint">
+        你在浏览器里访问这台服务器用的地址，可留空。只填主机，<strong>不要带 http:// 、路径或端口</strong>；
+        IPv6 用方括号形式。容器的端口链接会用它替代 0.0.0.0 这类通配地址。
       </div>
 
       <n-form-item label="备注">

@@ -379,7 +379,7 @@ func TestMigrationVersionCurrent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v != 8 {
-		t.Errorf("迁移版本应为 8，实际 %d", v)
+	if v != 9 {
+		t.Errorf("迁移版本应为 9，实际 %d", v)
 	}
 }

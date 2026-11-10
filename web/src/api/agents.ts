@@ -75,6 +75,10 @@ export async function resetAgentToken(agentId: string): Promise<ResetAgentTokenR
  * 只提交改动的字段（PATCH 语义），避免把未改的字段一起回写造成覆盖。
  * 返回**解包后的 Agent 对象**（后端响应是 `{ agent: {...} }` 包装），
  * 调用方可以直接用它更新本地状态，省一次列表请求。
+ *
+ * `direct_address` 的格式由后端校验（只允许主机部分，IPv6 用方括号）。
+ * 前端只做「去掉首尾空白」这类无争议处理，不做格式猜测——
+ * 猜错会让用户以为已保存，实际被后端拒绝。
  */
 export async function updateAgent(
   agentId: string,

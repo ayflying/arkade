@@ -61,6 +61,17 @@ export type Agent = {
   /** Unix 秒级时间戳（非毫秒） */
   last_seen: number
   labels: Record<string, string>
+  /**
+   * 该服务器对外可访问的直连地址（用户在浏览器里能打开的地址）。
+   *
+   * 用途：容器的 published_ports 里 `0.0.0.0` / `::` 这类通配绑定本身
+   * 不是可点击的地址，需要用这个字段替换成真实可达的主机。
+   *
+   * 只允许主机部分：不带 scheme（`http://`）、不带路径、不带端口。
+   * IPv6 需要方括号形式（`[2001:db8::1]`）。可为空——空表示用户没指定，
+   * 此时不做任何地址推断，也不生成链接。
+   */
+  direct_address?: string
 }
 
 /** GET /api/agents 响应体 */
@@ -71,13 +82,15 @@ export type AgentListResponse = {
 /**
  * PATCH /api/agents/{id} 请求体：编辑服务器。
  *
- * 三个字段都可选——只提交用户改过的部分，避免把未改动的字段一起覆盖。
+ * 字段都可选——只提交用户改过的部分，避免把未改动的字段一起覆盖。
  * 注意 `name` 不可改：它是 Agent 自报的标识，改名走 display_name。
  */
 export type UpdateAgentRequest = {
   display_name?: string
   note?: string
   labels?: Record<string, string>
+  /** 直连地址；提交空串表示清空（后端校验格式） */
+  direct_address?: string
 }
 
 /**

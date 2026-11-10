@@ -34,6 +34,15 @@ const agentChildRoutes: RouteRecordRaw[] = [
     meta: { title: '容器' }
   },
   {
+    // 必须放在 containers 之后：静态段先匹配，否则 'containers' 不会冲突，
+    // 但 registers 顺序仍是 namespace 不同即可；这里保持「静态在动态前」的惯例
+    path: 'containers/:containerId',
+    name: 'agent-container-detail',
+    component: () => import('@/views/ContainerDetailView.vue'),
+    props: true,
+    meta: { title: '容器详情' }
+  },
+  {
     path: 'stacks',
     name: 'agent-stacks',
     component: () => import('@/views/StackListView.vue'),

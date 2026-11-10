@@ -4,18 +4,12 @@
  *
  * 路由：/agents/:id/stacks/external/:name
  *
- * ## 为什么独立成页而不是扩展 StackDetailView
+ * 独立成页而不扩展 StackDetailView：已纳管编排的配置在 Hub、状态由 Hub 下发；
+ * 外部项目的配置在服务器目录里，Hub 只能读、写只落在草稿上。
+ * 两者语义、权限、动作都不同，合并会让每个分支都要判断「这是哪种」。
  *
- * 已纳管编排的配置在 Hub、状态由 Hub 下发；外部项目的配置在服务器自己的目录里，
- * Hub 只能读、写只落在草稿上。两者语义、权限、可用动作都不同，
- * 塞进同一个 811 行的页面会让每个分支都要判断「这是哪种」。
- *
- * ## 权限现实
- *
- * - 详情 / 容器 / 日志：需要 **view**
- * - 配置读取 / 草稿 / 登记 / 复制：需要 **manage**
- *
- * 所以「进得来但看不到配置」是正常状态，页面必须把它当权限提示而不是故障。
+ * 权限：详情 / 容器 / 日志要 **view**；配置读取 / 草稿 / 登记 / 复制要 **manage**。
+ * 「进得来但看不到配置」是正常状态，应作权限提示而非故障。
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -37,7 +31,10 @@ import { toastError, toastSuccess, toastWarning } from '@/utils/feedback'
 
 const route = useRoute()
 const router = useRouter()
-const { agentId, displayName, isOnline } = useCurrentAgent()
+const { agentId, agent, displayName, isOnline } = useCurrentAgent()
+
+/** 服务器直连地址，供端口链接使用；为空表示未配置，此时端口一律不给链接 */
+const directAddress = computed<string>(() => agent.value?.direct_address ?? '')
 
 /** 取第一个字符串参数（params/query 可能是数组） */
 function firstParam(value: unknown): string {
@@ -59,11 +56,9 @@ const activeTab = ref<'overview' | 'config' | 'logs'>('overview')
 const applying = ref(false)
 const preview = ref<ApplyPreviewResponse | null>(null)
 const applyError = ref('')
-/**
- * 登记时发现同名编排已被自动登记过。
- *
- * 这不是失败：Hub 里已经有这个项目了，用户应该去已纳管详情页看，
- * 而不是在这里反复点。所以要给一个直达链接，而不是只丢一句错误。
+/*
+ * 登记时发现同名编排已被自动登记过。这不是失败：Hub 里已有这个项目，
+ * 用户该去已纳管详情页看，而不是在这里反复点，所以给直达链接而非一句错误。
  */
 const alreadyManaged = ref(false)
 
@@ -280,7 +275,11 @@ watch(
           <!-- 容器明细：概览只给数字不够，接口返回的字段要真的显示出来 -->
           <div class="ext-detail__containers">
             <div class="ext-detail__containers-head">容器</div>
-            <external-stack-containers :containers="store.containers.value" />
+            <external-stack-containers
+              :containers="store.containers.value"
+              :agent-id="agentId ?? ''"
+              :direct-address="directAddress"
+            />
           </div>
         </n-tab-pane>
 

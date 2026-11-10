@@ -119,16 +119,21 @@ type composeSourceRequest struct {
 // 返回的是原始 compose 内容与哈希；安全扫描由上层（handler）再做一次过滤，
 // 这样 runtime 层不必知道 compose 的语义规则。
 //
-// 这是**自动接管**路径：helper 不加任何额外 capability。
+// **capability 与 raw 路径一致**（都加 DAC_READ_SEARCH）：
+// 用户的明确要求是"容器可管理 + 读取统一"——自动接管如果读不到 0600 的配置，
+// 就会出现"手动能看、自动接管却说权限不足"的分裂行为，那更难解释也更难用。
+// 挂载范围、no-follow、nlink 校验、只读挂载全部不变，因此可读面没有扩大。
+//
+// 两条路径的差别**只在 handler 层**：raw 决定有阻塞时是否仍然回传内容。
 func (e *engine) RunComposeSource(ctx context.Context, name string) (string, error) {
-	return e.runComposeSource(ctx, name, false)
+	return e.runComposeSource(ctx, name, true)
 }
 
-// RunComposeSourceRaw 是显式查看/编辑路径：允许 helper 读取 0600/0700 的配置。
+// RunComposeSourceRaw 是显式查看/编辑路径。
 //
-// 与 RunComposeSource 的唯一差别是给 helper 加 DAC_READ_SEARCH；
-// 挂载范围、no-follow、nlink 校验、只读挂载**完全不变**，
-// 因此它仍然是"只能读到那一个挂载目录里的文件"。
+// 与 RunComposeSource 读取完全相同（含 capability）；
+// 区别在 handler：raw 模式下即使有导入阻塞也会回传原文，
+// 便于用户查看/编辑含 env_file、build 的编排。
 func (e *engine) RunComposeSourceRaw(ctx context.Context, name string) (string, error) {
 	return e.runComposeSource(ctx, name, true)
 }

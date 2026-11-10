@@ -81,41 +81,45 @@ func capAddEngine(t *testing.T, cap *archiveCapture) *engine {
 	})
 }
 
-// TestHelperCapAddOnlyForRawSource 验证 DAC_READ_SEARCH **只**在 raw 路径加。
+// TestHelperCapAddOnlyForSourcePaths 验证 DAC_READ_SEARCH **只**给编排配置读取。
 //
-// 自动接管不应该有"悄悄读走 0600 配置"的能力；只有用户显式查看/编辑才需要。
-func TestHelperCapAddOnlyForRawSource(t *testing.T) {
-	// 非 raw：CapAdd 必须为空。
-	var plain archiveCapture
-	e := capAddEngine(t, &plain)
-	if _, err := e.runHelper(context.Background(), helperSpec{
-		cmd:          []string{"compose-source-helper"},
+// 用户明确要求"容器可管理 + 读取统一"：auto 与 raw 都是读同一份配置，
+// 若只有 raw 能读 0600，就会出现"手动能看、自动接管却说权限不足"的分裂行为。
+// 但卷文件管理没有这个需求，必须保持不加 capability。
+func TestHelperCapAddOnlyForSourcePaths(t *testing.T) {
+	// volume 类 helper：CapAdd 必须为空。
+	var vol archiveCapture
+	ev := capAddEngine(t, &vol)
+	if _, err := ev.runHelper(context.Background(), helperSpec{
+		cmd:          []string{"volume-file-helper"},
 		request:      []byte(`{}`),
 		responsePath: "/response.json",
 		readSearch:   false,
 	}); err != nil {
-		t.Fatalf("非 raw 不应失败: %v", err)
+		t.Fatalf("volume helper 不应失败: %v", err)
 	}
-	if !plain.sawCreate {
+	if !vol.sawCreate {
 		t.Fatal("应发出建容器请求")
 	}
-	if len(plain.capAdd) != 0 {
-		t.Fatalf("非 raw 不得加任何 capability，实际 %v", plain.capAdd)
+	if len(vol.capAdd) != 0 {
+		t.Fatalf("卷文件 helper 不得加任何 capability，实际 %v", vol.capAdd)
 	}
 
-	// raw：必须加 DAC_READ_SEARCH。
-	var raw archiveCapture
-	e2 := capAddEngine(t, &raw)
-	if _, err := e2.runHelper(context.Background(), helperSpec{
-		cmd:          []string{"compose-source-helper"},
-		request:      []byte(`{}`),
-		responsePath: "/response.json",
-		readSearch:   true,
-	}); err != nil {
-		t.Fatalf("raw 不应失败: %v", err)
-	}
-	if len(raw.capAdd) != 1 || raw.capAdd[0] != "DAC_READ_SEARCH" {
-		t.Fatalf("raw 应只加 DAC_READ_SEARCH，实际 %v", raw.capAdd)
+	// 编排读取（auto / raw 共用的 spec）：必须加 DAC_READ_SEARCH。
+	for _, label := range []string{"auto", "raw"} {
+		var cap archiveCapture
+		e := capAddEngine(t, &cap)
+		if _, err := e.runHelper(context.Background(), helperSpec{
+			cmd:          []string{"compose-source-helper"},
+			request:      []byte(`{}`),
+			responsePath: "/response.json",
+			readSearch:   true,
+		}); err != nil {
+			t.Fatalf("%s 路径不应失败: %v", label, err)
+		}
+		if len(cap.capAdd) != 1 || cap.capAdd[0] != "DAC_READ_SEARCH" {
+			t.Fatalf("%s 应只加 DAC_READ_SEARCH，实际 %v", label, cap.capAdd)
+		}
 	}
 }
 

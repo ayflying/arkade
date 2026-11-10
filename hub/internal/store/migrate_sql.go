@@ -244,4 +244,7 @@ var migrations = []migration{
 				PRIMARY KEY (agent_id, name))`,
 		},
 	},
+	{version: 9, name: "服务器直连地址", stmts: []string{
+		`ALTER TABLE agents ADD COLUMN direct_address TEXT NOT NULL DEFAULT ''`,
+	}},
 }

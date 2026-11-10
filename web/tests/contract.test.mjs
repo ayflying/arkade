@@ -451,7 +451,7 @@ check(
 )
 // 三种状态必须有中文文案，不能把英文枚举直接显示给用户
 check('auto_adopt: pending 显示中文', /pending: \{ label: '接管中'/.test(adoptSrc))
-check('auto_adopt: skipped 显示中文', /skipped: \{ label: '暂不接管'/.test(adoptSrc))
+check('auto_adopt: skipped 显示中文', /skipped: \{ label: '配置未登记'/.test(adoptSrc))
 check('auto_adopt: failed 显示中文', /failed: \{ label: '接管失败'/.test(adoptSrc))
 // 原因只对 skipped/failed 展示，pending 没必要、unknown 不允许推测
 check(
@@ -484,13 +484,14 @@ check(
   /\.\.\.\(showAutoAdoptColumn\.value/.test(stackListSrc),
   'computed 没被列定义使用'
 )
-// 说明文案必须讲清「不重启不重建」，否则用户不敢用自动接管
+// 说明文案必须讲清「不重启不重建」，否则用户不敢用自动登记
 check(
   'stack 列表: 文案说明不重启不重建',
-  /自动接管兼容项目，不重启或重建/.test(stackListSrc),
-  '缺少「不重启或重建」，用户会担心自动接管有副作用'
+  /不重启或重建/.test(stackListSrc),
+  '缺少「不重启或重建」，用户会担心自动登记有副作用'
 )
-check('stack 列表: 文案指向下方原因列', /暂不能接管的原因见下方/.test(stackListSrc))
+// 措辞已从「接管」改为「登记配置」：用户看到的是配置有没有记录，不是被谁接管
+check('stack 列表: 文案指向下方原因列', /未登记的原因见下方/.test(stackListSrc))
 // 手动导入必须保留（自动接管不支持时的 fallback）
 check('stack 列表: 保留手动导入入口', /openImport/.test(stackListSrc))
 

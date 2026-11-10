@@ -23,6 +23,7 @@ const (
 	MethodContainerRestart = "container.restart" // 重启容器（等价 stop + start，但保留容器本身）
 	MethodContainerRemove  = "container.remove"  // 删除容器（危险操作）
 	MethodContainerLogs    = "container.logs"    // 拉取日志（有限行数，避免撑爆连接）
+	MethodContainerInspect = "container.inspect" // 容器详情（只读，白名单字段）
 
 	// 运行时探测
 	MethodRuntimeInfo = "runtime.info" // 上报运行时类型与版本（docker / podman）

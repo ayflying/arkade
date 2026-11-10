@@ -47,7 +47,7 @@ func (a *autoAdopter) state(agent, name string) autoAdoptState {
 	if s, ok := a.states[agent][name]; ok {
 		return s
 	}
-	return autoAdoptState{Status: "pending", Reason: "等待后台扫描，兼容项目将自动接管"}
+	return autoAdoptState{Status: "pending", Reason: "等待后台扫描，兼容项目将自动登记配置；容器仍可直接管理"}
 }
 func (a *autoAdopter) set(agent, name, status, reason string) {
 	a.mu.Lock()
@@ -154,7 +154,7 @@ func (a *autoAdopter) adopt(ctx context.Context, agent, name string, known map[s
 		return
 	}
 	if source.Name != name || validateComposeContent(source.Content) != nil || source.ConfigHash != composeProjectHash(source.Content, "") {
-		a.set(agent, name, "skipped", "项目配置为空、超限或校验不一致，未自动接管")
+		a.set(agent, name, "skipped", "项目配置为空、超限或校验不一致，未自动登记配置")
 		return
 	}
 	hash := source.ConfigHash
@@ -168,7 +168,7 @@ func (a *autoAdopter) adopt(ctx context.Context, agent, name string, known map[s
 		return
 	}
 	if !preview.CanImport || preview.ConfigHash != hash || len(preview.Blockers) > 0 {
-		reason := "项目未通过安全预检，暂不能自动接管"
+		reason := "项目未通过安全预检，配置未登记；不影响直接管理容器"
 		if len(preview.Blockers) > 0 {
 			reason = safeAutoReason(preview.Blockers)
 		}

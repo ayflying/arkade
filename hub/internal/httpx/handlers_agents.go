@@ -33,7 +33,8 @@ type agentView struct {
 	// 在界面上只该有一种表现——显示点什么，而不是一行空白。
 	DisplayName string `json:"display_name"`
 	// Note 是自由备注。
-	Note string `json:"note"`
+	Note          string `json:"note"`
+	DirectAddress string `json:"direct_address"`
 	// Disabled 表示该服务器被管理员禁用（连接会在握手阶段被拒）。
 	// 前端需要它来区分"离线"和"被禁用"——两者都连不上，
 	// 但处置方式完全不同（前者等它恢复，后者要去启用）。
@@ -113,6 +114,7 @@ func toAgentView(rec store.AgentRecord, online map[string]struct{}) agentView {
 		// 显示名未设置时回落到主机名，前端无需判空。
 		DisplayName:    displayNameOf(rec),
 		Note:           rec.Note,
+		DirectAddress:  rec.DirectAddress,
 		Disabled:       rec.Disabled,
 		Status:         status,
 		Version:        rec.Version,

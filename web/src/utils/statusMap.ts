@@ -51,7 +51,9 @@ export function mapContainerOrigin(origin: string): StatusStyle {
     case 'adopted':
       return { label: '已接管', type: 'warning', dimmed: false }
     case 'discovered':
-      return { label: '未接管', type: 'default', dimmed: false }
+      // 「外部项目」比「未接管」更能说明它的真实身份：容器是外部工具起的，
+      // Arkade 只是看得见它。说「未接管」会让人以为等着被接管，实际不一定。
+      return { label: '外部项目', type: 'default', dimmed: false }
     default:
       return { label: origin === '' ? '未知' : origin, type: 'default', dimmed: false }
   }

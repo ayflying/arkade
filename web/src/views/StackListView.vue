@@ -487,8 +487,8 @@ onMounted(() => {
       -->
       <p class="stack-page__unmanaged-desc">
         这些是服务器上已存在、但未登记在 Arkade 中的 compose 项目，通常是你直接使用
-        <code>docker compose</code> 启动的。Arkade 会<strong>自动接管兼容项目，不重启或重建</strong>容器；
-        暂不能接管的原因见下方。未自动接管的项目仍可手动导入。
+        <code>docker compose</code> 启动的。Arkade 会<strong>自动为兼容项目登记配置，不重启或重建</strong>容器；
+        未登记的原因见下方。这类项目也可以直接点名称进去查看容器、日志与配置草稿。
       </p>
 
       <!--

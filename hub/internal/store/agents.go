@@ -33,6 +33,8 @@ type AgentRecord struct {
 	DisplayName string
 	// Note 是自由备注，给人读，不参与任何筛选或权限判断。
 	Note string
+	// DirectAddress是管理员指定的浏览器访问主机，不参与Agent连接和服务端网络请求。
+	DirectAddress string
 	// Disabled 为真时，该 Agent 的握手请求会被拒绝。
 	Disabled bool
 
@@ -49,7 +51,7 @@ type AgentRecord struct {
 // 列清单常量：集中在一处，避免 List 与 Get 两处的列顺序不一致
 // 导致 Scan 参数错位（这类 bug 编译期发现不了，只在运行时把字段串到一起）。
 const agentColumns = `id, name, status, version, runtime, runtime_version, last_seen, labels,
-	created_at, updated_at, display_name, note, disabled, preprovisioned`
+	created_at, updated_at, display_name, note, disabled, preprovisioned, direct_address`
 
 // scanAgent 把一行扫描进 AgentRecord。
 //
@@ -64,7 +66,7 @@ func scanAgent(sc interface {
 	var preprovisioned int
 	if err := sc.Scan(&rec.ID, &rec.Name, &rec.Status, &rec.Version, &rec.Runtime,
 		&rec.RuntimeVersion, &rec.LastSeen, &labelsRaw, &rec.CreatedAt, &rec.UpdatedAt,
-		&rec.DisplayName, &rec.Note, &disabled, &preprovisioned); err != nil {
+		&rec.DisplayName, &rec.Note, &disabled, &preprovisioned, &rec.DirectAddress); err != nil {
 		return AgentRecord{}, err
 	}
 	rec.Labels = parseLabels(labelsRaw)

@@ -147,6 +147,8 @@ func RegisterDefaultsWithTransfer(reg *Registry, rt runtime.Runtime, composeMgr 
 	reg.Register(envelope.LocalMethodContainerRestart, newRestartHandler(rt))
 	reg.Register(envelope.LocalMethodContainerRemove, newRemoveHandler(rt))
 	reg.Register(envelope.LocalMethodContainerLogs, newLogsHandler(rt))
+	// 容器详情：只读，能力由可选接口决定；引擎不支持时处理器内返回 unsupported。
+	reg.Register(envelope.MethodContainerInspect, newInspectHandler(rt))
 
 	// 镜像 / 网络 / 存储卷：纯代理能力，只要有运行时就能提供。
 	reg.Register(envelope.MethodImageList, newImageListHandler(rt))

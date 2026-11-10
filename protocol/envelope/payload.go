@@ -62,7 +62,13 @@ type ContainerSummary struct {
 	// 手工 docker run 启动的容器没有该标签，此处为空字符串。
 	StackID string `json:"stack_id"`
 	Created int64  `json:"created"` // 创建时间 Unix 秒
-	Ports   string `json:"ports"`   // 端口映射摘要文本
+	Ports   string `json:"ports"`   // 端口映射摘要文本（兼容字段，给"一眼看"的场景）
+	// PublishedPorts 是结构化的实际端口发布（宿主机 → 容器）。
+	//
+	// 与上面 Ports 字符串**同时保留**：摘要文本兼容既有前端与日志阅读，
+	// 结构化数据用于排序、筛选与端口冲突判断（界面无法从字符串可靠地做这些）。
+	// 只含真正发布到宿主机的条目；容器内 EXPOSE 但未发布的端口不在此列。
+	PublishedPorts []PublishedPort `json:"published_ports,omitempty"`
 }
 
 // ContainerListResult 是容器列表应答。

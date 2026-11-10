@@ -73,10 +73,38 @@ func toSummary(c runtime.Container) envelope.ContainerSummary {
 		//
 		// 只取这一个标签，**不搬运整个 Labels**：标签里可能含用户
 		// 自定义的敏感信息，没有让它们进入协议的必要。
-		StackID: c.Labels[labelComposeProject],
-		Created: c.CreatedUnix,
-		Ports:   formatPorts(c.Ports),
+		StackID:        c.Labels[labelComposeProject],
+		Created:        c.CreatedUnix,
+		Ports:          formatPorts(c.Ports),
+		PublishedPorts: toPublishedPorts(c.Ports),
 	}
+}
+
+// toPublishedPorts 只挑出**真正发布到宿主机**的端口。
+//
+// 容器里 EXPOSE 但没发布到主机的端口没有宿主机端口，
+// 它们不属于"端口映射"，放在这里会让用户以为那个端口能从外面访问。
+func toPublishedPorts(ports []runtime.Port) []envelope.PublishedPort {
+	out := make([]envelope.PublishedPort, 0, len(ports))
+	for _, p := range ports {
+		if p.Public <= 0 || p.Public > 65535 {
+			continue
+		}
+		if p.Private <= 0 || p.Private > 65535 {
+			continue
+		}
+		proto := p.Type
+		if proto == "" {
+			proto = "tcp"
+		}
+		out = append(out, envelope.PublishedPort{
+			HostIP:        p.IP,
+			HostPort:      uint16(p.Public),
+			ContainerPort: uint16(p.Private),
+			Protocol:      proto,
+		})
+	}
+	return out
 }
 
 // shortID 截取短 ID；长度不足时原样返回（异常数据不 panic）。

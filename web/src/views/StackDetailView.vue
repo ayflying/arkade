@@ -15,7 +15,7 @@
  * compose.yml 一旦被覆盖，之前那人做的全部修改就丢了，
  * 所以这里宁可让用户重做一次也不要静默合并。
  */
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, h, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { NAlert, NButton, NDataTable, NInput, NTabPane, NTabs } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
@@ -427,12 +427,29 @@ function goBack(): void {
   void router.push({ name: 'agent-stacks', params: { id: agentId.value } })
 }
 
+/**
+ * 进入容器详情。
+ *
+ * stack ps 不返回端口，所以这个表只做名称入口，不加端口列——
+ * 加一列却无法给链接，反而让人以为端口功能坏了。
+ */
+function goContainerDetail(containerId: string): void {
+  const id = agentId.value
+  if (id === null || containerId === '') return
+  void router.push({ name: 'agent-container-detail', params: { id, containerId } })
+}
+
 const psColumns = computed<DataTableColumns<StackPsContainer>>(() => [
   {
     title: '名称',
     key: 'name',
     minWidth: 160,
-    render: (row) => row.name
+    render: (row) =>
+      h(
+        'a',
+        { class: 'arkade-link arkade-cell-mono', onClick: () => goContainerDetail(row.id) },
+        row.name
+      )
   },
   {
     title: '服务',

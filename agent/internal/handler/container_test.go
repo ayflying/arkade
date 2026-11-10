@@ -16,6 +16,58 @@ import (
 	"arkade/protocol/envelope"
 )
 
+// TestContainerSummaryPublishedPortsExcludeInternalOnly 验证只带已发布端口。
+//
+// 容器内 EXPOSE 但未映射到宿主机的端口（PublicPort=0）必须排除：
+// 否则用户会以为那个端口能从外面访问。
+func TestContainerSummaryPublishedPortsExcludeInternalOnly(t *testing.T) {
+	rt := &fakeRuntime{containers: []runtime.Container{
+		{
+			ID:   "eeeeeeeeeeeeeeeeeeee",
+			Name: "demo-web-1",
+			Ports: []runtime.Port{
+				{IP: "0.0.0.0", Private: 80, Public: 8080, Type: "tcp"},
+				{IP: "::", Private: 80, Public: 8080, Type: "tcp"},
+				{IP: "", Private: 443, Public: 0, Type: "tcp"},  // 仅暴露
+				{IP: "", Private: 9000, Public: 0, Type: "tcp"}, // 仅暴露
+			},
+		},
+	}}
+	h := newListHandler(rt)
+	res, err := h(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("不应失败: %v", err)
+	}
+	c := res.(envelope.ContainerListResult).Containers[0]
+
+	if len(c.PublishedPorts) != 2 {
+		t.Fatalf("只应有 2 条已发布端口，实际 %+v", c.PublishedPorts)
+	}
+	for _, p := range c.PublishedPorts {
+		if p.HostPort != 8080 || p.ContainerPort != 80 || p.Protocol != "tcp" {
+			t.Fatalf("端口字段不符: %+v", p)
+		}
+		if p.HostIP == "" {
+			t.Fatalf("已发布端口应有宿主 IP: %+v", p)
+		}
+	}
+	// 摘要字符串保持原样（兼容），仍能看到内部暴露的端口。
+	if !strings.Contains(c.Ports, "9000/tcp") {
+		t.Fatalf("兼容字段 Ports 应保持完整摘要，实际 %q", c.Ports)
+	}
+}
+
+// TestContainerSummaryNoPortsYieldsNilPublished 验证没有端口时不产生空切片。
+func TestContainerSummaryNoPortsYieldsNilPublished(t *testing.T) {
+	rt := &fakeRuntime{containers: []runtime.Container{{ID: "ffffffffffffffffffff", Name: "x"}}}
+	h := newListHandler(rt)
+	res, _ := h(context.Background(), nil)
+	c := res.(envelope.ContainerListResult).Containers[0]
+	if len(c.PublishedPorts) != 0 {
+		t.Fatalf("无端口时不应有条目: %+v", c.PublishedPorts)
+	}
+}
+
 // TestContainerSummaryStackIDFromComposeLabel 验证有 compose 项目标签时填进 StackID。
 func TestContainerSummaryStackIDFromComposeLabel(t *testing.T) {
 	rt := &fakeRuntime{containers: []runtime.Container{
