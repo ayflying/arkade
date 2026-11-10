@@ -41,8 +41,18 @@ func newComposeSourceHandler(rt runtime.Runtime) Handler {
 		if !ok {
 			return nil, envelope.NewError(envelope.CodeUnsupported, "当前引擎不支持读取编排配置来源")
 		}
+		// raw 模式走独立入口：它会允许 helper 读 0600/0700 的配置，
+		// 因此只用于用户显式发起的"查看/编辑"，自动接管永远走非 raw。
+		sourceFn := cap.RunComposeSource
+		if p.Raw {
+			rawCap, rok := rt.(runtime.ComposeSourceRawRuntime)
+			if !rok {
+				return nil, envelope.NewError(envelope.CodeUnsupported, "当前引擎不支持原样读取编排配置")
+			}
+			sourceFn = rawCap.RunComposeSourceRaw
+		}
 
-		content, err := cap.RunComposeSource(ctx, name)
+		content, err := sourceFn(ctx, name)
 		if err != nil {
 			// 预期内的"这个项目当前不能接管"必须作为 blocker 如实返回，
 			// 否则 Hub 只能显示"请检查版本/镜像/权限"这种通用提示，
@@ -61,12 +71,23 @@ func newComposeSourceHandler(rt runtime.Runtime) Handler {
 		if content != "" {
 			// 哈希只覆盖 content：本方法不读 .env。
 			hash := compose.HashProject(content, "")
-			// 返回前再过滤一次：导入后行为会变的写法在这里就明确列出。
 			blockers := compose.ScanImportSafety(content)
+
+			if p.Raw {
+				// raw：内容**总是**回传（用户要看/改的就是这份原文），
+				// 扫描结果只作为"能不能直接导入"的提示附带返回。
+				// env_file / build 这类写法因此不再挡住查看。
+				out.Content = content
+				out.ConfigHash = hash
+				for _, b := range blockers {
+					out.Blockers = append(out.Blockers, b.String())
+				}
+				return out, nil
+			}
+
 			if len(blockers) > 0 {
-				// 有阻塞时不回传内容：这份配置本来就不能接管，
-				// 把原文传上去只会让敏感内容在 Hub 多存一份，
-				// 而且前端拿到一份"不能用"的配置也没有意义。
+				// 非 raw（自动接管）：有阻塞时不回传内容。
+				// 这份配置本来就不能自动接管，原文上传只会让敏感内容多存一份。
 				for _, b := range blockers {
 					out.Blockers = append(out.Blockers, b.String())
 				}

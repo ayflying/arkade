@@ -87,6 +87,23 @@ function enterStacks(agentId: string): void {
   void router.push({ name: 'agent-stacks', params: { id: agentId } })
 }
 
+/**
+ * 直接进入某个未纳管外部项目的详情页。
+ *
+ * 未纳管项目现在能看容器、日志与配置草稿，所以点了应该直达详情，
+ * 而不是丢回列表再让人自己找一遍。
+ */
+function enterExternalStack(agentId: string, stackName: string): void {
+  if (stackName === '') {
+    enterStacks(agentId)
+    return
+  }
+  void router.push({
+    name: 'agent-stack-external-detail',
+    params: { id: agentId, name: stackName }
+  })
+}
+
 const agentColumns = computed<DataTableColumns<AgentOverview>>(() => [
   {
     title: '服务器',
@@ -322,7 +339,7 @@ onMounted(() => {
           class="problem-area__item"
         >
           <div class="problem-area__text">
-            以下编排存在于服务器上，但未登记在 Hub 中，因此无法通过 Arkade 管理：
+            以下编排存在于服务器上，但尚未登记。可进入外部项目查看容器、日志与配置草稿：
           </div>
           <div class="problem-area__tags">
             <n-tag
@@ -332,7 +349,7 @@ onMounted(() => {
               :bordered="false"
               type="info"
               class="problem-area__tag"
-              @click="enterStacks(item.agentId)"
+              @click="enterExternalStack(item.agentId, item.stackName)"
             >
               {{ item.agentName }} / {{ item.stackName }}
             </n-tag>

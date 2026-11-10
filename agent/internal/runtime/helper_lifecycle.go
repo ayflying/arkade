@@ -88,6 +88,23 @@ type helperSpec struct {
 	request []byte
 	// responsePath 是结果文件在容器内的路径。
 	responsePath string
+	// readSearch 为 true 时给 helper 加 DAC_READ_SEARCH capability。
+	//
+	// ============================ 为什么需要它 ============================
+	//
+	// helper 是 User:0:0 + CapDrop ALL，即**没有 DAC_OVERRIDE**。
+	// 因此宿主上 0600/0700 的编排文件在 helper 里会读失败，
+	// 而我们绝不能替用户 chmod（那是改别人的文件）。
+	//
+	// DAC_READ_SEARCH 只绕过"读/目录遍历"的权限检查，不授予写、不授予
+	// 改变属主、也不扩大挂载范围——挂什么仍然只能读到什么。
+	//
+	// ============================ 为什么只给 raw 路径 ============================
+	//
+	// 自动接管(auto)不应该有"悄悄读走 0600 配置"的能力；
+	// 只有用户显式发起"查看/编辑这个项目"时才需要。因此这个开关
+	// 只能由 RunComposeSourceRaw 设置，其余 helper（卷文件、auto 接管）都保持 false。
+	readSearch bool
 }
 
 // runHelper 执行一次完整的 helper 生命周期并返回结果文件内容。
@@ -132,6 +149,12 @@ func (e *engine) runHelper(ctx context.Context, spec helperSpec) ([]byte, error)
 // createHelper 创建 helper 容器并返回其 ID。
 func (e *engine) createHelper(ctx context.Context, imageID string, spec helperSpec) (string, error) {
 	pids := int64(64)
+	// CapAdd 默认是 nil（即 CapDrop ALL 之后不再加回任何能力）。
+	// 只有 raw 读取路径会加 DAC_READ_SEARCH，其余一律保持空。
+	var capAdd []string
+	if spec.readSearch {
+		capAdd = []string{"DAC_READ_SEARCH"}
+	}
 	cfg := helperContainerConfig{
 		Image: imageID,
 		// Entrypoint 显式固定：基础镜像自带 ENTRYPOINT（alpine 是 /bin/sh）
@@ -150,6 +173,7 @@ func (e *engine) createHelper(ctx context.Context, imageID string, spec helperSp
 			AutoRemove:     false, // 自己删，便于失败时读日志
 			NetworkMode:    "none",
 			CapDrop:        []string{"ALL"},
+			CapAdd:         capAdd,
 			SecurityOpt:    []string{"no-new-privileges"},
 			Tmpfs:          map[string]string{"/tmp": "rw,noexec,nosuid,size=16m"},
 			Memory:         192 << 20,

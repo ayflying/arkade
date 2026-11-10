@@ -25,6 +25,14 @@ const (
 // shortIDLen 是列表展示用的短 ID 长度，与 docker CLI 习惯一致。
 const shortIDLen = 12
 
+// labelComposeProject 是 compose 自己写在容器上的项目名标签。
+//
+// 这里是**字面量**而不是引用 runtime/compose 包的常量：
+// 那两处常量都是包内小写（外部不可见），为这一个字符串导出它们
+// 会让两个包的可见面变大，收益却只有一行。该标签是 Docker/Compose
+// 官方约定而非我们的发明，字面量是安全的。
+const labelComposeProject = "com.docker.compose.project"
+
 // listHandler 处理 container.list。
 //
 // 载荷：无（nil / null）。
@@ -51,12 +59,21 @@ func newListHandler(rt runtime.Runtime) Handler {
 // 看到的是同一份数据形态，不需要前端各自实现一遍格式化。
 func toSummary(c runtime.Container) envelope.ContainerSummary {
 	return envelope.ContainerSummary{
-		ID:      shortID(c.ID),
-		Name:    c.Name,
-		Image:   c.Image,
-		State:   c.State,
-		Status:  c.Status,
-		Origin:  originDiscovered,
+		ID:     shortID(c.ID),
+		Name:   c.Name,
+		Image:  c.Image,
+		State:  c.State,
+		Status: c.Status,
+		Origin: originDiscovered,
+		// StackID 填 compose 项目名（不是 Hub 数据库里的 ID）。
+		//
+		// 用户反馈的真实缺口：外部项目的详情页需要按项目把所有容器
+		// 归到一组，而 Hub 侧只有容器列表可用。这个值就是那个关联键。
+		// 手工 docker run 起的容器没有该标签，保持空字符串。
+		//
+		// 只取这一个标签，**不搬运整个 Labels**：标签里可能含用户
+		// 自定义的敏感信息，没有让它们进入协议的必要。
+		StackID: c.Labels[labelComposeProject],
 		Created: c.CreatedUnix,
 		Ports:   formatPorts(c.Ports),
 	}

@@ -36,6 +36,87 @@ type archiveCapture struct {
 	types   map[string]byte
 	bodies  map[string][]byte
 	archive string
+	// capAdd 记录建容器请求里的 HostConfig.CapAdd。
+	capAdd    []string
+	sawCreate bool
+}
+
+// capAddEngine 构造一个会记录 CapAdd 的假引擎。
+func capAddEngine(t *testing.T, cap *archiveCapture) *engine {
+	t.Helper()
+	return newTestEngine(t, func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
+		switch {
+		case strings.Contains(p, "/images/"):
+			_, _ = w.Write([]byte(`{"Id":"sha256:deadbeef"}`))
+		case strings.HasSuffix(p, "/containers/create"):
+			var body struct {
+				HostConfig struct {
+					CapAdd  []string `json:"CapAdd"`
+					CapDrop []string `json:"CapDrop"`
+				} `json:"HostConfig"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			cap.mu.Lock()
+			cap.capAdd = body.HostConfig.CapAdd
+			cap.sawCreate = true
+			cap.mu.Unlock()
+			_, _ = w.Write([]byte(`{"Id":"cid-1"}`))
+		case strings.HasSuffix(p, "/archive") && r.Method == http.MethodPut:
+			_, _ = io.Copy(io.Discard, r.Body)
+			w.WriteHeader(http.StatusOK)
+		case strings.HasSuffix(p, "/start"):
+			w.WriteHeader(http.StatusNoContent)
+		case strings.HasSuffix(p, "/containers/cid-1/json"):
+			_, _ = w.Write([]byte(`{"State":{"Running":false,"ExitCode":0}}`))
+		case strings.HasSuffix(p, "/wait"):
+			_, _ = w.Write([]byte(`{"StatusCode":0}`))
+		case strings.HasSuffix(p, "/archive") && r.Method == http.MethodGet:
+			copyTar(w, "response.json", []byte(`{"ok":true}`))
+		case r.Method == http.MethodDelete:
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+}
+
+// TestHelperCapAddOnlyForRawSource 验证 DAC_READ_SEARCH **只**在 raw 路径加。
+//
+// 自动接管不应该有"悄悄读走 0600 配置"的能力；只有用户显式查看/编辑才需要。
+func TestHelperCapAddOnlyForRawSource(t *testing.T) {
+	// 非 raw：CapAdd 必须为空。
+	var plain archiveCapture
+	e := capAddEngine(t, &plain)
+	if _, err := e.runHelper(context.Background(), helperSpec{
+		cmd:          []string{"compose-source-helper"},
+		request:      []byte(`{}`),
+		responsePath: "/response.json",
+		readSearch:   false,
+	}); err != nil {
+		t.Fatalf("非 raw 不应失败: %v", err)
+	}
+	if !plain.sawCreate {
+		t.Fatal("应发出建容器请求")
+	}
+	if len(plain.capAdd) != 0 {
+		t.Fatalf("非 raw 不得加任何 capability，实际 %v", plain.capAdd)
+	}
+
+	// raw：必须加 DAC_READ_SEARCH。
+	var raw archiveCapture
+	e2 := capAddEngine(t, &raw)
+	if _, err := e2.runHelper(context.Background(), helperSpec{
+		cmd:          []string{"compose-source-helper"},
+		request:      []byte(`{}`),
+		responsePath: "/response.json",
+		readSearch:   true,
+	}); err != nil {
+		t.Fatalf("raw 不应失败: %v", err)
+	}
+	if len(raw.capAdd) != 1 || raw.capAdd[0] != "DAC_READ_SEARCH" {
+		t.Fatalf("raw 应只加 DAC_READ_SEARCH，实际 %v", raw.capAdd)
+	}
 }
 
 // helperWireEngine 构造一个假引擎：

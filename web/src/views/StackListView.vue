@@ -161,7 +161,16 @@ const unmanagedColumns = computed<DataTableColumns<ExternalStack>>(() => [
     title: '编排名',
     key: 'name',
     minWidth: 180,
-    render: (row) => h('span', { class: 'arkade-cell-mono' }, row.name)
+    /*
+     * 名称可点击进详情：外部项目现在能看容器/日志/配置，
+     * 不再只是「展示一下」。之前整张表没有入口，用户没有任何办法看到细节。
+     */
+    render: (row) =>
+      h(
+        'a',
+        { class: 'arkade-link arkade-cell-mono', onClick: () => goExternalDetail(row.name) },
+        row.name
+      )
   },
   {
     title: '状态',
@@ -266,9 +275,17 @@ function goDetail(row: StackSummary): void {
   })
 }
 
-/** 去新建页 */
-function goCreate(): void {
+/** 进入外部项目详情 */
+function goExternalDetail(name: string): void {
   if (agentId.value === null) return
+  void router.push({
+    name: 'agent-stack-external-detail',
+    params: { id: agentId.value, name }
+  })
+}
+
+/** 去新建页 */
+function goCreate(): void {  if (agentId.value === null) return
   void router.push({ name: 'agent-stack-create', params: { id: agentId.value } })
 }
 

@@ -60,6 +60,18 @@ type ComposeSourceRuntime interface {
 	RunComposeSource(ctx context.Context, name string) (string, error)
 }
 
+// ComposeSourceRawRuntime 是"原样读取"能力（未接管项目的查看/编辑）。
+//
+// 单独一个接口而不是给 ComposeSourceRuntime 加方法：
+// 这样已实现的 mock 不需要改，旧版本调用路径行为完全不变。
+type ComposeSourceRawRuntime interface {
+	// RunComposeSourceRaw 与 RunComposeSource 读取同样的内容，
+	// 但会给 helper 加 DAC_READ_SEARCH，以读取 0600/0700 的配置。
+	//
+	// 只在用户显式查看/编辑某个项目时使用；自动接管永远走非 raw 路径。
+	RunComposeSourceRaw(ctx context.Context, name string) (string, error)
+}
+
 // SourceBlockerError 表示"这个项目现在不能被接管"，而不是"这次调用失败了"。
 //
 // ============================ 为什么要区分这两件事 ============================
@@ -106,7 +118,23 @@ type composeSourceRequest struct {
 //
 // 返回的是原始 compose 内容与哈希；安全扫描由上层（handler）再做一次过滤，
 // 这样 runtime 层不必知道 compose 的语义规则。
-func (e *engine) RunComposeSource(ctx context.Context, name string) (content string, err error) {
+//
+// 这是**自动接管**路径：helper 不加任何额外 capability。
+func (e *engine) RunComposeSource(ctx context.Context, name string) (string, error) {
+	return e.runComposeSource(ctx, name, false)
+}
+
+// RunComposeSourceRaw 是显式查看/编辑路径：允许 helper 读取 0600/0700 的配置。
+//
+// 与 RunComposeSource 的唯一差别是给 helper 加 DAC_READ_SEARCH；
+// 挂载范围、no-follow、nlink 校验、只读挂载**完全不变**，
+// 因此它仍然是"只能读到那一个挂载目录里的文件"。
+func (e *engine) RunComposeSourceRaw(ctx context.Context, name string) (string, error) {
+	return e.runComposeSource(ctx, name, true)
+}
+
+// runComposeSource 是两条公开入口的共同实现。
+func (e *engine) runComposeSource(ctx context.Context, name string, readSearch bool) (content string, err error) {
 	if strings.TrimSpace(name) == "" {
 		return "", errors.New("编排项目名不能为空")
 	}
@@ -132,6 +160,8 @@ func (e *engine) RunComposeSource(ctx context.Context, name string) (content str
 		mounts:       []helperMount{readonlyBind(workDir, sourceMountPoint)},
 		request:      reqJSON,
 		responsePath: helperSourceResponsePath,
+		// 只有 raw 路径会加 DAC_READ_SEARCH。
+		readSearch: readSearch,
 	})
 	if err != nil {
 		return "", err

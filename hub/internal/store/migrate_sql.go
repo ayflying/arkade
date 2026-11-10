@@ -234,4 +234,14 @@ var migrations = []migration{
 			`ALTER TABLE compose_stacks ADD COLUMN env_content TEXT NOT NULL DEFAULT ''`,
 		},
 	},
+	{
+		version: 8,
+		name:    "外部编排独立草稿",
+		stmts: []string{
+			`CREATE TABLE external_compose_drafts (
+				agent_id TEXT NOT NULL, name TEXT NOT NULL, content TEXT NOT NULL,
+				source_hash TEXT NOT NULL, version INTEGER NOT NULL, updated_at BIGINT NOT NULL,
+				PRIMARY KEY (agent_id, name))`,
+		},
+	},
 }

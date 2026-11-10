@@ -27,10 +27,14 @@ const (
 	ActionContainerRemove  = "container.remove"
 
 	// 编排
-	ActionStackCreate = "stack.create"
-	ActionStackUpdate = "stack.update"
-	ActionStackDelete = "stack.delete"
-	ActionStackAction = "stack.action"
+	ActionStackCreate     = "stack.create"
+	ActionStackUpdate     = "stack.update"
+	ActionStackDelete     = "stack.delete"
+	ActionStackAction     = "stack.action"
+	ActionStackDraft      = "stack.draft"
+	ActionStackPreview    = "stack.preview"
+	ActionStackAdopt      = "stack.adopt"
+	ActionStackCopyConfig = "stack.copy_config"
 
 	// 资源
 	ActionImagePull     = "image.pull"
@@ -85,10 +89,14 @@ var labels = map[string]string{
 	ActionContainerRestart: "重启容器",
 	ActionContainerRemove:  "删除容器",
 
-	ActionStackCreate: "创建编排",
-	ActionStackUpdate: "修改编排",
-	ActionStackDelete: "删除编排",
-	ActionStackAction: "操作编排",
+	ActionStackCreate:     "创建编排",
+	ActionStackUpdate:     "修改编排",
+	ActionStackDelete:     "删除编排",
+	ActionStackAction:     "操作编排",
+	ActionStackDraft:      "保存外部编排草稿",
+	ActionStackPreview:    "预检外部编排登记",
+	ActionStackAdopt:      "登记外部编排",
+	ActionStackCopyConfig: "复制编排配置",
 
 	ActionImagePull:     "提交镜像拉取",
 	ActionImageExport:   "提交镜像导出",

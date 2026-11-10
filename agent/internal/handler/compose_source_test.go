@@ -41,6 +41,119 @@ func runSource(t *testing.T, rt runtime.Runtime, name string) *envelope.Envelope
 	})
 }
 
+// composeSourceRawFake 同时实现 raw 能力，并记录走了哪条路径。
+type composeSourceRawFake struct {
+	fakeRuntime
+	content    string
+	rawCalled  bool
+	autoCalled bool
+	rawErr     error
+}
+
+func (f *composeSourceRawFake) RunComposeSource(context.Context, string) (string, error) {
+	f.autoCalled = true
+	return f.content, nil
+}
+
+func (f *composeSourceRawFake) RunComposeSourceRaw(context.Context, string) (string, error) {
+	f.rawCalled = true
+	if f.rawErr != nil {
+		return "", f.rawErr
+	}
+	return f.content, nil
+}
+
+// runSourceRaw 用指定 raw 标志调用处理器。
+func runSourceRaw(t *testing.T, rt runtime.Runtime, name string, raw bool) *envelope.Envelope {
+	t.Helper()
+	reg := NewRegistry()
+	reg.Register(envelope.MethodComposeSource, newComposeSourceHandler(rt))
+	reqPayload, _ := json.Marshal(envelope.ComposeSourcePayload{Name: name, Raw: raw})
+	return reg.Dispatch(context.Background(), &envelope.Envelope{
+		V: envelope.Version, ID: "t", Type: envelope.TypeRequest,
+		Method: envelope.MethodComposeSource, Payload: reqPayload,
+	})
+}
+
+// buildCompose 是含 env_file / build 的编排：自动接管会拒，但用户仍应能看。
+const buildCompose = "services:\n  web:\n    build: ./web\n    env_file: ./app.env\n"
+
+// TestRawReturnsContentDespiteBlockers 验证 raw 模式下**总是**返回内容。
+func TestRawReturnsContentDespiteBlockers(t *testing.T) {
+	f := &composeSourceRawFake{content: buildCompose}
+	resp := runSourceRaw(t, f, "demo", true)
+	if resp.Error != nil {
+		t.Fatalf("不应失败: %+v", resp.Error)
+	}
+	var out envelope.ComposeSourceResult
+	if err := envelope.DecodePayload(resp, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Content != buildCompose {
+		t.Fatalf("raw 必须回传原文，实际长度 %d", len(out.Content))
+	}
+	if !f.rawCalled || f.autoCalled {
+		t.Fatalf("raw 必须走 RunComposeSourceRaw（raw=%v auto=%v）", f.rawCalled, f.autoCalled)
+	}
+	// 仍要附带安全提示（便于前端显示"不能直接导入"）。
+	if len(out.Blockers) == 0 {
+		t.Fatal("raw 仍应附带安全提示")
+	}
+	if out.ConfigHash == "" {
+		t.Fatal("raw 也应给出哈希")
+	}
+}
+
+// TestAutoStillOmitsContentWhenBlocked 验证非 raw 行为完全不变。
+func TestAutoStillOmitsContentWhenBlocked(t *testing.T) {
+	f := &composeSourceRawFake{content: buildCompose}
+	resp := runSourceRaw(t, f, "demo", false)
+	if resp.Error != nil {
+		t.Fatalf("不应失败: %+v", resp.Error)
+	}
+	var out envelope.ComposeSourceResult
+	if err := envelope.DecodePayload(resp, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Content != "" {
+		t.Fatalf("非 raw 有阻塞时必须不回传内容，实际 %d 字节", len(out.Content))
+	}
+	if len(out.Blockers) == 0 {
+		t.Fatal("应给出阻塞原因")
+	}
+	if !f.autoCalled || f.rawCalled {
+		t.Fatalf("非 raw 必须走 RunComposeSource（raw=%v auto=%v）", f.rawCalled, f.autoCalled)
+	}
+}
+
+// TestRawAndAutoAgreeOnCleanConfig 验证无阻塞配置下两者结果一致。
+func TestRawAndAutoAgreeOnCleanConfig(t *testing.T) {
+	const clean = "services:\n  web:\n    image: nginx:alpine\n"
+	for _, raw := range []bool{true, false} {
+		f := &composeSourceRawFake{content: clean}
+		resp := runSourceRaw(t, f, "demo", raw)
+		var out envelope.ComposeSourceResult
+		if err := envelope.DecodePayload(resp, &out); err != nil {
+			t.Fatal(err)
+		}
+		if out.Content != clean {
+			t.Fatalf("raw=%v 干净配置应回传内容", raw)
+		}
+		if len(out.Blockers) != 0 {
+			t.Fatalf("raw=%v 不应有阻塞: %v", raw, out.Blockers)
+		}
+	}
+}
+
+// TestRawUnsupportedOnOldEngine 验证引擎不支持 raw 时给出 unsupported。
+func TestRawUnsupportedOnOldEngine(t *testing.T) {
+	// composeSourceFake 只实现非 raw 接口。
+	resp := runSourceRaw(t, &composeSourceFake{content: "x"}, "demo", true)
+	if resp.Error == nil || resp.Error.Code != envelope.CodeUnsupported {
+		t.Fatalf("期望 unsupported，实际 %+v", resp.Error)
+	}
+}
+
 // TestComposeSourceReturnsContentAndHash 验证正常配置回传内容与哈希。
 func TestComposeSourceReturnsContentAndHash(t *testing.T) {
 	const cfg = "services:\n  web:\n    image: nginx:alpine\n"

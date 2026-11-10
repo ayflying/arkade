@@ -48,6 +48,14 @@ const agentChildRoutes: RouteRecordRaw[] = [
     meta: { title: '新建编排' }
   },
   {
+    // 必须放在 stacks/:name 之前：否则 'external' 会被当成编排名匹配
+    path: 'stacks/external/:name',
+    name: 'agent-stack-external-detail',
+    component: () => import('@/views/ExternalStackDetailView.vue'),
+    props: true,
+    meta: { title: '外部编排' }
+  },
+  {
     // 注意：放在 stacks/new 之后，避免 'new' 被当成编排名匹配
     path: 'stacks/:name',
     name: 'agent-stack-detail',

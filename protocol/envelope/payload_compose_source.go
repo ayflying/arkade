@@ -26,6 +26,15 @@ package envelope
 type ComposeSourcePayload struct {
 	// Name 是 compose 项目名（来自容器标签 com.docker.compose.project）。
 	Name string `json:"name"`
+	// Raw 为 true 时只做"原样读取"，用于未接管项目的查看/编辑：
+	// 不因 env_file / build / 相对挂载等写法而拒绝返回内容。
+	//
+	// 默认 false 保持既有行为（auto/manage 路径），即 ScanImportSafety
+	// 判定有阻塞时不返回 Content，只给原因。
+	//
+	// 注意：Raw 只影响"是否回传内容"，**不改变安全边界**——
+	// 挂载范围、no-follow、nlink 校验、只读挂载全部照旧。
+	Raw bool `json:"raw,omitempty"`
 }
 
 // ComposeSourceResult 是读出的一份编排配置。

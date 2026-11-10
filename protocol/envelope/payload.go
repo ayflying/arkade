@@ -49,15 +49,20 @@ type HeartbeatPayload struct {
 
 // ContainerSummary 是容器列表项。只保留界面需要的字段，不搬运运行时全量结构。
 type ContainerSummary struct {
-	ID      string `json:"id"`       // 短 ID（12 位），足够界面展示与后续操作
-	Name    string `json:"name"`     // 容器名（去掉运行时添加的前导斜杠）
-	Image   string `json:"image"`    // 镜像引用
-	State   string `json:"state"`    // running / exited / paused / created …
-	Status  string `json:"status"`   // 人类可读状态文本
-	Origin  string `json:"origin"`   // arkade / adopted / discovered，见 01 架构 4.2
-	StackID string `json:"stack_id"` // 所属编排 ID；接管外部容器时可能为空
-	Created int64  `json:"created"`  // 创建时间 Unix 秒
-	Ports   string `json:"ports"`    // 端口映射摘要文本
+	ID     string `json:"id"`     // 短 ID（12 位），足够界面展示与后续操作
+	Name   string `json:"name"`   // 容器名（去掉运行时添加的前导斜杠）
+	Image  string `json:"image"`  // 镜像引用
+	State  string `json:"state"`  // running / exited / paused / created …
+	Status string `json:"status"` // 人类可读状态文本
+	Origin string `json:"origin"` // arkade / adopted / discovered，见 01 架构 4.2
+	// StackID 是**兼容字段名**，实际填的是 compose 项目名
+	// （容器标签 com.docker.compose.project），不是 Hub 数据库里的编排 ID。
+	//
+	// 名字沿用是为了不破坏既有前端与测试的字段引用。
+	// 手工 docker run 启动的容器没有该标签，此处为空字符串。
+	StackID string `json:"stack_id"`
+	Created int64  `json:"created"` // 创建时间 Unix 秒
+	Ports   string `json:"ports"`   // 端口映射摘要文本
 }
 
 // ContainerListResult 是容器列表应答。

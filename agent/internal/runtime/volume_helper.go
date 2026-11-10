@@ -83,17 +83,20 @@ type helperNetworkConfig struct {
 
 type helperHostConfig struct {
 	// ReadOnlyRootfs 必须为 false：注入二进制需要写容器根。
-	ReadOnlyRootfs bool              `json:"ReadOnlyRootfs"`
-	Privileged     bool              `json:"Privileged"`
-	AutoRemove     bool              `json:"AutoRemove"`
-	NetworkMode    string            `json:"NetworkMode"`
-	CapDrop        []string          `json:"CapDrop"`
-	SecurityOpt    []string          `json:"SecurityOpt"`
-	Tmpfs          map[string]string `json:"Tmpfs"`
-	Memory         int64             `json:"Memory"`
-	NanoCpus       int64             `json:"NanoCpus"`
-	PidsLimit      *int64            `json:"PidsLimit"`
-	Mounts         []helperMount     `json:"Mounts"`
+	ReadOnlyRootfs bool     `json:"ReadOnlyRootfs"`
+	Privileged     bool     `json:"Privileged"`
+	AutoRemove     bool     `json:"AutoRemove"`
+	NetworkMode    string   `json:"NetworkMode"`
+	CapDrop        []string `json:"CapDrop"`
+	// CapAdd 在 CapDrop ALL 之后加回指定能力。
+	// 目前只有 raw 编排读取会给 DAC_READ_SEARCH，其余 helper 保持空。
+	CapAdd      []string          `json:"CapAdd,omitempty"`
+	SecurityOpt []string          `json:"SecurityOpt"`
+	Tmpfs       map[string]string `json:"Tmpfs"`
+	Memory      int64             `json:"Memory"`
+	NanoCpus    int64             `json:"NanoCpus"`
+	PidsLimit   *int64            `json:"PidsLimit"`
+	Mounts      []helperMount     `json:"Mounts"`
 }
 
 type helperMount struct {
