@@ -44,6 +44,10 @@ func Open(ctx context.Context, path string) (*DB, error) {
 		_ = sqlDB.Close()
 		return nil, err
 	}
+	if err := db.PruneAuditCount(ctx); err != nil {
+		_ = sqlDB.Close()
+		return nil, fmt.Errorf("清理超限审计记录失败: %w", err)
+	}
 	return db, nil
 }
 

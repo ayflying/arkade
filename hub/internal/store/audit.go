@@ -20,6 +20,9 @@ import (
 
 // 审计保留与清理相关常量集中在此，便于统一调整。
 const (
+	// AuditMaxRecords 是整张审计表的硬上限，不按用户或服务器分别计算。
+	AuditMaxRecords = 9999
+
 	// AuditRetentionDays 是审计记录保留天数。
 	//
 	// 90 天是运维复盘与合规审计的常见口径：足够覆盖一个季度的排查窗口，
@@ -61,9 +64,8 @@ const (
 //
 // 实现了 audit.Writer 接口。
 //
-// 本方法内部完成两件事：插入记录、按间隔触发过期清理。
-// 清理失败不影响插入结果——清理是维护动作，不该让一条本该记下的
-// 审计因为"删旧数据失败"而丢失。
+// 插入和9999条硬上限裁剪在同一事务完成；裁剪失败则回滚，不能宣称满足上限。
+// 90天过期清理仍按间隔旁路执行，它失败不影响本次提交。
 func (d *DB) WriteAudit(rec audit.Record) error {
 	ctx := context.Background()
 
@@ -78,15 +80,23 @@ func (d *DB) WriteAudit(rec audit.Record) error {
 		created = time.Now().UTC()
 	}
 
-	_, err := d.db.ExecContext(ctx,
-		`INSERT INTO audit_logs
+	err := d.Tx(ctx, func(tx *sqlTx) error {
+		_, err := tx.ExecContext(ctx,
+			`INSERT INTO audit_logs
 			(id, user_id, username, agent_id, agent_name, action, target, detail,
 			 result, error, duration_ms, created_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-		id, rec.UserID, rec.Username, rec.AgentID, rec.AgentName, rec.Action,
-		rec.Target, rec.Detail, rec.Result, rec.Error, rec.DurationMs,
-		created.Unix(),
-	)
+			id, rec.UserID, rec.Username, rec.AgentID, rec.AgentName, rec.Action,
+			rec.Target, rec.Detail, rec.Result, rec.Error, rec.DurationMs,
+			created.Unix(),
+		)
+		if err != nil {
+			return err
+		}
+		// 与插入同事务：并发写入及同秒记录也不能短暂突破已提交的条数上限。
+		_, err = tx.ExecContext(ctx, auditCountPruneSQL, AuditMaxRecords)
+		return err
+	})
 	if err != nil {
 		return fmt.Errorf("写入审计记录: %w", err)
 	}
