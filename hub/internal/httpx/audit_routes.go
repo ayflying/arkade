@@ -77,7 +77,8 @@ var auditRoutes = map[string]auditRoute{
 	},
 
 	// 异步拉取仅记录任务受理，不把202当作实际镜像更新成功；输出不入审计。
-	"/api/agents/{agentID}/stacks/{name}/pull-tasks": {Action: audit.ActionStackAction, TargetParam: "name"},
+	"/api/agents/{agentID}/stacks/{name}/pull-tasks":      {Action: audit.ActionStackAction, TargetParam: "name"},
+	"/api/agents/{agentID}/stacks/{name}/operation-tasks": {Action: audit.ActionStackAction, TargetParam: "name", SubAction: true},
 
 	// 外部项目只记录操作标识，不记录配置草稿或敏感正文。
 	"/api/agents/{agentID}/external-stacks/{name}/draft":         {Action: audit.ActionStackDraft, TargetParam: "name"},

@@ -80,8 +80,11 @@ func TestPullStartReturnsImmediately(t *testing.T) {
 	if snap.Status != PullQueued && snap.Status != PullRunning {
 		t.Fatalf("初始状态应为 queued/running，实际 %q", snap.Status)
 	}
-	if !strings.Contains(snap.Command, "compose") {
-		t.Fatalf("应展示真实命令: %q", snap.Command)
+	// queued 阶段不再预先填命令：只有第一条真实 command 事件到来时才展示。
+	// 这是刻意的——预先展示"预计命令"会在参数变化后与实际执行的不一致。
+	// 因此这里只在 running 时要求命令已可见。
+	if snap.Status == PullRunning && !strings.Contains(snap.Command, "compose") {
+		t.Fatalf("运行中应展示真实命令: %q", snap.Command)
 	}
 }
 
@@ -263,13 +266,20 @@ func TestPullRedactsInlineComposeSecret(t *testing.T) {
 	}
 }
 
-// TestPullRedactFailClosedOnBadEnv 验证 .env 无法解析时**不执行命令**并隐藏输出。
+// TestPullRedactFailClosedOnBadEnv 验证 .env 无法解析时**隐藏输出但业务继续**。
+//
+// ============================ 语义已变更（用户明确授权） ============================
+// 旧行为：脱敏不可用 → 不执行命令（fail-closed）。
+// 新行为：业务继续执行，仅把输出全部隐藏。
+//
+// 理由：日志脱敏是新一轮加的展示能力，不应该反过来阻止用户
+// 本来就能做的操作。安全边界从"不执行"改为"不泄露"。
 func TestPullRedactFailClosedOnBadEnv(t *testing.T) {
 	requireLinux(t)
 	marker := filepath.Join(t.TempDir(), "ran")
 	script := writeScript(t, "echo x >> "+marker+"\necho pulled\n")
 	m, p := newPullTestManager(t, script)
-	// 插值写法：我们无法确定真实值，必须 fail-closed。
+	// 插值写法：我们无法确定真实值，因此无法安全脱敏。
 	if _, _, err := m.ws.CommitProject("demo", "services:\n  web:\n    image: nginx\n",
 		"PASSWORD=${OTHER}\n"); err != nil {
 		t.Fatal(err)
@@ -277,17 +287,23 @@ func TestPullRedactFailClosedOnBadEnv(t *testing.T) {
 
 	snap, _ := p.StartPull("demo", "failclosed-request")
 	final := waitTerminal(t, p, snap.TaskID)
-	if final.Status != PullFailed {
-		t.Fatalf("应失败，实际 %q", final.Status)
+
+	// 业务必须继续：命令真的跑过。
+	if final.Status != PullSucceeded {
+		t.Fatalf("脱敏不可用不应阻止业务，实际 %q（%s）", final.Status, final.Error)
 	}
-	if !strings.Contains(final.Error, "无法安全读取") {
-		t.Fatalf("应给出脱敏不可用文案，实际 %q", final.Error)
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatal("业务必须继续执行（命令应已跑过）")
 	}
-	// 命令绝不能被执行。
-	if _, err := os.Stat(marker); err == nil {
-		t.Fatal("脱敏不可用时**不得**执行命令")
+	// 但输出必须被隐藏：不能出现任何原文。
+	joined := joinEvents(final.Output)
+	if strings.Contains(joined, "pulled") {
+		t.Fatalf("输出应被隐藏，却看到原文: %q", joined)
 	}
-	if len(final.Output) != 0 {
+	if !strings.Contains(joined, hideNoticeText) {
+		t.Fatalf("应给出固定的隐藏说明: %q", joined)
+	}
+	if len(final.Output) == 0 {
 		t.Fatalf("不应有任何输出: %+v", final.Output)
 	}
 }
@@ -351,13 +367,15 @@ func TestPullCursorIncremental(t *testing.T) {
 	snap, _ := p.StartPull("demo", "cursor-request")
 	final := waitTerminal(t, p, snap.TaskID)
 	all, _ := p.GetPull(snap.TaskID, 0)
-	if len(all.Output) != 3 {
-		t.Fatalf("应有 3 行，实际 %d", len(all.Output))
+	// 事件流现在是：1 条 command + 3 条 stdout = 4。
+	want := 4
+	if len(all.Output) != want {
+		t.Fatalf("应有 %d 个事件（1 条命令 + 3 行输出），实际 %d", want, len(all.Output))
 	}
-	// 用游标取第二行之后。
+	// 用游标取第一行之后：剩下 2 条 stdout + 1 条 command 之后的内容。
 	rest, _ := p.GetPull(snap.TaskID, all.Output[0].Seq)
-	if len(rest.Output) != 2 {
-		t.Fatalf("游标后应剩 2 行，实际 %d", len(rest.Output))
+	if len(rest.Output) != 3 {
+		t.Fatalf("游标后应剩 3 个事件，实际 %d", len(rest.Output))
 	}
 	_ = final
 }

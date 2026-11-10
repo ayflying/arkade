@@ -252,6 +252,9 @@ func RegisterDefaultsWithTransfer(reg *Registry, rt runtime.Runtime, composeMgr 
 	pullMgr := compose.NewPullManager(composeMgr, composeMgr.RootCtx)
 	reg.Register(envelope.MethodComposePullStart, newComposePullStartHandler(pullMgr))
 	reg.Register(envelope.MethodComposePullGet, newComposePullGetHandler(pullMgr))
+	// 编排动作任务：与 pull 共用同一个任务引擎实例。
+	reg.Register(envelope.MethodComposeOperationStart, newComposeOperationStartHandler(pullMgr))
+	reg.Register(envelope.MethodComposeOperationGet, newComposeOperationGetHandler(pullMgr))
 	reg.AddCloser(pullMgr.Close)
 	reg.Register(envelope.MethodComposeRebuild, newComposeRebuildHandler(composeMgr))
 	reg.Register(envelope.MethodComposeRemove, newComposeRemoveHandler(composeMgr))

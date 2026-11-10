@@ -369,7 +369,7 @@ func contains(s, sub string) bool {
 	return false
 }
 
-// TestMigrationVersionCurrent 验证迁移包含项目环境文件版本。
+// TestMigrationVersionCurrent 验证迁移包含编排操作元数据版本。
 //
 // 版本号写错会导致新库与旧库结构不一致，而两边测试都可能"各自通过"。
 func TestMigrationVersionCurrent(t *testing.T) {
@@ -379,7 +379,7 @@ func TestMigrationVersionCurrent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v != 9 {
-		t.Errorf("迁移版本应为 9，实际 %d", v)
+	if v != 10 {
+		t.Errorf("迁移版本应为 10，实际 %d", v)
 	}
 }

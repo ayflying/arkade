@@ -65,6 +65,12 @@ function track(runner) {
 const types = await loadTs('src/types/stackPullTask.ts')
 const { normalizePullTask, isConfirmedSuccess, normalizePullStatus, isTerminal } = types
 
+/** 动作元数据源（文案的唯一定义处） */
+const typesSrc = readFileSync(
+  join(here, '..', 'src', 'types', 'stackOperationTask.ts'),
+  'utf8'
+)
+
 let passed = 0
 const failures = []
 
@@ -187,9 +193,9 @@ function check(name, ok, detail) {
 
 /* ───────── 4. 输出合并 ───────── */
 
-const composableModule = await loadTs('src/composables/useStackPullTask.ts')
+const composableModule = await loadTs('src/composables/useStackOperationTask.ts')
 // 纯函数已抽到 utils/stackPullOutput.ts，从那里导入
-const outputModule = await loadTs('src/utils/stackPullOutput.ts')
+const outputModule = await loadTs('src/utils/stackOperationOutput.ts')
 const { mergeOutput, stripAnsi, byteLength, MAX_OUTPUT_BYTES, MAX_OUTPUT_EVENTS } = outputModule
 
 {
@@ -397,7 +403,14 @@ const { mergeOutput, stripAnsi, byteLength, MAX_OUTPUT_BYTES, MAX_OUTPUT_EVENTS 
     join(here, '..', 'src', 'components', 'stack', 'ManagedStackActions.vue'),
     'utf8'
   )
-  check('按钮: 仍叫「更新镜像」', /更新镜像/.test(actions))
+  /*
+   * 文案统一由 STACK_OPERATION_META 提供（按钮与弹窗共用，避免两处不一致），
+   * 组件里只渲染 meta.label，所以直接查 meta 源。
+   */
+  check(
+    '按钮: 仍叫「更新镜像」',
+    /label: '更新镜像'/.test(typesSrc) && /STACK_OPERATION_META\[action\]\.label/.test(actions)
+  )
   check(
     '按钮: 已不再用 runStackAction 执行 pull',
     !/action:\s*'pull'/.test(actions),
@@ -410,7 +423,14 @@ const { mergeOutput, stripAnsi, byteLength, MAX_OUTPUT_BYTES, MAX_OUTPUT_EVENTS 
     ),
     '一步到位方案下，说明放在弹窗内固定展示'
   )
-  check('按钮: 接入实时输出弹窗', /StackPullModal|stack-pull-modal/.test(actions))
+  /*
+   * 弹窗已从 pull 专用的 StackPullModal 泛化为 StackOperationModal，
+   * 所有编辑动作共用。这里接受两者任一，保证旧引用仍能通过。
+   */
+  check(
+    '按钮: 接入实时输出弹窗',
+    /StackPullModal|stack-pull-modal|StackOperationModal|stack-operation-modal/.test(actions)
+  )
 }
 
 /* ───────── 9. 状态机：连点不重复启动 ───────── */
@@ -420,7 +440,7 @@ const { mergeOutput, stripAnsi, byteLength, MAX_OUTPUT_BYTES, MAX_OUTPUT_EVENTS 
    * 用真实 composable + 假 API 驱动。这些时序 bug 在浏览器里
    * 很难稳定复现，但在这里可以精确断言。
    */
-  const { useStackPullTask } = composableModule
+  const { useStackOperationTask: useStackPullTask } = composableModule
 
   let startCalls = 0
   const seenRequestIds = []
@@ -501,7 +521,7 @@ const { mergeOutput, stripAnsi, byteLength, MAX_OUTPUT_BYTES, MAX_OUTPUT_EVENTS 
 /* ───────── 11. 断线不等于成功也不等于失败 ───────── */
 
 {
-  const { useStackPullTask } = composableModule
+  const { useStackOperationTask: useStackPullTask } = composableModule
   const mk = (over = {}) => ({
     task_id: 'T9',
     name: 'app',
@@ -591,7 +611,7 @@ const { mergeOutput, stripAnsi, byteLength, MAX_OUTPUT_BYTES, MAX_OUTPUT_EVENTS 
 /* ───────── 15. queued 不能显示成正在执行 ───────── */
 
 {
-  const { useStackPullTask } = composableModule
+  const { useStackOperationTask: useStackPullTask } = composableModule
   const mk = (over = {}) => ({
     task_id: 'Q1',
     name: 'app',
@@ -631,7 +651,7 @@ const { mergeOutput, stripAnsi, byteLength, MAX_OUTPUT_BYTES, MAX_OUTPUT_EVENTS 
 /* ───────── 16. 永久性错误不无限轮询 ───────── */
 
 {
-  const { useStackPullTask } = composableModule
+  const { useStackOperationTask: useStackPullTask } = composableModule
 
   const mk = (over = {}) => ({
     task_id: 'P1',
@@ -699,7 +719,7 @@ const { mergeOutput, stripAnsi, byteLength, MAX_OUTPUT_BYTES, MAX_OUTPUT_EVENTS 
 /* ───────── 17. 响应身份校验 ───────── */
 
 {
-  const { useStackPullTask } = composableModule
+  const { useStackOperationTask: useStackPullTask } = composableModule
   const mk = (over = {}) => ({
     task_id: 'ID-A',
     name: 'app-a',
@@ -734,7 +754,7 @@ const { mergeOutput, stripAnsi, byteLength, MAX_OUTPUT_BYTES, MAX_OUTPUT_EVENTS 
 /* ───────── 18. 游标单调 ───────── */
 
 {
-  const { useStackPullTask } = composableModule
+  const { useStackOperationTask: useStackPullTask } = composableModule
   const cursors = []
   let call = 0
   const mk = (over = {}) => ({
@@ -774,7 +794,7 @@ const { mergeOutput, stripAnsi, byteLength, MAX_OUTPUT_BYTES, MAX_OUTPUT_EVENTS 
 /* ───────── 19. 后端 truncated 也要提示 ───────── */
 
 {
-  const { useStackPullTask } = composableModule
+  const { useStackOperationTask: useStackPullTask } = composableModule
   const r = track(useStackPullTask({
     start: async () => ({
       task_id: 'TR',
@@ -813,7 +833,7 @@ const { mergeOutput, stripAnsi, byteLength, MAX_OUTPUT_BYTES, MAX_OUTPUT_EVENTS 
 /* ───────── 20. seq 缺口提示 ───────── */
 
 {
-  const { useStackPullTask } = composableModule
+  const { useStackOperationTask: useStackPullTask } = composableModule
   const r = track(useStackPullTask({
     start: async () => ({
       task_id: 'G1',
@@ -850,7 +870,7 @@ const { mergeOutput, stripAnsi, byteLength, MAX_OUTPUT_BYTES, MAX_OUTPUT_EVENTS 
 /* ───────── 21. reset 只允许在确认终态 ───────── */
 
 {
-  const { useStackPullTask } = composableModule
+  const { useStackOperationTask: useStackPullTask } = composableModule
   const mk = (over = {}) => ({
     task_id: 'RS',
     name: 'app',
@@ -897,7 +917,7 @@ const { mergeOutput, stripAnsi, byteLength, MAX_OUTPUT_BYTES, MAX_OUTPUT_EVENTS 
 /* ───────── 22. 关闭 during POST 不能当 idle ───────── */
 
 {
-  const { useStackPullTask } = composableModule
+  const { useStackOperationTask: useStackPullTask } = composableModule
   let resolveStart
   const r = track(useStackPullTask({
     start: () =>
@@ -954,7 +974,7 @@ const { mergeOutput, stripAnsi, byteLength, MAX_OUTPUT_BYTES, MAX_OUTPUT_EVENTS 
 /* ───────── 23. 启动被拒绝时错误必须可见（无任务） ───────── */
 
 {
-  const { useStackPullTask } = composableModule
+  const { useStackOperationTask: useStackPullTask } = composableModule
   const mkErr = (status) => {
     const e = new Error(`status ${String(status)}`)
     e.status = status
@@ -983,11 +1003,21 @@ const { mergeOutput, stripAnsi, byteLength, MAX_OUTPUT_BYTES, MAX_OUTPUT_EVENTS 
       r.errorText.value !== '',
       '空文案等于静默失败，用户点了没反应'
     )
-    check(
-      `启动${String(status)}: 不标记 uncertain`,
-      r.uncertain.value === false,
-      '明确的 HTTP 拒绝不是"不确定"'
-    )
+    /*
+     * 403 是服务端明确拒绝（不是"不确定"）；
+     * 503 则可能是 Agent 超时、任务其实已受理，属于"无法确认"，
+     * 必须让用户能同 key 重试确认，所以不允许断言"未执行"。
+     */
+    if (status === 403) {
+      check('启动403: 不标记 uncertain', r.uncertain.value === false, '明确拒绝不是不确定')
+    } else {
+      check('启动503: 标记为状态未知', r.uncertain.value === true)
+      check(
+        '启动503: 文案不含"未执行"',
+        !/未执行/.test(r.errorText.value),
+        r.errorText.value
+      )
+    }
     check(
       `启动${String(status)}: phase 不是 interrupted`,
       r.phase.value !== 'interrupted',
@@ -1020,7 +1050,7 @@ const { mergeOutput, stripAnsi, byteLength, MAX_OUTPUT_BYTES, MAX_OUTPUT_EVENTS 
 /* ───────── 24. 日志用换行拼接 ───────── */
 
 {
-  const { useStackPullTask } = composableModule
+  const { useStackOperationTask: useStackPullTask } = composableModule
   const r = track(
     useStackPullTask({
       start: async () => ({

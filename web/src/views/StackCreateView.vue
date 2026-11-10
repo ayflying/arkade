@@ -24,15 +24,37 @@ import type { FormInst, FormRules } from 'naive-ui'
 import PageHeader from '@/components/common/PageHeader.vue'
 import CodeEditor from '@/components/common/CodeEditor.vue'
 import StackEnvEditor from '@/components/stack/StackEnvEditor.vue'
-import { createStack } from '@/api/stacks'
+import StackOperationModal from '@/components/stack/StackOperationModal.vue'
 import { useCurrentAgent } from '@/composables/useCurrentAgent'
-import { ApiError } from '@/types/api'
-import { toastError, toastSuccess, toastWarning } from '@/utils/feedback'
+import { toastSuccess, toastWarning } from '@/utils/feedback'
 
 const router = useRouter()
 const { agentId, isOnline, displayName } = useCurrentAgent()
 
 const formRef = ref<FormInst | null>(null)
+/** 是否显示新建执行弹窗 */
+const createShow = ref(false)
+/** 创建任务已失败（配置很可能已入库）：引导去详情页部署，而不是重复 create */
+const createFailed = ref(false)
+  /**
+   * 创建任务是否正在执行。
+   *
+   * 弹窗按 pendingCreate 挂载，并绑定当前 agent/name。任务在跑时若切换
+   * 服务器或改名，会重新挂载弹窗、丢掉进行中的任务与 request_id。
+   * 所以期间锁住这些选择器。
+   */
+  const createBusy = ref(false)
+/**
+ * 待创建的快照。
+ *
+ * 弹窗执行期间用户可能继续编辑表单，但提交的必须是点「创建」那一刻的内容，
+ * 否则"确认的"和"执行的"不是同一个东西。
+ */
+const pendingCreate = ref<{
+  name: string
+  content: string
+  envContent: string
+} | null>(null)
 const submitting = ref(false)
 const submitError = ref('')
 
@@ -108,6 +130,19 @@ const lineCount = computed(() => form.value.content.split('\n').length)
 async function handleSubmit(): Promise<void> {
   if (agentId.value === null || submitting.value) return
 
+  /*
+   * 已有创建任务（无论还在跑、已失败、还是状态未知）→ **只重开查看**。
+   *
+   * 绝不能拿当前表单重新定格：form 里的 name/content 可能已经被改过，
+   * 用新参数配旧 request_id 会 409，用新 name 又会在错的名字下建东西。
+   * 放在表单校验之前：用户此时只是想看进度，表单改得对不对不重要。
+   * 只有在明确选择「新建另一个编排」且旧任务已终态时才会清空重来。
+   */
+  if (pendingCreate.value !== null) {
+    createShow.value = true
+    return
+  }
+
   // 先跑表单校验，不通过直接返回（NForm 会标红具体字段）
   try {
     await formRef.value?.validate()
@@ -115,40 +150,89 @@ async function handleSubmit(): Promise<void> {
     return
   }
 
-  submitting.value = true
   submitError.value = ''
-  try {
-    const res = await createStack(agentId.value, {
-      name: form.value.name.trim(),
-      content: form.value.content,
-      // .env 总是随创建一起提交（可为空串）：新建场景没有「保留旧值」的语义，
-      // 不传会让后端无法区分「没配」和「没给」
-      env_content: form.value.envContent
-    })
-
-    /*
-     * 必须检查 sync_ok：Agent 离线或下发失败时后端**不报错**，
-     * 而是返回 200 + sync_ok:false + sync_hint。
-     * 内容已经存进 Hub（不会丢用户写的东西），但服务器上还没生效。
-     * 若这里直接当成功提示，用户会以为已经部署好了。
-     */
-    if (res.sync_ok) {
-      toastSuccess('编排已创建并同步到服务器')
-    } else {
-      toastWarning(res.sync_hint ?? '编排已保存到 Hub，但尚未同步到服务器。')
-    }
-
-    // 创建成功后直接进详情页，用户可以立刻启动它
-    await router.replace({
-      name: 'agent-stack-detail',
-      params: { id: agentId.value, name: form.value.name.trim() }
-    })
-  } catch (err) {
-    submitError.value = err instanceof ApiError ? err.message : '创建编排失败'
-    toastError(submitError.value)
-  } finally {
-    submitting.value = false
+  /*
+   * 新建改走操作任务：Hub 在 create 成功持久化之后才返回 202，
+   * 之后由 Hub 注入 spec 下发并执行 up。
+   *
+   * **不在前端先 createStack 再 up**：两次请求之间可能失败，
+   * 留下「建了但没部署」的半成品，而且前端也无从知道该不该回滚。
+   */
+  pendingCreate.value = {
+    name: form.value.name.trim(),
+    content: form.value.content,
+    envContent: form.value.envContent
   }
+  createShow.value = true
+}
+
+/**
+ * 新建任务结束。
+ *
+ * 只有 `status === 'succeeded'` 才跳详情页——`202 已受理` 表示任务刚开始跑，
+ * 此时跳走会让用户以为建好了，实际可能还在失败中。
+ *
+ * 失败时**绝不能再走一次 create**。Hub 在返回 202 之前已经把配置持久化了，
+ * 编排已存在；再发 `create:true` 会被判定为「已存在」返回 409。
+ * 正确做法是引导用户去详情页用「启动/保存并部署」——那是幂等的 up。
+ */
+function handleCreateFinished(task: unknown): void {
+  const t = task as { status?: string; error?: string } | null
+  if (t?.status === 'succeeded') {
+    const created = pendingCreate.value
+    if (created === null || agentId.value === null) return
+    toastSuccess('编排已创建并部署')
+    void router.replace({
+      name: 'agent-stack-detail',
+      params: { id: agentId.value, name: created.name }
+    })
+    return
+  }
+
+  /*
+   * 失败：配置很可能已存进 Hub（Hub 先持久化再下发）。
+   * 给出明确出路而不是让用户重试"新建"——重试必然 409。
+   */
+  createFailed.value = true
+  const reason = t?.error !== undefined && t.error !== '' ? t.error : '部署阶段失败'
+  submitError.value = `编排可能已创建，但部署没有完成（${reason}）。请到详情页查看并重试部署。`
+  toastWarning('编排可能已创建但未部署，请到详情页重试部署。')
+}
+
+/**
+ * 关闭弹窗：**保留 pendingCreate**。
+ *
+ * 清空会让承载任务的弹窗实例失去 props、被条件渲染卸载，
+ * 任务与 request_id 一起丢掉；而且状态未知时重开会变成新任务。
+ */
+function handleCreateShow(value: boolean): void {
+  createShow.value = value
+}
+
+/** 失败后去详情页重试部署（那里是幂等的 up，不会重复创建） */
+function goDetailToDeploy(): void {
+  const created = pendingCreate.value
+  if (created === null || agentId.value === null) return
+  void router.replace({
+    name: 'agent-stack-detail',
+    params: { id: agentId.value, name: created.name }
+  })
+}
+
+/**
+ * 明确要建**另一个**编排。
+ *
+ * 只在旧任务已确认失败、且没有任务在跑时提供这个出口——
+ * 此时清空 pendingCreate 会让弹窗卸载，但那是一个已经结束的失败任务，
+ * 丢掉它没有代价；若任务还在跑或状态未知，绝不能清（那是放弃幂等）。
+ * 表单内容保留，用户改个名字就能继续用。
+ */
+function resetCreate(): void {
+  if (createBusy.value || !createFailed.value) return
+  createShow.value = false
+  pendingCreate.value = null
+  createFailed.value = false
+  submitError.value = ''
 }
 
 /** 返回列表 */
@@ -176,12 +260,20 @@ onUnmounted(() => {
       <template #actions>
         <n-button size="small" @click="goBack">返回列表</n-button>
         <n-button
+          v-if="pendingCreate !== null && createFailed && !createBusy"
+          size="small"
+          @click="resetCreate"
+        >
+          新建另一个编排
+        </n-button>
+        <n-button
           size="small"
           type="primary"
           :loading="submitting"
+          :disabled="createBusy"
           @click="handleSubmit"
         >
-          创建
+          {{ pendingCreate !== null ? '查看任务' : '创建' }}
         </n-button>
       </template>
     </page-header>
@@ -198,7 +290,16 @@ onUnmounted(() => {
       </n-alert>
     </div>
 
-    <div v-if="submitError !== ''" class="stack-create__alert">
+    <!-- 失败但编排可能已创建：给出唯一正确的出路，而不是让用户重试"新建"（必然 409） -->
+    <div v-if="createFailed" class="stack-create__alert">
+      <n-alert type="warning" closable @close="createFailed = false">
+        {{ submitError }}
+        <n-button text size="tiny" class="stack-create__goto" @click="goDetailToDeploy">
+          前往详情页重试部署
+        </n-button>
+      </n-alert>
+    </div>
+    <div v-if="submitError !== '' && !createFailed" class="stack-create__alert">
       <n-alert type="error" closable @close="submitError = ''">{{ submitError }}</n-alert>
     </div>
 
@@ -243,6 +344,31 @@ onUnmounted(() => {
           />
         </n-form-item>
       </n-form>
+
+    <!--
+      新建走操作任务：Hub 在 create 成功持久化之后才返回 202，
+      再由 Hub 注入 spec 下发执行 up。弹窗展示真实命令与实时输出。
+      成功后由 handleCreateFinished 跳详情页；失败留在本页并保留表单。
+    -->
+    <!--
+      常驻实例（不 v-if）：关闭仅隐藏。若用 v-if 卸载，进行中/未知状态的
+      创建任务连同 request_id 一起丢失，再点创建就可能重复执行。
+    -->
+    <stack-operation-modal
+      v-if="pendingCreate !== null"
+      :show="createShow"
+      :agent-id="agentId ?? ''"
+      :stack-name="pendingCreate?.name ?? ''"
+      action="up"
+      online
+      create
+      :content="pendingCreate?.content"
+      :env-content="pendingCreate?.envContent"
+      auto-start
+      @finished="handleCreateFinished"
+      @busy="createBusy = $event"
+      @update:show="handleCreateShow"
+    />
     </div>
   </div>
 </template>

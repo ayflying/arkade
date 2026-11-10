@@ -23,6 +23,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -172,7 +173,9 @@ func (r *Runner) Run(ctx context.Context, project string, timeout time.Duration,
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(runCtx, r.binary(), composeArgs(project, r.EnvFile, args...)...)
+	argv := composeArgs(project, r.EnvFile, args...)
+	full := append([]string{r.binary()}, argv...)
+	cmd := exec.CommandContext(runCtx, full[0], argv...)
 	cmd.Dir = r.Dir
 	cmd.Env = r.environ()
 
@@ -183,20 +186,55 @@ func (r *Runner) Run(ctx context.Context, project string, timeout time.Duration,
 		return killProcessGroup(cmd)
 	}
 
+	// 任务上下文里执行时，上报这条真实命令。
+	ob := observerFrom(ctx)
+	if ob != nil {
+		ob.command(full, r)
+	}
+
+	// ============================ 实时性 vs 字节精确 ============================
+	// 必须用 io.MultiWriter，让 cmd.Run **执行期间**就把输出推给观察者：
+	// 只在命令结束后补发，up/rebuild 这类长操作会长时间空白，
+	// 用户以为卡死了——这正是要解决的问题本身。
+	//
+	// stdout 写入顺序不变：MultiWriter 先写 &stdout（bytes.Buffer），
+	// 再写观察者。因此 Result.Stdout 的精确字节与没有观察者时**完全一致**
+	// （compose ps 的 JSON 解析依赖这一点）。
 	var stdout, stderr bytes.Buffer
+	if ob != nil {
+		outW := newStreamWriter(ob.stdout)
+		errW := newStreamWriter(ob.stderr)
+		cmd.Stdout = io.MultiWriter(&stdout, outW)
+		cmd.Stderr = io.MultiWriter(&stderr, errW)
+		err := cmd.Run()
+
+		// 补发两路各自残留的半行（os/exec 返回时已 copy 完毕）。
+		outW.Close()
+		errW.Close()
+		return r.finish(runCtx, timeout, err, stdout.String(), stderr.String())
+	}
+
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-
 	err := cmd.Run()
 
-	res := Result{Stdout: stdout.String(), ExitCode: 0}
+	return r.finish(runCtx, timeout, err, stdout.String(), stderr.String())
+}
+
+// finish 由 (ctx, timeout, err, stdout, stderr) 组装 Result。
+//
+// 抽出来是为了让"有观察者"与"无观察者"两条执行路径共用**同一套**
+// 结论逻辑——否则两条路径对超时/退出码的处理稍有偏差，就会出现
+// "在任务里跑和直接跑结果不一样"的诡异问题。
+func (r *Runner) finish(runCtx context.Context, timeout time.Duration, err error, outStr, errStr string) Result {
+	res := Result{Stdout: outStr, ExitCode: 0}
 
 	// 超时判定必须放在错误处理最前面：exec.CommandContext 超时时
 	// 杀掉进程并返回 "signal: killed"，那个错误文本对用户毫无意义。
 	if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
 		res.TimedOut = true
 		res.ExitCode = -1
-		res.Output = truncate(joinOutput(stdout.String(), stderr.String(), fmt.Sprintf("命令执行超时（%s）", timeout)))
+		res.Output = truncate(joinOutput(outStr, errStr, fmt.Sprintf("命令执行超时（%s）", timeout)))
 		return res
 	}
 
@@ -206,13 +244,13 @@ func (r *Runner) Run(ctx context.Context, project string, timeout time.Duration,
 		if errors.As(err, &exitErr) {
 			res.ExitCode = exitErr.ExitCode()
 		}
-		res.Output = truncate(joinOutput(stdout.String(), stderr.String(), err.Error()))
+		res.Output = truncate(joinOutput(outStr, errStr, err.Error()))
 		return res
 	}
 
 	// 成功：Output 取 stdout；若 stdout 为空而 stderr 有内容（compose 把进度
 	// 打到 stderr），也一并带上，否则用户看不到"拉了哪些镜像"这类有用信息。
-	res.Output = truncate(joinOutput(stdout.String(), stderr.String(), ""))
+	res.Output = truncate(joinOutput(outStr, errStr, ""))
 	return res
 }
 
@@ -342,7 +380,9 @@ func (r *Runner) RunStream(ctx context.Context, project string, timeout time.Dur
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(runCtx, r.binary(), composeArgs(project, r.EnvFile, args...)...)
+	argv := composeArgs(project, r.EnvFile, args...)
+	full := append([]string{r.binary()}, argv...)
+	cmd := exec.CommandContext(runCtx, full[0], argv...)
 	cmd.Dir = r.Dir
 	cmd.Env = r.environ()
 	// ============================ 必须杀整个进程组 ============================
@@ -357,17 +397,31 @@ func (r *Runner) RunStream(ctx context.Context, project string, timeout time.Dur
 		return killProcessGroup(cmd)
 	}
 
+	// 任务上下文里执行时，把输出同时旁路给观察者。
+	//
+	// 用函数组合而不是在回调里判断：sink 与 observer 是两条独立的
+	// 消费路径，任一为 nil 都不影响另一条，也不会让"有没有观察者"
+	// 改变 sink 的调用时序。
+	ob := observerFrom(ctx)
+	var out sinkFn = sink.Stdout
+	var errFn sinkFn = sink.Stderr
+	if ob != nil {
+		ob.command(full, r)
+		out = func(line string) { sink.Stdout(line); ob.stdout(line) }
+		errFn = func(line string) { sink.Stderr(line); ob.stderr(line) }
+	}
+
 	// 两路输出共用一把锁：stdout 与 stderr 会由 os/exec 内部并发写入，
 	// sink 的调用顺序必须与写入顺序一致，否则 seq 会错乱。
 	var mu sync.Mutex
 	outW := newStreamWriter(func(line string) {
 		mu.Lock()
-		sink.Stdout(line)
+		out(line)
 		mu.Unlock()
 	})
 	errW := newStreamWriter(func(line string) {
 		mu.Lock()
-		sink.Stderr(line)
+		errFn(line)
 		mu.Unlock()
 	})
 	cmd.Stdout = outW

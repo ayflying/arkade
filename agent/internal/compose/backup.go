@@ -42,6 +42,16 @@ type BackupResult struct {
 	SizeBytes int64
 	Files     []string
 	CreatedAt int64
+
+	// VolumeFailed 表示"卷备份失败，但编排文件已备份成功"。
+	//
+	// ============================ 为什么要这个字段 ============================
+	// 原实现只把失败写进 manifest 就返回成功。异步任务据此把 status 置为
+	// succeeded，UI 于是显示"备份完成"——而用户真正在意的数据卷其实没备份。
+	// 这不是"少一个提示"，是**误报成功**。因此必须让调用方能区分。
+	VolumeFailed bool
+	// VolumeError 是卷备份失败的中文说明（不含路径细节中的敏感信息）。
+	VolumeError string
 }
 
 // Backup 备份编排文件与（可选的）数据卷。
@@ -73,6 +83,14 @@ func (m *Manager) Backup(ctx context.Context, name string, includeVolumes bool) 
 
 	now := time.Now().UTC()
 	dest := filepath.Join(m.ws.backupsDir(), n, now.Format(backupTimestampLayout))
+
+	// ============================ 阶段上报 ============================
+	// 备份没有"一条贯穿全程的命令"，因此每个阶段都如实上报。
+	// 只有真正的 docker 调用才报 command；文件复制只报 stage，
+	// 编造一条假命令会让用户复制去执行。
+	ob := observerFrom(ctx)
+	ob.stage("创建备份目录", nil)
+
 	if err := os.MkdirAll(dest, 0o755); err != nil {
 		return BackupResult{}, fmt.Errorf("创建备份目录失败: %w", err)
 	}
@@ -87,29 +105,45 @@ func (m *Manager) Backup(ctx context.Context, name string, includeVolumes bool) 
 	// 复制编排目录下的文件。
 	// compose.yml 是必需的，其余（.env、override 文件、build 上下文里的小文件）
 	// 能带就带——漏了 .env 的备份是没法直接恢复的。
+	ob.stage("复制编排文件到备份目录", nil)
 	copied, copyErr := copyProjectFiles(projectDir, dest)
 	if copyErr != nil {
 		// 复制失败要清理掉半截备份，否则下次按时间戳找不到完整备份会误导人。
 		_ = os.RemoveAll(dest)
 		return BackupResult{}, copyErr
 	}
+	ob.stage(fmt.Sprintf("已复制 %d 个编排文件", len(copied)), nil)
 	manifest = append(manifest, "已复制文件: "+strings.Join(copied, ", "))
 
+	// volumeFailed 标记卷备份是否部分/全部失败。
+	//
+	// ============================ 为什么不能只写警告 ============================
+	// 原实现把失败写进 manifest 后**返回成功**。对同步接口尚可，
+	// 但异步任务的 status 会被 UI 当成"备份已完成"——
+	// 用户以为拿到了完整备份（含数据卷），实际卷根本没备份上。
+	// 因此这里额外把失败信号带出去，由任务层置 failed。
+	volumeFailed := false
 	if includeVolumes {
+		ob.stage("枚举项目数据卷", nil)
 		vols, verr := m.backupVolumes(ctx, n, dest)
 		if verr != nil {
-			// 卷备份失败不回滚：编排文件已经安全备份了，
-			// 把失败原因写进 manifest 并返回给用户，比整体失败丢掉好。
-			manifest = append(manifest, "卷备份警告: "+verr.Error())
+			// 卷备份失败不回滚：编排文件已经安全备份了。
+			volumeFailed = true
+			manifest = append(manifest, "卷备份失败: "+verr.Error())
+			ob.stage("卷备份失败（编排文件已备份）", nil)
 		} else if len(vols) == 0 {
 			manifest = append(manifest, "未发现可备份的命名卷（可能是匿名卷或全部为宿主机路径挂载）")
+			ob.stage("未发现可备份的命名卷", nil)
 		} else {
 			manifest = append(manifest, "已备份卷: "+strings.Join(vols, ", "))
+			ob.stage(fmt.Sprintf("已备份 %d 个数据卷", len(vols)), nil)
 		}
 	} else {
 		manifest = append(manifest, "未包含数据卷（调用方未要求）")
+		ob.stage("未包含数据卷（调用方未要求）", nil)
 	}
 
+	ob.stage("写入备份说明", nil)
 	manifestPath := filepath.Join(dest, backupManifestFile)
 	if err := os.WriteFile(manifestPath, []byte(strings.Join(manifest, "\n")+"\n"), 0o644); err != nil {
 		_ = os.RemoveAll(dest)
@@ -120,9 +154,16 @@ func (m *Manager) Backup(ctx context.Context, name string, includeVolumes bool) 
 	if err != nil {
 		return BackupResult{}, err
 	}
-	return BackupResult{
+
+	res := BackupResult{
 		Name: n, Path: dest, SizeBytes: size, Files: files, CreatedAt: now.Unix(),
-	}, nil
+	}
+	// 卷失败时带出错误，让任务层能把状态置为 failed 而不是 succeeded。
+	if volumeFailed {
+		res.VolumeFailed = true
+		res.VolumeError = "部分数据卷未能备份，编排文件已备份成功"
+	}
+	return res, nil
 }
 
 // copyProjectFiles 把项目目录下的文件复制到备份目录（不含子目录）。
@@ -199,6 +240,7 @@ func (m *Manager) backupVolumes(ctx context.Context, project, destDir string) ([
 
 	done := make([]string, 0, len(vols))
 	var failed []string
+	ob := observerFrom(ctx)
 	for _, v := range vols {
 		tarName := "volume-" + sanitizeFileName(v) + ".tar"
 		args := []string{
@@ -210,14 +252,26 @@ func (m *Manager) backupVolumes(ctx context.Context, project, destDir string) ([
 			"alpine:3.20",
 			"tar", "-cf", "/backup/" + tarName, "-C", "/from", ".",
 		}
+		// 这是**真实命令**，如实上报 argv（只含卷名与路径，不含密钥）。
+		ob.command(append([]string{"docker"}, args...), nil)
+
 		cmd := exec.CommandContext(ctx, "docker", args...)
 		env := m.runner.environ()
 		cmd.Env = env
 		out, runErr := cmd.CombinedOutput()
+
+		// CombinedOutput 拿不到逐行实时输出，因此在命令结束后
+		// 把真实输出按行补发——内容与顺序都是真的，只是延迟到该步完成。
+		for _, line := range splitLines(string(out)) {
+			ob.stdout(line)
+		}
+
 		if runErr != nil {
 			failed = append(failed, fmt.Sprintf("%s(%v: %s)", v, runErr, truncate(string(out))))
+			ob.stage("卷备份失败: "+v, nil)
 			continue
 		}
+		ob.stage("已备份卷: "+v, nil)
 		done = append(done, v)
 	}
 	if len(failed) > 0 {

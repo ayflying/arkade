@@ -459,16 +459,23 @@ check('详情: 容器获取失败显示警告而非空容器结论', /v-if="deta
 const managedConfigSrc = source('composables/useManagedStackConfig.ts')
 const managedPanelSrc = source('components/stack/ManagedStackConfigPanel.vue')
 const managedActionsSrc = source('components/stack/ManagedStackActions.vue')
+/* 保存与所有动作都改走操作任务，冲突/确认/删卷文案在任务层与弹窗里 */
+const opTaskSrc = source('composables/useStackOperationTask.ts')
+const opModalSrc = source('components/stack/StackOperationModal.vue')
 check('配置: env 三态通过真实 payload builder，未变省略/空串清空/新值替换', /env !== originalEnv \? \{ env_content: env \} : \{\}/.test(managedConfigSrc) && /managedUpdatePayload\(content.value, version.value, envContent.value, originalEnv.value\)/.test(managedConfigSrc))
 check('配置: env 编辑器仍接入且保存时锁定', /<stack-env-editor v-model="config.envContent.value" :disabled="config.saving.value"/.test(managedPanelSrc))
 check('配置: manage 403 不影响容器与日志', /err.status === 403/.test(managedConfigSrc) && /容器与日志仍可查看/.test(managedConfigSrc))
 check('配置: 保存需确认 compose up 部署而非草稿', /await confirmAction/.test(managedConfigSrc) && /立即执行 compose up/.test(managedConfigSrc) && /danger: true/.test(managedConfigSrc))
-check('配置: CAS 使用后端新版本，冲突不得覆盖用户内容', /version.value = res.stack.version/.test(managedConfigSrc) && /err.status === 409/.test(managedConfigSrc) && /请先复制当前修改/.test(managedConfigSrc))
+/*
+ * 保存改走操作任务后，版本来源有两处：读配置的 res.version、
+ * 保存后任务回报的 stack_version。冲突(409)仍必须明确拒绝覆盖。
+ */
+check('配置: CAS 使用后端新版本，冲突不得覆盖用户内容', /version\.value = res\.version/.test(managedConfigSrc) && /stackVersion !== null/.test(managedConfigSrc) && /409/.test(opTaskSrc) && /请先复制当前修改/.test(opTaskSrc))
 check('配置: 确认前快照 payload 且异步回执受卸载 guard 保护', managedConfigSrc.indexOf('const payload = managedUpdatePayload') < managedConfigSrc.indexOf('await confirmAction') && /if \(!alive\) return/.test(managedConfigSrc))
 check('安全: env 不写浏览器存储且卸载时清空', !/localStorage|sessionStorage/.test(managedConfigSrc) && /content.value = originalContent.value = envContent.value = originalEnv.value = ''/.test(managedConfigSrc))
-check('操作: 启停等需明确确认并受在线/busy/进行中保护', /await confirmAction/.test(managedActionsSrc) && /running.value \|\| !props.online \|\| props.busy/.test(managedActionsSrc))
-check('操作: 未同步阻止启动重建', /unsynced && \['start', 'recreate'\].includes\(item.action\)/.test(managedActionsSrc))
-check('操作: 删除默认保留卷，显式危险确认后才提交删卷选项', /optionDefault: false, danger: true/.test(managedActionsSrc) && /if \(!result.confirmed \|\| !alive\) return/.test(managedActionsSrc) && /deleteStack\(id, name, result.optionChecked\)/.test(managedActionsSrc))
+check('操作: 启停等需明确确认并受在线/busy/进行中保护', /await confirmAction/.test(managedActionsSrc) && /!props.online \|\| props.busy \|\| running.value/.test(managedActionsSrc))
+check('操作: 未同步阻止启动重建', /UNSYNCED_BLOCKED: StackOperationAction\[\] = \['up', 'rebuild'\]/.test(managedActionsSrc) && /props\.unsynced && UNSYNCED_BLOCKED\.includes\(action\)/.test(managedActionsSrc))
+check('操作: 删除默认保留卷，显式危险确认后才提交删卷选项', /optionDefault: false/.test(managedActionsSrc) && /danger: true/.test(managedActionsSrc) && /if \(!result\.confirmed \|\| !alive\) return/.test(managedActionsSrc) && /removeVolumes\.value = result\.optionChecked/.test(managedActionsSrc) && /:remove-volumes="removeVolumes"/.test(managedActionsSrc) && /removeVolumes: props\.action === 'remove'/.test(opModalSrc))
 
 // ───────────────────────── 结果 ─────────────────────────
 const total = passed + failures.length

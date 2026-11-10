@@ -177,14 +177,14 @@ func auditMiddleware(w auditWriter, log *slog.Logger) func(http.Handler) http.Ha
 			// 加审计反而把业务弄坏了。
 			subAction := ""
 			if isStackActionPath(r.URL.Path) && r.Body != nil {
-				raw, err := io.ReadAll(io.LimitReader(r.Body, maxAuditBodyPeek))
+				original := r.Body
+				raw, err := io.ReadAll(io.LimitReader(original, maxAuditBodyPeek))
+				// 保留尚未读取的尾部，配置正文可能远大于审计预读上限。
+				// 只摘取白名单action，不把完整配置复制进审计或截断业务请求。
+				r.Body = &auditReplayBody{Reader: io.MultiReader(bytes.NewReader(raw), original), closer: original}
 				if err == nil {
-					// 还原：无论解析成功与否都要还原，
-					// 否则解析失败时 handler 也读不到内容。
-					r.Body = io.NopCloser(bytes.NewReader(raw))
 					subAction = decodeActionField(raw)
 				}
-				_ = r.Body.Close()
 			}
 
 			// 统一在 defer 里记录，并且**自己处理 panic**。
@@ -248,6 +248,9 @@ func writeAuditRecord(w auditWriter, log *slog.Logger, r *http.Request, rec *sta
 	detail := ""
 	if route.SubAction {
 		detail = subAction
+	}
+	if strings.HasSuffix(pattern, "/operation-tasks") {
+		detail = subAction + "：提交编排执行任务；受理不代表执行成功，请查看任务结果"
 	}
 	if strings.HasSuffix(pattern, "/pull-tasks") {
 		detail = "pull：提交镜像拉取任务；受理不代表执行成功，请查看任务结果"
@@ -340,6 +343,13 @@ func routePattern(r *http.Request) string {
 //
 // 注意：被截断时 handler 仍会拿到**完整**内容——
 // 因为还原用的是原始 raw，不是截断后的片段。
+type auditReplayBody struct {
+	io.Reader
+	closer io.Closer
+}
+
+func (b *auditReplayBody) Close() error { return b.closer.Close() }
+
 const maxAuditBodyPeek = 8192
 
 // stackActionSuffix 是编排子动作路径的固定后缀。
@@ -366,7 +376,7 @@ func isStackActionPath(p string) bool {
 		return false
 	}
 	return parts[0] == "api" && parts[1] == "agents" &&
-		parts[3] == "stacks" && parts[5] == stackActionSuffix[1:]
+		parts[3] == "stacks" && (parts[5] == stackActionSuffix[1:] || parts[5] == "operation-tasks")
 }
 
 // decodeActionField 从请求体里只解码 action 一个字段。
@@ -391,5 +401,9 @@ func decodeActionField(raw []byte) string {
 	if len(a) > maxLen {
 		a = a[:maxLen]
 	}
-	return a
+	switch a {
+	case "start", "stop", "restart", "pull", "recreate", "backup", "up", "down", "rebuild", "remove":
+		return a
+	}
+	return ""
 }

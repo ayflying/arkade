@@ -147,6 +147,8 @@ func NewRouter(d Deps) http.Handler {
 			priv.Delete("/agents/{agentID}/stacks/{name}", handleDeleteStack(d))
 			priv.Get("/agents/{agentID}/stacks/{name}/config", handleGetStackConfig(d))
 			priv.Post("/agents/{agentID}/stacks/{name}/actions", handleStackAction(d))
+			priv.Post("/agents/{agentID}/stacks/{name}/operation-tasks", handleStartComposeOperation(d))
+			priv.Get("/agents/{agentID}/stacks/{name}/operation-tasks/{taskID}", handleGetComposeOperation(d))
 			priv.Post("/agents/{agentID}/stacks/{name}/pull-tasks", handleStartComposePull(d))
 			priv.Get("/agents/{agentID}/stacks/{name}/pull-tasks/{taskID}", handleGetComposePull(d))
 			priv.Get("/agents/{agentID}/stacks/{name}/logs", handleStackLogs(d))

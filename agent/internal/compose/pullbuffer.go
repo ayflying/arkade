@@ -5,30 +5,6 @@ package compose
 // 单独一个文件：缓冲的边界规则（上限、丢最旧、seq 跳号语义）
 // 是这一整套功能里最容易被改错的地方，集中一处便于审查。
 
-import (
-	"sync"
-)
-
-type taskSink struct {
-	task *PullTask
-	red  *redactor
-	// mu 串行化 stdout/stderr 两路回调，保证 seq 顺序就是写入顺序。
-	mu sync.Mutex
-}
-
-func (s *taskSink) Stdout(line string) { s.push("stdout", line) }
-func (s *taskSink) Stderr(line string) { s.push("stderr", line) }
-
-func (s *taskSink) push(stream, line string) {
-	// 脱敏在锁外做（纯 CPU，不依赖任务状态），但要保证顺序，
-	// 因此整体仍用一个 sink 级互斥锁。
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	text := sanitizeLine(line, s.red)
-	s.task.appendEvent(stream, text)
-}
-
 // appendEvent 追加一行输出（有界）。
 func (t *PullTask) appendEvent(stream, text string) {
 	t.mu.Lock()
@@ -55,8 +31,12 @@ func (t *PullTask) snapshot(after int64) PullSnapshot {
 	defer t.mu.Unlock()
 
 	snap := PullSnapshot{
-		TaskID:     t.id,
-		Name:       t.name,
+		TaskID: t.id,
+		Name:   t.name,
+		Action: t.action,
+		// BackupPath 必须在这里取：task.backupPath 在 run 里赋值，
+		// 若快照漏映射，协议层永远收到空串，前端就看不到备份位置。
+		BackupPath: t.backupPath,
 		Command:    t.command,
 		WorkingDir: t.workingDir,
 		Status:     t.status,

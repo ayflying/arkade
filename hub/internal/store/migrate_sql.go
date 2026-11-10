@@ -247,4 +247,18 @@ var migrations = []migration{
 	{version: 9, name: "服务器直连地址", stmts: []string{
 		`ALTER TABLE agents ADD COLUMN direct_address TEXT NOT NULL DEFAULT ''`,
 	}},
+	{version: 10, name: "编排异步操作幂等元数据", stmts: []string{
+		// 不复制 compose/env 等秘密配置；只绑定原表的身份、版本和摘要。
+		// 不加 stack 外键：remove 后仍须保留幂等请求，防止重试误删同名新项目。
+		`CREATE TABLE compose_operation_requests (
+			agent_id TEXT NOT NULL, request_id TEXT NOT NULL,
+			name TEXT NOT NULL, action TEXT NOT NULL, fingerprint TEXT NOT NULL,
+			task_id TEXT NOT NULL DEFAULT '', stack_id TEXT NOT NULL,
+			stack_version BIGINT NOT NULL, config_hash TEXT NOT NULL,
+			created_at BIGINT NOT NULL, finalized INTEGER NOT NULL DEFAULT 0,
+			final_error TEXT NOT NULL DEFAULT '', record_removed INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY (agent_id, request_id))`,
+		`CREATE INDEX idx_compose_operations_task ON compose_operation_requests(agent_id, name, task_id)`,
+		`CREATE INDEX idx_compose_operations_expiry ON compose_operation_requests(finalized, created_at)`,
+	}},
 }

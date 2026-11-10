@@ -376,13 +376,57 @@ func (m *Manager) Rebuild(ctx context.Context, name string) (Result, error) {
 // 但如果 down 失败是因为"引擎连不上"，删目录就丢了唯一能排查的线索，
 // 因此把 down 的输出一并返回给用户看。
 func (m *Manager) Remove(ctx context.Context, name string) (Result, error) {
+	// **兼容入口**：保持历史行为（down 失败也删本机编排文件）。
+	//
+	// 之所以保留：Hub/Web 的 HTTP DELETE 路径依赖"删了就从这个列表消失"，
+	// 突然改成"失败保留"会让既有调用方看到项目又冒回来。
+	// 新代码（异步任务）应走 RemoveWithVolumes，它的语义是安全的。
+	return m.remove(ctx, name, true, false)
+}
+
+// RemoveWithVolumes 删除编排项目，是否连带删除数据卷由调用方显式决定。
+//
+// ============================ 为什么必须显式 ============================
+// 删数据卷是不可逆的：卷里是最难重建的那部分数据（数据库文件、上传件）。
+// 把它作为默认行为意味着"点一下删除编排"就永久丢数据，
+// 而这个后果在 UI 上只是一行普通操作。因此这里要求调用方明确表态。
+//
+// ============================ 失败必须保留配置 ============================
+// down 失败时**不删除**本机编排文件：
+//   - 目录里的 compose.yml 是用户恢复服务的唯一依据；
+//   - down 失败多为"引擎连不上"这类可恢复故障，
+//     此时删掉配置等于把可恢复故障变成不可恢复；
+//   - 异步任务会因此置为 failed，而 failed 的任务本意是"可以重试"——
+//     若配置已被删除，重试就变成"项目不存在"，用户彻底失去入口。
+//
+// 这是新旧行为的关键差异：旧 Remove 为了"列表立刻消失"牺牲了可恢复性。
+func (m *Manager) RemoveWithVolumes(ctx context.Context, name string, removeVolumes bool) (Result, error) {
+	return m.remove(ctx, name, removeVolumes, true)
+}
+
+// remove 是 Remove 与 RemoveWithVolumes 的共同实现。
+//
+// keepOnFailure=true 表示 down 失败时保留本机编排文件（安全语义）；
+// false 表示无论如何删除（历史兼容语义）。
+func (m *Manager) remove(ctx context.Context, name string, removeVolumes, keepOnFailure bool) (Result, error) {
 	n, err := cleanName(name)
 	if err != nil {
 		return Result{}, err
 	}
 
 	return m.lockedRun(ctx, n, func() (Result, error) {
-		res := m.run(ctx, n, TimeoutLong, "down", "-v")
+		args := []string{"down"}
+		if removeVolumes {
+			args = append(args, "-v")
+		}
+		res := m.run(ctx, n, TimeoutLong, args...)
+
+		if res.ExitCode != 0 && keepOnFailure {
+			// 安全语义：失败即保留，让用户能重试或自行排查。
+			res.Output = truncate(res.Output + "\n\n（编排文件已保留，可修复问题后重试删除）")
+			return res, nil
+		}
+
 		if err := m.ws.Remove(n); err != nil {
 			return res, err
 		}
