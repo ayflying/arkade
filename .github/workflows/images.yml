@@ -1,0 +1,151 @@
+name: Build and publish container images
+
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+# PRs never receive registry write access. Only the image job can publish.
+permissions:
+  contents: read
+
+concurrency:
+  group: images-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  go-tests:
+    name: Go tests (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    # A clean container has no Docker CLI/daemon. Some existing tests require
+    # Docker to be unavailable; compose lifecycle tests use their own fake CLI.
+    container: golang:1.24-bookworm
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [protocol, agent, hub]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test and vet
+        working-directory: ${{ matrix.module }}
+        run: |
+          go test ./... -count=1 -timeout=5m
+          go vet ./...
+
+  web-tests:
+    name: Web checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - name: Install dependencies
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck and build
+        working-directory: web
+        run: pnpm build
+      - name: Run contract tests
+        working-directory: web
+        run: |
+          for test in tests/*.test.mjs; do
+            node "$test"
+          done
+
+  images:
+    name: Image (${{ matrix.image }})
+    needs: [go-tests, web-tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [hub, agent]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare image name and binary version
+        id: vars
+        env:
+          REPOSITORY: ${{ github.repository }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          COMMIT: ${{ github.sha }}
+          IMAGE: ${{ matrix.image }}
+        shell: bash
+        run: |
+          echo "image=ghcr.io/${REPOSITORY,,}-${IMAGE}" >> "$GITHUB_OUTPUT"
+          if [[ "$REF_TYPE" == tag ]]; then
+            # VERSION is passed through the Docker build argument, not eval.
+            echo "version=${REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=sha-${COMMIT:0:12}" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Image tags and OCI labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.vars.outputs.image }}
+          flavor: latest=false
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=sha-,format=long
+            type=ref,event=tag
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+          labels: |
+            org.opencontainers.image.title=Arkade ${{ matrix.image }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+      - name: Build and publish
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.image }}/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.vars.outputs.version }}
+          cache-from: type=gha,scope=arkade-${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=arkade-${{ matrix.image }}
+      - name: Publish build summary
+        env:
+          IMAGE_NAME: ${{ steps.vars.outputs.image }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          {
+            echo "## $IMAGE_NAME"
+            if [ "$EVENT" = pull_request ]; then
+              echo 'Build only: pull requests do not publish images.'
+            else
+              echo 'Published tags:'
+              printf '%s\n' "$TAGS"
+              printf '\nDigest: `%s`\n' "$DIGEST"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
