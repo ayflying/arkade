@@ -167,7 +167,8 @@ type composeStackView struct {
 	Version   int64 `json:"version"`
 	UpdatedAt int64 `json:"updated_at"`
 	// SyncedAt 记录最近一次成功下发给 Agent 的时间（0 表示从未成功下发）。
-	SyncedAt int64 `json:"synced_at"`
+	SyncedAt int64  `json:"synced_at"`
+	SyncHint string `json:"sync_hint,omitempty"`
 }
 
 // requireComposeName 校验并写出项目名错误。返回 false 表示已写响应。

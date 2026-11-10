@@ -63,15 +63,48 @@ export interface StackSummary {
   updated_at: number
   /** 最后一次成功同步到 Agent 的时间（Unix 秒）；0 表示从未同步成功 */
   synced_at: number
+  /**
+   * 未同步原因，可选。**目前只在自动接管失败时由 Hub 带上**。
+   *
+   * 语义要点：
+   * - 该原因是 Hub **内存里**记的，不是持久化的：Hub 重启后未同步的记录
+   *   仍存在（`synced_at` 为 0），但这里会变空 → 前端必须能退回通用文案，
+   *   **不能因为拿不到原因就装作同步成功**；
+   * - 有它时说明「配置已记录在 Hub，但没下发到服务器」，此时**不要启动或重建**；
+   * - 后台下一轮扫描会自动重试，用户通常不需要手动做什么。
+   *
+   * 注意与 `external_stacks` 的 `auto_adopt_reason` 区分：
+   * 那边是「Hub 判定这个外部项目不能接管」，这边是「接管动作已经发起但失败了」。
+   */
+  sync_hint?: string
   /** 所属 Agent id */
   agent_id: string
 }
 
 /**
+ * 自动接管状态。
+ *
+ * 语义词来自后端（Hub 在 Agent 上线后约 30 秒扫描一次，尝试自动接管
+ * 兼容的外部 compose 项目）。**接管不重启、不重建容器**，只是把配置纳入管理。
+ *
+ * `adopted` 不在这里出现：接管成功后项目会从 `external_stacks`
+ * 移入正式的 `stacks` 列表，未纳管表里不该再出现它。
+ *
+ * `unknown` 是**前端兜底值**，不是后端语义：旧 Hub 不返回该字段时用它，
+ * 表示「这台 Hub 还没这个能力」。此时界面**不显示任何接管相关文案**，
+ * 绝不推测成 skipped/failed——否则旧后端会满屏假原因。
+ */
+export type AutoAdoptStatus = 'pending' | 'skipped' | 'failed' | 'unknown'
+
+/**
  * 服务器上已存在、但未被 Arkade 纳管的 compose 项目。
  *
  * 来源：Agent 扫描引擎标签发现的外部项目（如用户直接用 docker compose 起的）。
- * Arkade **只读不写**：不读取其 compose 内容、不覆盖、不执行任何动作、不自动纳管。
+ * Arkade **只读不写**：不读取其 compose 内容、不覆盖、不执行任何动作。
+ *
+ * 自动接管（Hub 后台扫描）会把**兼容**的项目纳入管理并移出本列表；
+ * 不能接管的留在这里，并通过 `auto_adopt_status` / `auto_adopt_reason`
+ * 告知用户原因。仍保留手动「导入纳管」作为不支持自动接管场景的兜底。
  *
  * 为什么必须单独成表而不是只在顶部放几个标签：
  * 用户反馈「编排列表是空的但设备上明明有很多编排」——真实原因就是这些项目
@@ -105,6 +138,19 @@ export type ExternalStack = {
    * 而不是靠「这个对象没有 id」来推断只读性——隐式判断在字段变更时极易失效。
    */
   managed: boolean
+  /**
+   * 自动接管状态。**可选**：旧 Hub 不返回该字段。
+   *
+   * 归一化后一定有值（缺省为 `'unknown'`），页面拿到的永远不是 undefined。
+   */
+  auto_adopt_status?: AutoAdoptStatus
+  /**
+   * 暂不能接管的原因，直接展示给用户的人话（如「服务使用了 build，不支持自动接管」）。
+   *
+   * 可能是整句中文，因此界面上**一行截断 + tooltip**，
+   * 且必须有可点击以外的可读路径（手机上没有 hover）。
+   */
+  auto_adopt_reason?: string
 }
 
 /**

@@ -120,34 +120,8 @@ func isReadOnlyOperation(op any) bool {
 	return s == "list" || s == "read"
 }
 
-// ============================ 并发与超时限制 ============================
-const (
-	// helperTimeout 是单次卷文件操作的总时限，从进入 RunVolumeFileHelper 算起。
-	//
-	// 为什么在这里设而不只依赖 Hub：Hub 的 75s ctx 未必传到 Agent——
-	// WS 侧 pending 超时不会自动取消远端请求，ctx 可能根本不带取消信号。
-	// 因此 Agent 必须自己兜住总时长，否则一个卡住的 helper 会长期占着槽位。
-	helperTimeout = 60 * time.Second
-
-	// maxHelperConcurrent 是同时运行的 helper 容器上限。
-	//
-	// 每个 helper 内存上限 192MiB 且请求最大 5.6MiB（base64 在内存里
-	// 还会被解码、拷贝若干份）。不加限制时 N 个并发请求会成倍放大
-	// Agent 的内存占用，直接把 Agent 自己 OOM 掉。
-	// 限 2 既能满足"看目录 + 读文件"这种正常并行，又能兜住上限。
-	maxHelperConcurrent = 2
-)
-
-// helperSem 是全局并发闸门。
-//
-// 用带缓冲 channel 实现信号量：容量就是并发上限。
-// 非阻塞获取（select + default）——满了就立刻返回 busy，
-// 而不是排队等待：请求已经在 Hub 侧计了超时，
-// 在这里静默排队只会让总时长不可控，还不如让用户知道"忙"。
-var helperSem = make(chan struct{}, maxHelperConcurrent)
-
-// ErrHelperBusy 表示并发已满。
-var ErrHelperBusy = errors.New("文件操作繁忙，请稍后重试")
+// 并发闸门、总超时、ErrHelperBusy 等公共定义见 helper_lifecycle.go：
+// volume 与 compose.source 共用同一套配额，只有一份实现。
 
 // RunVolumeFileHelper 实现 volumeFileRuntime。
 func (e *engine) RunVolumeFileHelper(ctx context.Context, volume string, request map[string]any) ([]byte, error) {
@@ -499,15 +473,10 @@ func writeHelperTar(tw *tar.Writer, exePath string, reqJSON []byte) error {
 	return err
 }
 
-// maxHelperResponseBytes 是 helper 结果文件的上限。
-//
-// 最大合法结果是 4MiB 内容的 base64（约 5.6MiB）加上 JSON 外壳，
-// 这里留到 8MiB。**必须**在读到上限后再多读 1 字节来判定超限，
-// 否则 LimitReader 会静默截断成一个"看起来能解析"的半截 JSON
-// ——那比直接报错危险得多。
-const maxHelperResponseBytes = 8 << 20
-
 // getArchiveFile 用 GET /containers/{id}/archive?path= 取单个文件内容。
+//
+// maxHelperResponseBytes 见 helper_lifecycle.go；读取时必须多读 1 字节
+// 来判定超限，否则 LimitReader 会静默截断成"看起来能解析"的半截 JSON。
 func (e *engine) getArchiveFile(ctx context.Context, containerID, filePath string) ([]byte, error) {
 	path := pathContainerPrefix + url.PathEscape(containerID) + "/archive?path=" + url.QueryEscape(filePath)
 	rc, err := e.client.openStream(ctx, http.MethodGet, path)

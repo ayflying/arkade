@@ -61,6 +61,7 @@ var slowMethodTimeouts = map[string]time.Duration{
 	// 大归档提交的完整SHA校验在Agent落盘后执行，不能以普通15秒先超时。
 	envelope.MethodImageLoadCommit: 2 * time.Minute,
 	envelope.MethodVolumeFiles:     75 * time.Second,
+	envelope.MethodComposeSource:   75 * time.Second,
 }
 
 // requestTimeoutFor 返回某个方法的等待上限。

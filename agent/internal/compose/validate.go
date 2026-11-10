@@ -100,6 +100,12 @@ func ValidateServices(names []string) error {
 // IsValidName 是 ValidateName 的布尔版本，用于列表过滤（跳过非法目录名而不是报错）。
 func IsValidName(name string) bool { return ValidateName(name) == nil }
 
+// CleanNameForSource 供 compose.source 使用：去空白 + 校验项目名。
+//
+// 导出版本而不是让调用方自己写一遍校验：项目名会进入容器标签匹配
+// 与错误文案，校验规则必须只有一份。
+func CleanNameForSource(name string) (string, error) { return cleanName(name) }
+
 // cleanName 去掉首尾空白后校验，返回规范化後的名称。
 // 项目名不做大小写转换：Compose 本身要求小写，转了小写反而会掩盖用户的输入错误。
 func cleanName(name string) (string, error) {

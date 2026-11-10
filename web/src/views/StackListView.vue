@@ -27,6 +27,7 @@ import EmptyState from '@/components/common/EmptyState.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import StackStateTag from '@/components/stack/StackStateTag.vue'
 import StackImportModal from '@/components/stack/StackImportModal.vue'
+import AutoAdoptStatus from '@/components/stack/AutoAdoptStatus.vue'
 import { listStacks } from '@/api/stacks'
 import { useCurrentAgent } from '@/composables/useCurrentAgent'
 import { usePolling } from '@/composables/usePolling'
@@ -138,6 +139,17 @@ const subtitle = computed(() => {
 })
 
 /**
+ * 是否需要显示「自动接管」列。
+ *
+ * 旧 Hub 不返回该字段，所有行都是 unknown。此时**整列不显示**，
+ * 否则会多出一列全是空白，用户会以为功能坏了。
+ * 任一行动起来才显示整列，保证表格结构稳定（不会逐行时有时无）。
+ */
+const showAutoAdoptColumn = computed(() =>
+  externalStacks.value.some((s) => (s.auto_adopt_status ?? 'unknown') !== 'unknown')
+)
+
+/**
  * 未纳管项目表格列。
  *
  * 除「导入纳管」外不放任何操作：
@@ -157,6 +169,21 @@ const unmanagedColumns = computed<DataTableColumns<ExternalStack>>(() => [
     width: 110,
     render: (row) => h(StackStateTag, { state: row.status })
   },
+  // 自动接管情况：仅当后端确实给了信息时才出现（见 showAutoAdoptColumn）
+  ...(showAutoAdoptColumn.value
+    ? [
+        {
+          title: '自动接管',
+          key: 'auto_adopt',
+          minWidth: 200,
+          render: (row: ExternalStack) =>
+            h(AutoAdoptStatus, {
+              status: row.auto_adopt_status ?? 'unknown',
+              reason: row.auto_adopt_reason ?? ''
+            })
+        }
+      ]
+    : []),
   {
     title: '服务',
     key: 'services',
@@ -290,6 +317,40 @@ const columns = computed<DataTableColumns<StackSummary>>(() => [
     }
   },
   {
+    title: '同步',
+    key: 'synced',
+    minWidth: 120,
+    /*
+     * 未同步必须在列表里**一眼可见**，不能只藏在 tooltip 里。
+     *
+     * 自动接管失败的记录会先落 Hub 再尝试下发；下发失败时它仍然出现在
+     * `stacks` 里，`synced_at` 为 0。此时它看起来和正常编排一模一样，
+     * 用户点「启动/重建」就会与 Agent 侧不存在的东西打架。
+     *
+     * 有 `sync_hint`（Hub 内存里记的原因）就挂到 title 上，
+     * 让用户能在列表里直接看到为什么失败；Hub 重启后原因为空也不影响
+     * tag 本身继续显示——**始终不伪装成同步成功**。
+     */
+    render: (row) => {
+      if (row.synced_at > 0) {
+        return h('span', { class: 'arkade-cell-muted' }, '已同步')
+      }
+      const hint = typeof row.sync_hint === 'string' ? row.sync_hint.trim() : ''
+      return h(
+        NTag,
+        {
+          size: 'tiny',
+          bordered: false,
+          type: 'error',
+          title: hint !== '' ? hint : '配置已记录在 Hub，但尚未成功下发到服务器'
+        },
+        {
+          default: () => '未同步'
+        }
+      )
+    }
+  },
+  {
     title: '状态',
     key: 'status',
     minWidth: 100,
@@ -403,11 +464,14 @@ onMounted(() => {
         <n-tag size="small" :bordered="false" type="info">{{ unmanagedCount }} 个</n-tag>
       </div>
 
-      <!-- 说明为什么只读：不解释清楚，用户会一直找「为什么这些不能点」 -->
+      <!--
+        说明为什么这些项目还在这里、以及自动接管是什么。
+        必须讲清「不重启不重建」，否则用户会担心自动接管有副作用而不敢用。
+      -->
       <p class="stack-page__unmanaged-desc">
         这些是服务器上已存在、但未登记在 Arkade 中的 compose 项目，通常是你直接使用
-        <code>docker compose</code> 启动的。Arkade 只做展示，<strong>不会读取或修改它们的配置</strong>，
-        也不会对它们执行任何操作。
+        <code>docker compose</code> 启动的。Arkade 会<strong>自动接管兼容项目，不重启或重建</strong>容器；
+        暂不能接管的原因见下方。未自动接管的项目仍可手动导入。
       </p>
 
       <!--
@@ -422,7 +486,7 @@ onMounted(() => {
           :bordered="false"
           :single-line="false"
           size="small"
-          :scroll-x="520"
+          :scroll-x="showAutoAdoptColumn ? 760 : 520"
         />
       </div>
       <div v-else class="stack-page__orphans">

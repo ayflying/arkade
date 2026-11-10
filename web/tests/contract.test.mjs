@@ -121,7 +121,13 @@ nextResponse = fixture.listStacks
 const list = await api.listStacks('ag-1')
 
 check('listStacks: 路径正确', lastCall.url === '/agents/ag-1/stacks', lastCall.url)
-check('listStacks: stacks 被解成数组并全部保留', Array.isArray(list.stacks) && list.stacks.length === 2)
+// 断言具体名字而不是条数：加 fixture 用例是常事，钉死数字会让无关改动误报
+check(
+  'listStacks: stacks 被解成数组并全部保留',
+  Array.isArray(list.stacks) &&
+    ['my-app', 'busy-app'].every((n) => list.stacks.some((s) => s.name === n)),
+  Array.isArray(list.stacks) ? list.stacks.map((s) => s.name).join(',') : String(list.stacks)
+)
 check('listStacks: agent_online 透传', list.agent_online === true)
 check('listStacks: 缺 orphans 时不炸', Array.isArray(list.external_stacks))
 
@@ -152,6 +158,57 @@ check('listStacks: external.managed 是布尔', e0.managed === false)
 check(
   'listStacks: external 不含伪造的 containers_* 字段',
   !('containers_running' in e0) && !('containers_total' in e0)
+)
+
+/*
+ * 自动接管状态归一化。
+ *
+ * 核心原则：旧 Hub 不返回该字段时必须落到 unknown，
+ * 界面据此完全不显示接管文案。绝不能推测成 skipped/failed——
+ * 那会让升级前的 Hub 满屏假原因。
+ */
+check(
+  'auto_adopt: 缺字段 → unknown（不推测）',
+  e0.auto_adopt_status === 'unknown',
+  String(e0.auto_adopt_status)
+)
+check('auto_adopt: 缺字段时 reason 为空串', e0.auto_adopt_reason === '')
+noUndefined('auto_adopt: 归一化后字段都不是 undefined', {
+  status: e0.auto_adopt_status,
+  reason: e0.auto_adopt_reason
+})
+
+// 已知状态必须原样保留，不能被兜底吃掉
+const extByStatus = new Map((list.external_stacks ?? []).map((e) => [e.name, e]))
+check(
+  'auto_adopt: skipped 原样保留',
+  extByStatus.get('legacy-skip')?.auto_adopt_status === 'skipped',
+  String(extByStatus.get('legacy-skip')?.auto_adopt_status)
+)
+check(
+  'auto_adopt: skipped 带原因',
+  extByStatus.get('legacy-skip')?.auto_adopt_reason === '项目使用了 build，不支持自动接管'
+)
+check(
+  'auto_adopt: failed 原样保留',
+  extByStatus.get('legacy-fail')?.auto_adopt_status === 'failed',
+  String(extByStatus.get('legacy-fail')?.auto_adopt_status)
+)
+check(
+  'auto_adopt: pending 原样保留',
+  extByStatus.get('legacy-pending')?.auto_adopt_status === 'pending',
+  String(extByStatus.get('legacy-pending')?.auto_adopt_status)
+)
+// 后端未来新增的枚举值 → 降级 unknown，而不是原样透传成英文
+check(
+  'auto_adopt: 未知枚举值降级 unknown',
+  extByStatus.get('legacy-weird')?.auto_adopt_status === 'unknown',
+  String(extByStatus.get('legacy-weird')?.auto_adopt_status)
+)
+check(
+  'auto_adopt: unknown 时不保留 reason（避免显示假原因）',
+  extByStatus.get('legacy-weird')?.auto_adopt_reason === '',
+  JSON.stringify(extByStatus.get('legacy-weird')?.auto_adopt_reason)
 )
 
 // ───────────────────────── getStack ─────────────────────────
@@ -340,6 +397,160 @@ const degradedImport = await api.importStack('ag-1', {
 })
 check('降级: import adopted 缺失 → false', degradedImport.adopted === false)
 check('降级: import sync_ok 缺失 → false', degradedImport.sync_ok === false)
+
+// ───────────────────────── 未同步记录（自动接管失败） ─────────────────────────
+/*
+ * 自动接管失败时，记录已写进 Hub 但没下发到服务器：synced_at 为 0。
+ * 这类记录会出现在 stacks 列表里、详情页也能打开，看起来完全正常——
+ * 必须能把它和正常编排区分开，否则用户会对着它点启动/重建。
+ */
+const stacksByName = new Map((list.stacks ?? []).map((s) => [s.name, s]))
+const unsynced = stacksByName.get('adopt-unsynced')
+const unsyncedNoHint = stacksByName.get('adopt-unsynced-nohint')
+
+check('未同步: synced_at 为 0 原样保留', unsynced?.synced_at === 0, String(unsynced?.synced_at))
+check(
+  '未同步: Hub 给的原因原样保留',
+  unsynced?.sync_hint === '自动接管失败：连接服务器超时，已排入下一轮重试',
+  String(unsynced?.sync_hint)
+)
+/*
+ * Hub 重启后内存里的原因会丢。此时 sync_hint 必须**缺失**而不是被编成空串/默认值，
+ * 前端据此退回通用文案——关键是不能因为没原因就当作同步成功。
+ */
+check(
+  '未同步: Hub 重启后无 sync_hint 字段（不编默认值）',
+  unsyncedNoHint !== undefined && !('sync_hint' in unsyncedNoHint),
+  `sync_hint = ${JSON.stringify(unsyncedNoHint?.sync_hint)}`
+)
+check('未同步: 无 hint 时 synced_at 仍为 0', unsyncedNoHint?.synced_at === 0)
+check('未同步: 仍照常出现在 stacks 里（不隐藏）', unsynced !== undefined && unsyncedNoHint !== undefined)
+
+// 已同步的记录不该被塞上 sync_hint
+const syncedOne = stacksByName.get('my-app')
+check('未同步: 正常记录不带 sync_hint', syncedOne !== undefined && !('sync_hint' in syncedOne))
+
+// ───────────────────────── 自动接管状态 UI（源码级） ─────────────────────────
+/*
+ * 没有 DOM 环境跑不了渲染测试，但接管状态的展示规则里有几条
+ * 一旦被改回去就是「用户看到假信息」，值得用断言钉住。
+ */
+const adoptSrc = readFileSync(
+  join(here, '..', 'src', 'components', 'stack', 'AutoAdoptStatus.vue'),
+  'utf8'
+)
+const stackListSrc = readFileSync(
+  join(here, '..', 'src', 'views', 'StackListView.vue'),
+  'utf8'
+)
+
+// unknown 必须完全不渲染：它是「旧 Hub 没这功能」，不是一种后端判定
+check(
+  'auto_adopt: unknown 不渲染任何内容',
+  /unknown: null/.test(adoptSrc) && /v-if="meta !== null"/.test(adoptSrc)
+)
+// 三种状态必须有中文文案，不能把英文枚举直接显示给用户
+check('auto_adopt: pending 显示中文', /pending: \{ label: '接管中'/.test(adoptSrc))
+check('auto_adopt: skipped 显示中文', /skipped: \{ label: '暂不接管'/.test(adoptSrc))
+check('auto_adopt: failed 显示中文', /failed: \{ label: '接管失败'/.test(adoptSrc))
+// 原因只对 skipped/failed 展示，pending 没必要、unknown 不允许推测
+check(
+  'auto_adopt: 原因仅在 skipped/failed 展示',
+  /props\.status === 'skipped' \|\| props\.status === 'failed'/.test(adoptSrc)
+)
+/*
+ * 原因不能只靠 hover：手机上没有 hover。
+ * 必须是「可见的一行截断文本」，title 只作桌面端补充。
+ */
+check(
+  'auto_adopt: 原因直接可见（不只 tooltip）',
+  /<span v-if="showReason"[^>]*>\{\{ reason \}\}<\/span>/.test(adoptSrc),
+  '原因被塞进只有 hover 才显示的地方，手机上读不到'
+)
+check(
+  'auto_adopt: 原因一行截断不撑破表格',
+  /text-overflow: ellipsis/.test(adoptSrc) && /white-space: nowrap/.test(adoptSrc)
+)
+
+// 列表：整列可见性由后端是否给信息决定，旧 Hub 不能多出一整列空白
+check(
+  'stack 列表: 接管列仅在有非 unknown 行时才显示',
+  /const showAutoAdoptColumn = computed/.test(stackListSrc) &&
+    /some\(\(s\) => \(s\.auto_adopt_status \?\? 'unknown'\) !== 'unknown'\)/.test(stackListSrc),
+  '缺少按行判断的可见性逻辑'
+)
+check(
+  'stack 列表: 列定义里实际使用 showAutoAdoptColumn',
+  /\.\.\.\(showAutoAdoptColumn\.value/.test(stackListSrc),
+  'computed 没被列定义使用'
+)
+// 说明文案必须讲清「不重启不重建」，否则用户不敢用自动接管
+check(
+  'stack 列表: 文案说明不重启不重建',
+  /自动接管兼容项目，不重启或重建/.test(stackListSrc),
+  '缺少「不重启或重建」，用户会担心自动接管有副作用'
+)
+check('stack 列表: 文案指向下方原因列', /暂不能接管的原因见下方/.test(stackListSrc))
+// 手动导入必须保留（自动接管不支持时的 fallback）
+check('stack 列表: 保留手动导入入口', /openImport/.test(stackListSrc))
+
+/* ── 未同步状态的可见性（列表 + 详情） ── */
+const detailViewSrc = readFileSync(
+  join(here, '..', 'src', 'views', 'StackDetailView.vue'),
+  'utf8'
+)
+
+// 列表：必须有独立「同步」列，未同步用 error 色 tag 而非仅 tooltip
+check(
+  'stack 列表: 有独立「同步」列',
+  /title: '同步'/.test(stackListSrc),
+  '未同步只藏在 tooltip 里，用户看不到'
+)
+check(
+  'stack 列表: 未同步显示 error 色 tag',
+  /type: 'error'/.test(stackListSrc) && /未同步/.test(stackListSrc)
+)
+// 有原因就挂 title，没原因也要照样显示 tag（Hub 重启后原因为空不能伪装成功）
+check(
+  'stack 列表: 有 sync_hint 时展示原因',
+  /row\.sync_hint/.test(stackListSrc),
+  '没有把 sync_hint 接上'
+)
+
+// 详情：常驻警告必须由 synced_at 推出，而不是某次保存动作
+check(
+  'stack 详情: 常驻未同步警告由 synced_at 推出',
+  /const unsyncedHint = computed/.test(detailViewSrc) &&
+    /synced_at > 0\) return null/.test(detailViewSrc),
+  '常驻警告不是从编排状态推出的，刷新就消失'
+)
+check('stack 详情: 常驻警告在模板里渲染', /v-if="unsyncedHint !== null"/.test(detailViewSrc))
+// 拿不到原因必须退回通用文案，不能既不显示也不提示
+check(
+  'stack 详情: 无 sync_hint 时退回通用文案',
+  /尚未成功下发到服务器/.test(detailViewSrc) && /请检查同步状态/.test(detailViewSrc),
+  '缺原因时没有通用兜底文案'
+)
+/*
+ * 通用文案**不能**承诺「后台自动重试」：自动扫描只覆盖外部/Agent 工作区项目，
+ * 手工新建的编排不在扫描范围内，那句承诺对它们不成立，会让用户干等。
+ *
+ * 只检查字符串字面量：源码注释里为了解释这条约束会提到「自动重试」四个字，
+ * 拿整份文件匹配会误报。这里把注释剥掉再判断。
+ */
+const detailCodeOnly = detailViewSrc
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(/\/\/[^\n]*/g, '')
+check(
+  'stack 详情: 通用文案不承诺自动重试',
+  !/自动重试/.test(detailCodeOnly),
+  '文案承诺了后台自动重试，但手工新建的编排并不在自动扫描范围内'
+)
+// 通用文案要明确劝阻启动/重建
+check(
+  'stack 详情: 通用文案劝阻启动/重建',
+  /不要启动或重建/.test(detailViewSrc)
+)
 
 // ───────────────────────── 结果 ─────────────────────────
 const total = passed + failures.length

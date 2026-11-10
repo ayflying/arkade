@@ -32,13 +32,48 @@
         "version": 1,
         "updated_at": 1700000200,
         "synced_at": 1700000200
+      },
+      {
+        "_comment": "自动接管失败：配置先落 Hub，下发失败。synced_at=0，带 Hub 内存里记的原因。",
+        "agent_id": "ag-1",
+        "name": "adopt-unsynced",
+        "status": "unknown",
+        "config_hash": "aaa111",
+        "remote_hash": "",
+        "drift": false,
+        "services": ["web"],
+        "running": null,
+        "total": null,
+        "version": 1,
+        "updated_at": 1700000300,
+        "synced_at": 0,
+        "sync_hint": "自动接管失败：连接服务器超时，已排入下一轮重试"
+      },
+      {
+        "_comment": "Hub 重启后内存里的原因丢失：synced_at 仍为 0，但没有 sync_hint。前端必须退回通用文案，不能伪装成同步成功。",
+        "agent_id": "ag-1",
+        "name": "adopt-unsynced-nohint",
+        "status": "unknown",
+        "config_hash": "bbb222",
+        "remote_hash": "",
+        "drift": false,
+        "services": null,
+        "running": null,
+        "total": null,
+        "version": 1,
+        "updated_at": 1700000400,
+        "synced_at": 0
       }
     ],
     "agent_online": true,
     "orphans": ["act-runner"],
     "external_stacks": [
-      { "name": "act-runner", "status": "running", "services": ["runner"], "running": 1, "total": 1, "managed": false },
-      { "name": "prod-db", "status": "unknown", "services": [], "running": 0, "total": 0, "managed": false }
+      { "_comment": "旧 Hub：完全没有 auto_adopt_* 字段 → 归一化为 unknown，界面不显示接管信息", "name": "act-runner", "status": "running", "services": ["runner"], "running": 1, "total": 1, "managed": false },
+      { "name": "prod-db", "status": "unknown", "services": [], "running": 0, "total": 0, "managed": false },
+      { "_comment": "判断不适合自动接管，附人话原因", "name": "legacy-skip", "status": "running", "services": ["app"], "running": 1, "total": 1, "managed": false, "auto_adopt_status": "skipped", "auto_adopt_reason": "项目使用了 build，不支持自动接管" },
+      { "_comment": "尝试接管但失败，用户需要关注", "name": "legacy-fail", "status": "running", "services": ["api"], "running": 1, "total": 1, "managed": false, "auto_adopt_status": "failed", "auto_adopt_reason": "写入工作目录失败：权限不足" },
+      { "_comment": "后台扫描排队中", "name": "legacy-pending", "status": "stopped", "services": ["web"], "running": 0, "total": 0, "managed": false, "auto_adopt_status": "pending" },
+      { "_comment": "后端未来新增枚举值：必须降级 unknown，不能原样透传成英文", "name": "legacy-weird", "status": "running", "services": ["x"], "running": 1, "total": 1, "managed": false, "auto_adopt_status": "retrying", "auto_adopt_reason": "这条不该被显示" }
     ]
   },
   "getStack": {

@@ -25,6 +25,7 @@ import (
 
 // Deps 是路由装配所需依赖，集中传入便于测试替换。
 type Deps struct {
+	AutoAdopt  *autoAdopter
 	ImageTasks *imagetask.Manager
 	Log        *slog.Logger
 	DB         *store.DB

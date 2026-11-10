@@ -100,6 +100,32 @@ const configError = ref('')
  */
 const syncWarning = ref('')
 
+/**
+ * 状态里「从未同步到服务器」的常驻警告。
+ *
+ * 与上面的 `syncWarning` 不同，这个**不来自某次保存动作**，而是从编排本身
+ * 的 `synced_at === 0` 推出来的，因此刷新页面、关掉再进来都仍然存在。
+ *
+ * 之所以必须有它：自动接管失败会先把记录写进 Hub 再尝试下发，下发失败时
+ * 这条编排照样出现在列表里、详情页照样能打开，看起来完全正常。
+ * 用户在这里点「启动/重建」就会与 Agent 侧不存在的东西打架。
+ *
+ * 原因是 Hub **内存**里记的（`sync_hint`），Hub 重启后会丢——此时退回通用文案，
+ * 绝不因为拿不到原因就当作同步成功。
+ *
+ * ⚠️ 通用文案**不能承诺「后台自动重试」**：自动扫描只覆盖外部/Agent 工作区里的
+ * 项目，手工新建的编排根本不在扫描范围内，对它们来说那句承诺是假的，
+ * 会让用户干等。这里只说「请检查同步状态」。
+ */
+const unsyncedHint = computed(() => {
+  const current = detail.value
+  if (current === null || current.synced_at > 0) return null
+  const hint = typeof current.sync_hint === 'string' ? current.sync_hint.trim() : ''
+  return hint !== ''
+    ? hint
+    : '配置已记录在 Hub，但尚未成功下发到服务器，请检查同步状态，在此期间请不要启动或重建。'
+})
+
 /** 删除中 */
 const deleting = ref(false)
 
@@ -554,6 +580,22 @@ onUnmounted(() => {
                 @close="saveError = ''"
               >
                 {{ saveError }}
+              </n-alert>
+
+              <!--
+                常驻的未同步警告：由 synced_at === 0 推出，刷新/重开都不会消失。
+                与下面那条一次性 syncWarning 分开：那条只反映「刚才那次保存没下发成功」，
+                这条反映「这条编排本身还没落到服务器上」。
+                用 error 而不是 warning：此时启动/重建会与 Agent 侧不存在的东西打架。
+              -->
+              <n-alert
+                v-if="unsyncedHint !== null"
+                type="error"
+                :bordered="false"
+                title="尚未同步到服务器"
+                class="editor__error"
+              >
+                {{ unsyncedHint }}
               </n-alert>
 
               <!--

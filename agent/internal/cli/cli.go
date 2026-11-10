@@ -75,6 +75,13 @@ func Main(args []string, stdout, stderr io.Writer) int {
 	if cmd == "volume-file-helper" {
 		return helperfs.Run()
 	}
+	// 隐藏命令：compose-source-helper。
+	// 同样在配置解析 / Hub 连接 / 其余初始化之前返回：
+	// 容器里没有配置文件，也不该有任何出网动作。
+	// 根固定 /source，不是参数——见 helperfs.RunComposeSource 的说明。
+	if cmd == "compose-source-helper" {
+		return helperfs.RunComposeSource()
+	}
 	switch cmd {
 	case "run":
 		return cmdRun(rest, stderr)

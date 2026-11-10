@@ -30,6 +30,7 @@ type App struct {
 	agentSrv   *agentlink.Server
 	authSvc    *auth.Service
 	imageTasks *imagetask.Manager
+	autoAdopt  *autoAdopter
 }
 
 // NewApp 构造 Hub。所有依赖在此一次性创建，失败时返回明确原因。
@@ -61,7 +62,9 @@ func NewApp(ctx context.Context, cfg config.Config, log *slog.Logger, version st
 	ops := agentlink.NewOps(reg)
 
 	imageTasks := imagetask.New(agentlink.NewImageBackend(ops))
+	autoAdopt := newAutoAdopter(db, ops, reg.OnlineIDs)
 	router := NewRouter(Deps{
+		AutoAdopt:  autoAdopt,
 		ImageTasks: imageTasks,
 		Log:        log,
 		DB:         db,
@@ -95,6 +98,7 @@ func NewApp(ctx context.Context, cfg config.Config, log *slog.Logger, version st
 		agentSrv:   agentSrv,
 		authSvc:    authSvc,
 		imageTasks: imageTasks,
+		autoAdopt:  autoAdopt,
 	}, nil
 }
 
@@ -104,6 +108,7 @@ func (a *App) ListenAndServe() error {
 	if err != nil {
 		return fmt.Errorf("监听 %s 失败: %w", a.cfg.Server.Addr, err)
 	}
+	a.autoAdopt.start(context.Background())
 	a.log.Info("Hub 已启动", "addr", ln.Addr().String(), "web_dist", a.cfg.Web.Dist)
 	if err := a.server.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
@@ -113,6 +118,9 @@ func (a *App) ListenAndServe() error {
 
 // Shutdown 优雅关闭：先停止接收新请求，再关闭数据库。
 func (a *App) Shutdown(ctx context.Context) error {
+	if a.autoAdopt != nil {
+		a.autoAdopt.close()
+	}
 	if a.imageTasks != nil {
 		_ = a.imageTasks.Close()
 	}

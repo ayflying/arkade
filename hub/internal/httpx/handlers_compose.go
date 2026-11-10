@@ -252,7 +252,13 @@ func handleListStacks(d Deps) http.HandlerFunc {
 			if p, ok := remote[rec.Name]; ok {
 				rp = &p
 			}
-			views = append(views, toStackView(rec, rp))
+			view := toStackView(rec, rp)
+			if d.AutoAdopt != nil && rec.SyncedAt.IsZero() {
+				if s, ok := d.AutoAdopt.recordedState(agentID, rec.Name); ok {
+					view.SyncHint = s.Reason
+				}
+			}
+			views = append(views, view)
 		}
 
 		resp := map[string]any{
@@ -279,7 +285,15 @@ func handleListStacks(d Deps) http.HandlerFunc {
 			//
 			// 为什么 orphans 不直接改成对象数组：它已是既有的字符串数组契约，
 			// 改动会让已发布的前端解析失败。新增字段而不是改旧字段。
-			resp["external_stacks"] = toExternalStackViews(externals, known)
+			externalViews := toExternalStackViews(externals, known)
+			if d.AutoAdopt != nil {
+				for i := range externalViews {
+					s := d.AutoAdopt.state(agentID, externalViews[i].Name)
+					externalViews[i].AutoAdoptStatus = s.Status
+					externalViews[i].AutoAdoptReason = s.Reason
+				}
+			}
+			resp["external_stacks"] = externalViews
 		}
 		respondJSON(w, d.Log, http.StatusOK, resp)
 	}
@@ -304,7 +318,9 @@ type externalStackView struct {
 	//
 	// 前端可以据此统一走一套渲染逻辑（managed=false 就不显示操作按钮），
 	// 而不是靠"这个对象没有 id"来推断——那种隐式判断在新增字段时极易失效。
-	Managed bool `json:"managed"`
+	Managed         bool   `json:"managed"`
+	AutoAdoptStatus string `json:"auto_adopt_status,omitempty"`
+	AutoAdoptReason string `json:"auto_adopt_reason,omitempty"`
 }
 
 // toExternalStackViews 把 Agent 上报的外部项目转成展示模型。
@@ -410,8 +426,14 @@ func handleGetStack(d Deps) http.HandlerFunc {
 		}
 
 		// 详情仅返回运行元数据；配置内容从manage专用/config接口读取。
+		view := toStackView(rec, remote)
+		if d.AutoAdopt != nil && rec.SyncedAt.IsZero() {
+			if s, ok := d.AutoAdopt.recordedState(agentID, rec.Name); ok {
+				view.SyncHint = s.Reason
+			}
+		}
 		respondJSON(w, d.Log, http.StatusOK, map[string]any{
-			"stack": toStackView(rec, remote),
+			"stack": view,
 		})
 	}
 }

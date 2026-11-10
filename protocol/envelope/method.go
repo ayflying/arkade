@@ -9,7 +9,8 @@ package envelope
 // 关于握手：agent.hello 使用 request/response 语义而不是 event——
 // Hub 必须把分配的 agent_id 通过应答回传，event 没有应答通道。
 const (
-	MethodVolumeFiles = "volume.files"
+	MethodVolumeFiles   = "volume.files"
+	MethodComposeSource = "compose.source"
 	// 连接与会话（Agent → Hub 建连后握手）
 	MethodHello        = "agent.hello"         // Agent 上线握手（request/response）
 	MethodHeartbeat    = "agent.heartbeat"     // 心跳（event），携带简要状态摘要

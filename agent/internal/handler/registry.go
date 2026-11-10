@@ -178,6 +178,8 @@ func RegisterDefaultsWithTransfer(reg *Registry, rt runtime.Runtime, composeMgr 
 	// 因此注册在 composeMgr 提前返回之前。
 	// 引擎不支持时处理器内部返回 unsupported（可选接口断言）。
 	reg.Register(envelope.MethodVolumeFiles, newVolumeFilesHandler(rt))
+	// 编排配置来源读取：只读，不执行 compose、不写工作区，因此不依赖 composeMgr。
+	reg.Register(envelope.MethodComposeSource, newComposeSourceHandler(rt))
 
 	if composeMgr == nil {
 		return

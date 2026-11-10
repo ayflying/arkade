@@ -17,6 +17,7 @@
 
 import { httpDelete, httpGet, httpPost, httpPut } from './request'
 import type {
+  AutoAdoptStatus,
   CreateStackRequest,
   CreateStackResponse,
   DeleteStackResponse,
@@ -107,8 +108,30 @@ function normalizeStack(raw: StackSummary | undefined | null): StackSummary {
     agent_id: typeof s.agent_id === 'string' ? s.agent_id : '',
     version: typeof s.version === 'number' ? s.version : 0,
     updated_at: typeof s.updated_at === 'number' ? s.updated_at : 0,
-    synced_at: typeof s.synced_at === 'number' ? s.synced_at : 0
+    synced_at: typeof s.synced_at === 'number' ? s.synced_at : 0,
+    /*
+     * 未同步原因（仅自动接管失败时由 Hub 带上）。
+     * 缺失就是没有——**不编一个默认值**：Hub 重启后内存里的原因会丢，
+     * 前端此时要退回通用文案，而不是把缺字段伪装成「有原因」。
+     */
+    ...(typeof s.sync_hint === 'string' && s.sync_hint !== '' ? { sync_hint: s.sync_hint } : {})
   }
+}
+
+/**
+ * 合法的自动接管状态集合。
+ *
+ * 后端将来新增状态值时，前端**降级为 unknown 而不是原样透传**：
+ * 原样透传会让 `autoAdoptStatusView` 拿不到映射，界面要么空白要么显示英文枚举，
+ * 而 unknown 有明确的「这台 Hub 没给信息」语义，界面据此完全不显示接管文案。
+ */
+const AUTO_ADOPT_STATUSES: readonly AutoAdoptStatus[] = ['pending', 'skipped', 'failed', 'unknown']
+
+/** 把任意值收敛成合法状态；不认识的、缺失的一律 unknown */
+function normalizeAutoAdoptStatus(value: unknown): AutoAdoptStatus {
+  return typeof value === 'string' && (AUTO_ADOPT_STATUSES as readonly string[]).includes(value)
+    ? (value as AutoAdoptStatus)
+    : 'unknown'
 }
 
 /**
@@ -118,13 +141,22 @@ function normalizeStack(raw: StackSummary | undefined | null): StackSummary {
  * `managed` 后端恒定返回 false，缺失时也按 false（外部项目本就不受纳管）。
  */
 function normalizeExternal(raw: ExternalStack): ExternalStack {
+  const status = normalizeAutoAdoptStatus(raw.auto_adopt_status)
+  const reason = typeof raw.auto_adopt_reason === 'string' ? raw.auto_adopt_reason : ''
   return {
     name: typeof raw.name === 'string' ? raw.name : '',
     status: typeof raw.status === 'string' ? raw.status : 'unknown',
     services: Array.isArray(raw.services) ? raw.services : null,
     running: typeof raw.running === 'number' ? raw.running : null,
     total: typeof raw.total === 'number' ? raw.total : null,
-    managed: raw.managed === true
+    managed: raw.managed === true,
+    auto_adopt_status: status,
+    /*
+     * 旧 Hub（status 为 unknown）**不保留 reason**：
+     * 契约里 reason 只在 skipped/failed 时有意义，unknown 下带着只会被误显示成
+     * 「这台 Hub 说有原因」，反而误导。宁可丢掉也不推测。
+     */
+    auto_adopt_reason: status === 'unknown' ? '' : reason
   }
 }
 
