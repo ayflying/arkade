@@ -494,7 +494,7 @@ const adoptSrc = readFileSync(
   join(here, '..', 'src', 'components', 'stack', 'AutoAdoptStatus.vue'),
   'utf8'
 )
-const stackListSrc = readFileSync(join(here, '..', 'src', 'views', 'StackListView.vue'), 'utf8')
+const stackListSrc = readFileSync(join(here, '..', 'src', 'components', 'stack', 'StackUnifiedTable.vue'), 'utf8')
 
 check(
   '文案: 容器来源 discovered 显示「外部项目」',
@@ -515,8 +515,8 @@ check(
   !/暂不能接管的原因/.test(stackListSrc)
 )
 check(
-  '文案: 编排列表改为「登记配置」的说法',
-  /自动为兼容项目登记配置/.test(stackListSrc)
+  '文案: 统一表明确区分配置来源和登记状态',
+  /title: '配置来源'/.test(stackListSrc) && /title: '登记状态'/.test(stackListSrc)
 )
 
 /* ───────── 契约对齐：时间字段与资源上限语义 ───────── */
@@ -588,7 +588,7 @@ check(
 
 /* 所有容器列表都要有名称链接 + 结构化端口 */
 const extContainersSrc = readFileSync(
-  join(here, '..', 'src', 'components', 'external', 'ExternalStackContainers.vue'),
+  join(here, '..', 'src', 'components', 'stack', 'StackContainersTable.vue'),
   'utf8'
 )
 const stackDetailSrc = readFileSync(
@@ -598,7 +598,7 @@ const stackDetailSrc = readFileSync(
 
 check(
   '外部项目容器表: 名称可点击进详情',
-  /goDetail/.test(extContainersSrc) && /agent-container-detail/.test(extContainersSrc)
+  /RouterLink/.test(extContainersSrc) && /agent-container-detail/.test(extContainersSrc)
 )
 check(
   '外部项目容器表: 复用同一个端口单元格',
@@ -615,19 +615,18 @@ check(
 )
 check(
   '外部详情: 向容器表传入 agentId 与 directAddress',
-  /direct-address="directAddress"/.test(readFileSync(
-    join(here, '..', 'src', 'views', 'ExternalStackDetailView.vue'), 'utf8'))
+  /:direct-address="agent\?\.direct_address \?\? ''"/.test(stackDetailSrc) && /<stack-containers-table/.test(stackDetailSrc)
 )
 
-/* managed 编排的 stack ps 表：没有端口字段，只给名称入口 */
+/* 两类项目共用统一 summary 容器表，不再受旧 stack ps 无端口字段限制 */
 check(
   '编排详情容器表: 名称可点击进详情',
-  /goContainerDetail/.test(stackDetailSrc) && /agent-container-detail/.test(stackDetailSrc)
+  /StackContainersTable/.test(stackDetailSrc) && /agent-container-detail/.test(extContainersSrc)
 )
 check(
-  '编排详情容器表: 不硬塞端口列（stack ps 无端口字段）',
-  !/title: '端口'/.test(stackDetailSrc),
-  '没有数据却加端口列，会让用户以为端口功能坏了'
+  '编排详情容器表: 统一 summary 提供结构化端口，不再调用 stack ps',
+  /ContainerPortCell/.test(extContainersSrc) && !/listStackPs/.test(stackDetailSrc),
+  '统一表必须消费 summary 的结构化端口，不能回退旧 ps 数据'
 )
 
 /* ───────── 结果 ───────── */

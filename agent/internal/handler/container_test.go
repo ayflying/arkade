@@ -68,6 +68,88 @@ func TestContainerSummaryNoPortsYieldsNilPublished(t *testing.T) {
 	}
 }
 
+// TestContainerSummaryMapsNetworks 验证网络与地址被搬到协议、且顺序稳定。
+func TestContainerSummaryMapsNetworks(t *testing.T) {
+	rt := &fakeRuntime{containers: []runtime.Container{
+		{
+			ID:          "1111111111111111111111",
+			Name:        "demo-web-1",
+			NetworkMode: "demo_default",
+			Networks: []runtime.ContainerNetwork{
+				{Name: "bridge", IPAddress: "172.17.0.5"},
+				{Name: "demo_default", IPAddress: "172.18.0.9", IPv6Address: "fd00::9"},
+			},
+		},
+	}}
+	res, err := newListHandler(rt)(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := res.(envelope.ContainerListResult).Containers[0]
+	if c.NetworkMode != "demo_default" {
+		t.Fatalf("NetworkMode 不符: %q", c.NetworkMode)
+	}
+	if len(c.Networks) != 2 {
+		t.Fatalf("应有 2 个网络，实际 %+v", c.Networks)
+	}
+	if c.Networks[0].Name != "bridge" || c.Networks[1].Name != "demo_default" {
+		t.Fatalf("网络顺序不符: %+v", c.Networks)
+	}
+	if c.Networks[1].IPv6Address != "fd00::9" {
+		t.Fatalf("IPv6 应被带出: %+v", c.Networks[1])
+	}
+}
+
+// TestContainerSummaryHostModeKeepsEmptyNetworks 验证 host 模式不伪造地址。
+func TestContainerSummaryHostModeKeepsEmptyNetworks(t *testing.T) {
+	rt := &fakeRuntime{containers: []runtime.Container{
+		{ID: "2222222222222222222222", Name: "hostmode", NetworkMode: "host"},
+	}}
+	res, _ := newListHandler(rt)(context.Background(), nil)
+	c := res.(envelope.ContainerListResult).Containers[0]
+	if len(c.Networks) != 0 {
+		t.Fatalf("host 模式不应有网络条目: %+v", c.Networks)
+	}
+	if c.NetworkMode != "host" {
+		t.Fatalf("host 模式的 NetworkMode 必须带出，否则界面无法区分空值含义: %q", c.NetworkMode)
+	}
+}
+
+// TestContainerSummaryNetworkPayloadHasNoTopology 是安全断言：
+// 列表载荷里只有网络名与 IP，不含网关/子网/MAC/端点 ID/集群细节。
+func TestContainerSummaryNetworkPayloadHasNoTopology(t *testing.T) {
+	rt := &fakeRuntime{containers: []runtime.Container{
+		{
+			ID:   "3333333333333333333333",
+			Name: "x",
+			Networks: []runtime.ContainerNetwork{
+				{Name: "bridge", IPAddress: "172.17.0.5", IPv6Address: "fd00::5"},
+			},
+		},
+	}}
+	res, _ := newListHandler(rt)(context.Background(), nil)
+	c := res.(envelope.ContainerListResult).Containers[0]
+	raw, jerr := json.Marshal(c)
+	if jerr != nil {
+		t.Fatal(jerr)
+	}
+	s := strings.ToLower(string(raw))
+	for _, banned := range []string{
+		"gateway", "ip_prefix", "ipprefixlen", "macaddress",
+		"endpoint_id", "network_id", "subnet", "sandbox",
+	} {
+		if strings.Contains(s, banned) {
+			t.Fatalf("列表载荷不应包含网络拓扑字段 %q: %s", banned, raw)
+		}
+	}
+	// 也不该出现 Labels/Env。
+	for _, banned := range []string{`"env"`, `"labels"`} {
+		if strings.Contains(s, banned) {
+			t.Fatalf("列表载荷不应包含 %s: %s", banned, raw)
+		}
+	}
+}
+
 // TestContainerSummaryStackIDFromComposeLabel 验证有 compose 项目标签时填进 StackID。
 func TestContainerSummaryStackIDFromComposeLabel(t *testing.T) {
 	rt := &fakeRuntime{containers: []runtime.Container{

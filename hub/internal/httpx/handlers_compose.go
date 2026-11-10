@@ -21,6 +21,7 @@ package httpx
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sort"
 	"time"
@@ -228,12 +229,9 @@ func handleListStacks(d Deps) http.HandlerFunc {
 
 		// 拉 Agent 实时状态。失败（离线）不是错误：降级为 offline 继续返回 Hub 记录。
 		remote := map[string]envelope.ComposeProjectSummary{}
-		// externals 是 Agent 上报的「机器上已有、Arkade 未纳管」项目。
-		//
-		// 与 remote 分开存：remote 是"工作区里的项目"，用来给 Hub 记录补实时状态；
-		// externals 是"根本不属于 Arkade 的项目"，只能展示、不能管理。
-		// 混在一张表里会导致前端给外部项目渲染编辑/删除按钮——
-		// 点下去就是对外部生产环境动手，必须避免。
+		// 数据来源仍分两组供旧客户端兼容，新界面按名称合并为一个列表。
+		// 外部项目没有Hub配置，但容器依然可直接管理；不能因此调用工作区
+		// 保存并部署/删除项目接口。动作按配置能力选择，不按列表位置猜测。
 		externals := make([]envelope.ComposeProjectSummary, 0)
 		agentOnline := true
 		list, cerr := d.Ops.ComposeList(r.Context(), agentID)
@@ -363,6 +361,7 @@ func toStackView(rec store.ComposeStack, remote *envelope.ComposeProjectSummary)
 	v := composeStackView{
 		AgentID:    rec.AgentID,
 		Name:       rec.Name,
+		Managed:    true,
 		ConfigHash: rec.ConfigHash,
 		Version:    rec.Version,
 		UpdatedAt:  rec.UpdatedAt.Unix(),
@@ -408,6 +407,10 @@ func handleGetStack(d Deps) http.HandlerFunc {
 		}
 
 		rec, err := d.DB.GetComposeStack(r.Context(), agentID, name)
+		if errors.Is(err, store.ErrNotFound) {
+			handleUnifiedExternalDetail(w, r, d, agentID, name)
+			return
+		}
 		if err != nil {
 			respondStoreError(w, d, err, "编排不存在")
 			return
@@ -432,9 +435,7 @@ func handleGetStack(d Deps) http.HandlerFunc {
 				view.SyncHint = s.Reason
 			}
 		}
-		respondJSON(w, d.Log, http.StatusOK, map[string]any{
-			"stack": view,
-		})
+		respondUnifiedStackDetail(w, r, d, agentID, name, view)
 	}
 }
 

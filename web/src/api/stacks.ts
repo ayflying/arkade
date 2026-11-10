@@ -187,6 +187,14 @@ export async function listStacks(agentId: string): Promise<StackListResponse> {
  * 详情**不含 compose 原文**（配置含 .env 属敏感内容，只走 config 接口），
  * 需要内容请用 getStackConfig。
  */
+export async function getUnifiedStack(agentId: string, name: string): Promise<import('@/types/stack').UnifiedStackDetailResponse> {
+  const res = await httpGet<import('@/types/stack').UnifiedStackDetailResponse>(stackPath(agentId, name))
+  const stack = res.stack.managed === false
+    ? { ...normalizeExternal(res.stack), managed: false as const }
+    : { ...normalizeStack(res.stack as StackSummary), managed: true as const }
+  return { stack, containers: Array.isArray(res.containers) ? res.containers : [], containers_error: res.containers_error }
+}
+
 export async function getStack(agentId: string, name: string): Promise<StackDetail> {
   const res = await httpGet<StackEnvelope & { content?: string }>(stackPath(agentId, name))
   return {

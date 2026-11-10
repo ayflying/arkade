@@ -189,6 +189,13 @@ export interface StackListResponse {
  * 解包放在 api/stacks.ts 里完成，页面拿到的永远是扁平的 StackDetail，
  * 否则每个调用点都要记得多剥一层，早晚有人写成 `detail.name` 拿到 undefined。
  */
+export type UnifiedStack = (StackDetail & { managed: true }) | (ExternalStack & { managed: false })
+export interface UnifiedStackDetailResponse {
+  stack: UnifiedStack
+  containers: import('./container').Container[]
+  containers_error?: string
+}
+
 export interface StackDetail extends StackSummary {
   /**
    * compose 原文。**后端已不再随详情返回**，保留字段仅为兼容旧响应，

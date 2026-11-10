@@ -471,6 +471,13 @@ func TestStackNotFound(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.method+" "+c.path, func(t *testing.T) {
 			rec, parsed := env.do(t, c.method, c.path, "", cookies)
+			if c.method == http.MethodGet && c.path == base {
+				// 统一详情还要查询引擎现存项目；离线不能断言不存在。
+				if rec.Code != http.StatusServiceUnavailable || parsed.Error.Code != "agent_offline" {
+					t.Fatalf("离线应返回503: %s", rec.Body.String())
+				}
+				return
+			}
 			if rec.Code != http.StatusNotFound {
 				t.Fatalf("应返回 404，实际 %d，响应 %s", rec.Code, rec.Body.String())
 			}

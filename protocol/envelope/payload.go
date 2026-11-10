@@ -69,6 +69,26 @@ type ContainerSummary struct {
 	// 结构化数据用于排序、筛选与端口冲突判断（界面无法从字符串可靠地做这些）。
 	// 只含真正发布到宿主机的条目；容器内 EXPOSE 但未发布的端口不在此列。
 	PublishedPorts []PublishedPort `json:"published_ports,omitempty"`
+	// Networks 是容器接入的网络与地址，直接来自 /containers/json。
+	//
+	// 存在的理由：统一编排详情页要在**容器列表**里显示"这个容器在哪个网络、
+	// IP 是什么"。若靠逐个 container.inspect 补齐就是 N+1 次调用，
+	// 而且 inspect 会带回挂载源路径、命令参数等敏感字段——
+	// 只读视图没有理由拿到那些东西。
+	//
+	// 因此这里只搬运列表接口本来就有的安全子集（网络名 + IP），
+	// 一次列表调用即可，且**不引入 inspect**。
+	//
+	// 为空（omitempty）表示该容器没有可用地址：host 模式、
+	// network_mode: none、或引擎未返回网络信息。
+	// 消费方不得把空值兜底成 0.0.0.0 或宿主机地址。
+	Networks []ContainerNetwork `json:"networks,omitempty"`
+	// NetworkMode 是容器的网络模式（host / bridge / none / 自定义网络名）。
+	//
+	// 与 Networks 配合使用：host 模式下 Networks 为空是**正常**的
+	// （容器与宿主共享网络栈，没有独立 IP），而不是"引擎没给数据"。
+	// 没有这个字段，前端无法区分这两种空，只能显示成"未知"。
+	NetworkMode string `json:"network_mode,omitempty"`
 }
 
 // ContainerListResult 是容器列表应答。

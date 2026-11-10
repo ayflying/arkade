@@ -77,7 +77,29 @@ func toSummary(c runtime.Container) envelope.ContainerSummary {
 		Created:        c.CreatedUnix,
 		Ports:          formatPorts(c.Ports),
 		PublishedPorts: toPublishedPorts(c.Ports),
+		Networks:       toSummaryNetworks(c.Networks),
+		NetworkMode:    c.NetworkMode,
 	}
+}
+
+// toSummaryNetworks 把运行时网络信息转成协议结构（安全子集）。
+//
+// 只搬名字与两个地址。空地址**原样保留为空**：
+// host 模式与 network_mode: none 的容器本来就没有 IP，
+// 补成 0.0.0.0 或宿主机地址等于编造一个不存在的可访问地址。
+func toSummaryNetworks(ns []runtime.ContainerNetwork) []envelope.ContainerNetwork {
+	if len(ns) == 0 {
+		return nil
+	}
+	out := make([]envelope.ContainerNetwork, 0, len(ns))
+	for _, n := range ns {
+		out = append(out, envelope.ContainerNetwork{
+			Name:        n.Name,
+			IPAddress:   n.IPAddress,
+			IPv6Address: n.IPv6Address,
+		})
+	}
+	return out
 }
 
 // toPublishedPorts 只挑出**真正发布到宿主机**的端口。

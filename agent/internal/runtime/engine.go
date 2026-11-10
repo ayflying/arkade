@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -62,6 +63,26 @@ type listResp struct {
 		PublicPort  int    `json:"PublicPort"`
 		Type        string `json:"Type"`
 	} `json:"Ports"`
+	// NetworkSettings 在列表响应里是 NetworkSettingsSummary，
+	// **只有 Networks 一个字段**（没有 Ports，端口在顶层）。
+	//
+	// 这是唯一能在"一次列表调用"里拿到容器 IP 的地方。
+	// 用指针是因为老版本/某些兼容实现可能整个字段缺失（Podman 早期版本）。
+	NetworkSettings *struct {
+		Networks map[string]*struct {
+			IPAddress      string `json:"IPAddress"`
+			GlobalIPv6Addr string `json:"GlobalIPv6Address"`
+		} `json:"Networks"`
+	} `json:"NetworkSettings"`
+	// HostConfig 在列表响应里只取 NetworkMode。
+	//
+	// 这是安全字段（"host"/"bridge"/"none"/网络名），不含任何挂载或权限细节。
+	// 界面需要它来区分"host 模式本来就没有独立 IP"与"容器还没拿到 IP"——
+	// 两种情况下 Networks 都可能为空，但用户的解读完全不同，
+	// 前者正常、后者可能是故障。
+	HostConfig struct {
+		NetworkMode string `json:"NetworkMode"`
+	} `json:"HostConfig"`
 }
 
 // List 实现 Runtime。
@@ -95,7 +116,28 @@ func toContainer(r listResp) Container {
 	for _, p := range r.Ports {
 		c.Ports = append(c.Ports, Port{IP: p.IP, Private: p.PrivatePort, Public: p.PublicPort, Type: p.Type})
 	}
+	// 网络与地址：稳定排序，避免前端每次刷新顺序抖动。
+	if r.NetworkSettings != nil {
+		for name, n := range r.NetworkSettings.Networks {
+			cn := ContainerNetwork{Name: name}
+			if n != nil {
+				cn.IPAddress = n.IPAddress
+				cn.IPv6Address = n.GlobalIPv6Addr
+			}
+			c.Networks = append(c.Networks, cn)
+		}
+		sortContainerNetworks(c.Networks)
+	}
+	c.NetworkMode = r.HostConfig.NetworkMode
 	return c
+}
+
+// sortContainerNetworks 按网络名排序。
+//
+// 遍历 map 的顺序是随机的；不排序的话同一个容器每次列表返回的网络顺序
+// 都可能不同，前端做差异对比时会误判为"变更"。
+func sortContainerNetworks(ns []ContainerNetwork) {
+	sort.Slice(ns, func(i, j int) bool { return ns[i].Name < ns[j].Name })
 }
 
 // firstContainerName 取主容器名并去掉运行时的前导斜杠。

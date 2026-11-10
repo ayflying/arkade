@@ -37,9 +37,25 @@ type PublishedPort struct {
 //
 // 只给名字与容器在该网络里的地址，不给网关、子网、DNS 等内部拓扑，
 // 那些信息对"看这个容器在哪"没有帮助，却会暴露宿主机网络布局。
+//
+// ============================ 为什么带 IPv6 ============================
+//
+// Docker 的 EndpointSettings 同时给 IPAddress 与 GlobalIPv6Address，
+// 双栈网络下只显示 IPv4 会让用户以为没有 IPv6 地址。
+// 但 IPv6 在多数部署里为空，所以用 omitempty——空值不出现在协议里，
+// 前端不需要判断"这个空字符串是不是代表没有"。
+//
+// ============================ 空值的含义 ============================
+//
+// 两个地址都为空**不代表**容器没有网络，而是代表"该网络没有分配地址"：
+// host 模式、network_mode: none 的容器就是这种形态。
+// 消费方绝不能把空值兜底成 0.0.0.0 或宿主机地址——那是在编造事实。
 type ContainerNetwork struct {
-	Name      string `json:"name"`
+	Name string `json:"name"`
+	// IPAddress 是 IPv4 地址；host/none 模式下为空字符串。
 	IPAddress string `json:"ip_address"`
+	// IPv6Address 是全局 IPv6 地址；非双栈或未分配时省略。
+	IPv6Address string `json:"ipv6_address,omitempty"`
 }
 
 // ContainerMount 是容器的一个挂载点。

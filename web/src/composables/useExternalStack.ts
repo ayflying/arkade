@@ -21,6 +21,7 @@ import {
 interface Options {
   agentId: () => string
   name: () => string
+  configOnly?: boolean
 }
 
 /** 配置区状态：区分「没权限」和「读不到」和「正常」 */
@@ -59,11 +60,11 @@ export function useExternalStack(options: Options) {
     detailError.value = ''
     try {
       const res = await getExternalStack(id, nm)
-      if (seq !== detailSeq) return
+      if (seq !== detailSeq || id !== options.agentId() || nm !== options.name()) return
       project.value = res.project
       containers.value = res.containers
     } catch (err) {
-      if (seq !== detailSeq) return
+      if (seq !== detailSeq || id !== options.agentId() || nm !== options.name()) return
       detailError.value = err instanceof Error ? err.message : '加载失败'
       project.value = null
       containers.value = []
@@ -94,7 +95,7 @@ export function useExternalStack(options: Options) {
     configReason.value = ''
     try {
       const res = await getExternalStackConfig(id, nm)
-      if (seq !== configSeq) return
+      if (seq !== configSeq || id !== options.agentId() || nm !== options.name()) return
       rawContent.value = res.content ?? ''
       configHash.value = res.config_hash ?? ''
       blockers.value = res.blockers ?? []
@@ -110,7 +111,7 @@ export function useExternalStack(options: Options) {
       // 有 accessible 内容才算 ready；blockers 不影响可读性
       configState.value = 'ready'
     } catch (err) {
-      if (seq !== configSeq) return
+      if (seq !== configSeq || id !== options.agentId() || nm !== options.name()) return
       // 403 是权限，不是故障
       const forbidden = err instanceof ApiError && err.status === 403
       configState.value = forbidden ? 'forbidden' : 'error'
@@ -132,6 +133,7 @@ export function useExternalStack(options: Options) {
     const id = options.agentId()
     const nm = options.name()
     if (id === '' || nm === '' || savingDraft.value) return false
+    const seq = configSeq
     savingDraft.value = true
     draftError.value = ''
     try {
@@ -140,14 +142,16 @@ export function useExternalStack(options: Options) {
         source_hash: configHash.value,
         expected_version: expectedVersion
       })
+      if (seq !== configSeq || id !== options.agentId() || nm !== options.name()) return false
       draft.value = res.draft
       return true
     } catch (err) {
+      if (seq !== configSeq || id !== options.agentId() || nm !== options.name()) return false
       // 409 = 别处已经改过草稿，要让人看到并重新加载，不能静默覆盖
       draftError.value = err instanceof Error ? err.message : '草稿保存失败'
       return false
     } finally {
-      savingDraft.value = false
+      if (seq === configSeq) savingDraft.value = false
     }
   }
 
@@ -167,6 +171,8 @@ export function useExternalStack(options: Options) {
     configError.value = ''
     draftError.value = ''
     draftOnly.value = false
+    savingDraft.value = false
+    detailLoading.value = false
   }
 
   const hasBlockers = computed(() => blockers.value.length > 0)
@@ -187,15 +193,12 @@ export function useExternalStack(options: Options) {
       if (nextAgent === prevAgent && nextName === prevName) return
       reset()
       if (nextAgent === '' || nextName === '') return
-      void loadDetail()
+      if (!options.configOnly) void loadDetail()
       void loadConfig()
     }
   )
 
-  onUnmounted(() => {
-    detailSeq++
-    configSeq++
-  })
+  onUnmounted(reset)
 
   return {
     project,

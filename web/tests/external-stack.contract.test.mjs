@@ -11,7 +11,7 @@
  * - 复制**不承诺**完整迁移（不复制数据/镜像、不启动、保留源）。
  */
 import { registerHooks } from 'node:module'
-import { readFileSync, existsSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
@@ -316,7 +316,7 @@ check('复制: 缺 started 时按未启动处理', copiedMinimal.started === fal
 
 /* 几个源文件在下面多处断言要用，统一在这里读一次 */
 const viewSrc = readFileSync(
-  join(here, '..', 'src', 'views', 'ExternalStackDetailView.vue'),
+  join(here, '..', 'src', 'composables', 'useExternalStackConfigActions.ts'),
   'utf8'
 )
 const configPanelSrc = readFileSync(
@@ -331,6 +331,10 @@ const storeSrc = readFileSync(
   join(here, '..', 'src', 'composables', 'useExternalStack.ts'),
   'utf8'
 )
+
+const sectionSrc = readFileSync(join(here, '..', 'src', 'components', 'stack', 'ExternalStackConfigSection.vue'), 'utf8')
+const detailSrc = readFileSync(join(here, '..', 'src', 'views', 'StackDetailView.vue'), 'utf8')
+const unifiedStoreSrc = readFileSync(join(here, '..', 'src', 'composables', 'useStackDetail.ts'), 'utf8')
 
 /*
  * 草稿存在 Hub 数据库里，和磁盘文件是两个独立来源。
@@ -402,7 +406,7 @@ check(
 )
 check(
   '配置面板: 向上同步编辑器内容',
-  /'update:content'/.test(configPanelSrc) && /update:content/.test(viewSrc),
+  /'update:content'/.test(configPanelSrc) && /update:content/.test(sectionSrc),
   '父组件拿不到编辑器实际内容'
 )
 
@@ -444,7 +448,7 @@ check(
     /nextAgent === prevAgent/.test(storeSrc),
   '路由切换后不会重新加载，会显示上一个项目的数据'
 )
-check('路由: 视图也监听参数变化重置局部状态', /activeTab\.value = 'overview'/.test(viewSrc))
+check('路由: 视图也监听参数变化重置局部状态', /activeTab\.value = 'containers'/.test(detailSrc) && detailSrc.includes(':key="projectKey + \':external\'"'))
 check('路由: 没有引入轮询', !/usePolling|setInterval/.test(viewSrc) && !/usePolling|setInterval/.test(storeSrc))
 
 /* ───────── 409 不能一律宣称「已登记」 ───────── */
@@ -462,7 +466,7 @@ check(
   '登记: 409 提示里不出现「已登记到 Arkade」的断言',
   !/已经登记到 Arkade 了/.test(viewSrc)
 )
-check('登记: 入口文案是「查看已纳管项目」', /查看已纳管项目/.test(viewSrc))
+check('登记: 入口文案是「查看已纳管项目」', /查看已纳管项目/.test(sectionSrc))
 
 /* ───────── 复制成功文案不能说过头 ───────── */
 
@@ -485,7 +489,7 @@ check('复制: 明确未下发且不会自动启动', /尚未下发到目标服�
  * 卷文件管理器就漏过一次，当时的测试只查了源码存在性，没发现界面是空的。
  */
 const containersSrc = readFileSync(
-  join(here, '..', 'src', 'components', 'external', 'ExternalStackContainers.vue'),
+  join(here, '..', 'src', 'components', 'stack', 'StackContainersTable.vue'),
   'utf8'
 )
 
@@ -526,7 +530,7 @@ check(
   /description="这个编排当前没有容器/.test(containersSrc),
   '空表没说明，用户会以为加载失败'
 )
-check('容器表: 视图在概览下方接入', /external-stack-containers/.test(viewSrc))
+check('容器表: 视图在概览下方接入', /<stack-containers-table/.test(detailSrc))
 
 /* ───────── 总览页未纳管告警的措辞与跳转 ───────── */
 
@@ -573,8 +577,8 @@ check(
   externalIdx > -1 && genericIdx > -1 && externalIdx < genericIdx,
   `external=${String(externalIdx)} generic=${String(genericIdx)}`
 )
-check('列表: 外部编排名可点击进详情', /goExternalDetail/.test(listSrc))
-check('列表: 跳转到外部详情路由', /agent-stack-external-detail/.test(listSrc))
+check('列表: 外部编排名可点击进详情', /@open="goDetail"/.test(listSrc))
+check('列表: 跳转到外部详情路由', /agent-stack-detail/.test(listSrc) && /redirect: \(to\) => \(\{ name: 'agent-stack-detail'/.test(routerSrc))
 
 // 视图必须把 403 当权限提示，而不是加载失败（文案在 composable 里生成）
 check('视图: 配置 403 与故障分开处理', /forbidden/.test(storeSrc))
@@ -587,7 +591,7 @@ check(
 )
 check(
   '配置面板: 不可读时禁用编辑（canEdit 传入 false）',
-  /can-edit="store\.configState\.value === 'ready'"/.test(viewSrc)
+  /can-edit="store\.configState\.value === 'ready'"/.test(sectionSrc)
 )
 
 // 草稿按钮文案与「不写服务器」承诺
@@ -601,8 +605,8 @@ check(
 check('配置面板: blockers 明确不阻止存草稿', /仍然可以继续编辑并保存草稿/.test(configPanelSrc))
 
 // 登记文案不能承诺改变运行状态
-check('视图: 动作叫「登记到 Arkade」', /登记到 Arkade/.test(viewSrc))
-check('视图: 说明登记不启动不重启', /不启动也不重启/.test(viewSrc))
+check('视图: 动作叫「登记到 Arkade」', /登记到 Arkade/.test(sectionSrc))
+check('视图: 说明登记不启动不重启', /不启动也不重启/.test(sectionSrc))
 
 // 复制弹窗必须列明不含什么，且不叫「迁移」
 check('复制弹窗: 标题不叫迁移', /复制配置到其他服务器/.test(copyModalSrc) && !/title="迁移/.test(copyModalSrc))
@@ -615,23 +619,22 @@ check('复制弹窗: 说明保留源', /源服务器上的配置与容器都不�
 
 // 日志复用现有容器日志接口，不新增 external/logs 端点
 const logsSrc = readFileSync(
-  join(here, '..', 'src', 'components', 'external', 'ExternalStackLogs.vue'),
+  join(here, '..', 'src', 'components', 'stack', 'StackContainerLogs.vue'),
   'utf8'
 )
 check('日志: 复用容器日志接口', /fetchContainerLogs/.test(logsSrc))
-check('日志: 视图通过独立组件接入', /ExternalStackLogs/.test(viewSrc))
+check('日志: 视图通过独立组件接入', /StackContainerLogs/.test(detailSrc))
 check('API: 没有 external/logs 端点', !/\/logs/.test(readFileSync(join(here, '..', 'src', 'api', 'externalStacks.ts'), 'utf8')))
 
-// 不扩已纳管详情页
-const detailViewSrc = readFileSync(join(here, '..', 'src', 'views', 'StackDetailView.vue'), 'utf8')
-check(
-  '不改动已纳管详情页：没有外部项目逻辑',
-  !/external-stacks/.test(detailViewSrc) && !/useExternalStack/.test(detailViewSrc)
-)
-
-// 视图保持短文件（分模块的验收标准）
-const viewLines = viewSrc.replace(/\n$/, '').split('\n').length
-check('视图: 外部详情页不超过 420 行', viewLines <= 420, `实际 ${viewLines} 行`)
+// 统一详情仅按 managed 分流配置，复用容器和日志。
+check('统一详情: 配置能力按 managed 分支装配', /<managed-stack-config-panel v-if="managed"/.test(detailSrc) && /<external-stack-config-section v-else/.test(detailSrc))
+check('统一详情: 配置不重复请求旧 external 详情', /configOnly: true/.test(viewSrc) && /if \(!options.configOnly\) void loadDetail\(\)/.test(storeSrc))
+check('统一详情: 请求有序号和目标快照双重 async guard', /mine !== seq \|\| !sameStackTarget\(snapshot, target\(\)\)/.test(unifiedStoreSrc) && /onUnmounted/.test(unifiedStoreSrc))
+check('登记: 预检阻塞时不可到达确认和登记', /if \(!pre.can_import\) \{[^]*?return[^]*?confirmAction[^]*?applyExternalStack/.test(viewSrc))
+check('登记: 显式确认并带预检哈希', /await confirmAction/.test(viewSrc) && /expected_content_hash: pre.config_hash/.test(viewSrc) && /confirmation: true/.test(viewSrc))
+check('配置动作: 已卸载组件不得接受迟到回执', /onUnmounted\(\(\) => \{ alive = false \}\)/.test(viewSrc) && (viewSrc.match(/if \(!alive\) return/g) ?? []).length >= 6)
+check('草稿: 首次CAS为0后续使用草稿版本', /props\.draft\?\.version \?\? 0/.test(configPanelSrc) && /emit\('saveDraft', content.value, expectedVersion.value\)/.test(configPanelSrc))
+check('视图: shell和动作分别保持小模块', detailSrc.split('\n').length <= 420 && viewSrc.split('\n').length <= 420)
 
 /* ───────── 结果 ───────── */
 

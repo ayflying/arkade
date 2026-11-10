@@ -26,6 +26,28 @@ type Container struct {
 	Ports       []Port            // 端口映射
 	Labels      map[string]string // 容器标签（识别 Arkade 归属需要）
 	CreatedUnix int64             // 创建时间 Unix 秒
+	// Networks 是容器接入的网络与地址（来自列表接口的
+	// NetworkSettings.Networks，不额外 inspect）。
+	//
+	// 只取网络名 + IPv4/IPv6 地址：网关、子网、MAC、端点 ID
+	// 都是宿主机内部拓扑，界面不需要，也没有理由外传。
+	Networks []ContainerNetwork
+	// NetworkMode 来自列表接口的 HostConfig.NetworkMode（安全字段）。
+	//
+	// "host" 模式下容器与宿主共享网络栈，Networks 通常为空——
+	// 这是**正常**状态，不是故障。界面需要它来区分这两种空。
+	NetworkMode string
+}
+
+// ContainerNetwork 是容器在一个网络里的身份。
+//
+// 两个地址都可能为空：host 模式与 network_mode: none 的容器
+// 没有任何网络分配。空值就是空值，**不得**伪造成 0.0.0.0
+// 或宿主机地址——那会让用户以为容器有可访问的 IP。
+type ContainerNetwork struct {
+	Name        string
+	IPAddress   string // IPv4；无分配时为空
+	IPv6Address string // 全局 IPv6；非双栈时为空
 }
 
 // Port 是一条端口映射。

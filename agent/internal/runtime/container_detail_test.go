@@ -236,6 +236,56 @@ func TestInspectPublishedSpecNotInExposed(t *testing.T) {
 	}
 }
 
+// TestInspectNetworkIncludesIPv6 验证 inspect 也带出全局 IPv6 地址。
+//
+// 与列表保持一致，Hub 才能用同一套结构渲染"网络名 + IPv4 + IPv6"。
+func TestInspectNetworkIncludesIPv6(t *testing.T) {
+	const body = `{
+	  "Id":"x","Name":"/c","Config":{"Image":"a"},
+	  "NetworkSettings":{
+	    "Networks":{
+	      "dual":{"IPAddress":"172.18.0.9","GlobalIPv6Address":"fd00::9"},
+	      "bridge":{"IPAddress":"172.17.0.5","GlobalIPv6Address":""}
+	    }
+	  }
+	}`
+	e := inspectEngine(t, body)
+	d, err := e.InspectContainer(context.Background(), "c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]InspectNetwork{}
+	for _, n := range d.Networks {
+		byName[n.Name] = n
+	}
+	if n := byName["dual"]; n.IPAddress != "172.18.0.9" || n.IPv6Address != "fd00::9" {
+		t.Fatalf("双栈网络解析错误: %+v", n)
+	}
+	if n := byName["bridge"]; n.IPv6Address != "" {
+		t.Fatalf("无 IPv6 时应为空: %+v", n)
+	}
+}
+
+// TestInspectHostModeHasNoFakeIP 验证 host 模式不伪造地址。
+func TestInspectHostModeHasNoFakeIP(t *testing.T) {
+	const body = `{
+	  "Id":"x","Name":"/c","Config":{"Image":"a"},
+	  "HostConfig":{"NetworkMode":"host"},
+	  "NetworkSettings":{"Networks":{}}
+	}`
+	e := inspectEngine(t, body)
+	d, err := e.InspectContainer(context.Background(), "c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Networks) != 0 {
+		t.Fatalf("host 模式不应有网络条目: %+v", d.Networks)
+	}
+	if d.NetworkMode != "host" {
+		t.Fatalf("NetworkMode 应为 host: %q", d.NetworkMode)
+	}
+}
+
 // TestInspectParsesRealDaemonShape 验证真实形状能被正确解析。
 func TestInspectParsesRealDaemonShape(t *testing.T) {
 	e := inspectEngine(t, realInspectJSON)

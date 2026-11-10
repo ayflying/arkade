@@ -52,7 +52,7 @@ export async function httpPut(url, body) { return globalThis.__ARKADE_STUB__.put
 export async function httpDelete(url) { return globalThis.__ARKADE_STUB__.del(url) }
 `
 
-const requestPath = join(here, '..', 'src', 'api', 'request.ts')
+const { buildStackRows } = await import('../src/utils/stackListModel.ts')
 
 registerHooks({
   resolve(specifier, context, nextResolve) {
@@ -430,128 +430,45 @@ check('未同步: 仍照常出现在 stacks 里（不隐藏）', unsynced !== un
 const syncedOne = stacksByName.get('my-app')
 check('未同步: 正常记录不带 sync_hint', syncedOne !== undefined && !('sync_hint' in syncedOne))
 
-// ───────────────────────── 自动接管状态 UI（源码级） ─────────────────────────
-/*
- * 没有 DOM 环境跑不了渲染测试，但接管状态的展示规则里有几条
- * 一旦被改回去就是「用户看到假信息」，值得用断言钉住。
- */
-const adoptSrc = readFileSync(
-  join(here, '..', 'src', 'components', 'stack', 'AutoAdoptStatus.vue'),
-  'utf8'
-)
-const stackListSrc = readFileSync(
-  join(here, '..', 'src', 'views', 'StackListView.vue'),
-  'utf8'
-)
+// ───────────────────────── Unified list rendering contracts ─────────────────────────
+const source = path => readFileSync(join(here, '..', 'src', path), 'utf8')
+const stackListSrc = source('views/StackListView.vue')
+const tableSrc = source('components/stack/StackUnifiedTable.vue')
+const detailViewSrc = source('views/StackDetailView.vue')
+const externalSection = source('components/stack/ExternalStackConfigSection.vue')
+const rows = buildStackRows(list.stacks, list.external_stacks)
+const row = name => rows.find(item => item.name === name)
+check('统一列表: 页面消费真实统一模型并接入表格', /buildStackRows\(stacks\.value, externalStacks\.value\)/.test(stackListSrc) && /<stack-unified-table/.test(stackListSrc))
+check('统一列表: 独立登记状态列区分未登记与未同步', /title: '登记状态'/.test(tableSrc) && /unsynced: \{ label: '未同步'/.test(tableSrc) && /unregistered: \{ label: '未登记'/.test(tableSrc))
+check('统一列表: 未同步状态不依赖原因是否存在', row('adopt-unsynced').regState === 'unsynced' && row('adopt-unsynced-nohint').regState === 'unsynced')
+check('统一列表: 保留真实同步原因并补充缺失原因', row('adopt-unsynced').regReason === unsynced.sync_hint && row('adopt-unsynced-nohint').regReason.includes('尚未下发'))
+check('统一列表: 正常记录不显示虚假同步原因', row('my-app').regState === 'synced' && row('my-app').regReason === '')
+check('统一列表: skipped/failed 原因保留给登记状态展示', row('legacy-skip').regReason === extByStatus.get('legacy-skip').auto_adopt_reason && row('legacy-fail').regReason === extByStatus.get('legacy-fail').auto_adopt_reason)
+check('统一列表: unknown 不推测失败原因', row('legacy-weird').regReason === '配置只存在于服务器的原目录，Arkade 中没有记录')
+check('统一列表: 原因实际接入登记状态 tooltip', /row\.regReason/.test(tableSrc) && /default: \(\) => h\('div', \{ class: 'stack-unified__tip' \}, row\.regReason\)/.test(tableSrc))
+check('统一列表: 所有项目名称进入统一详情', /@open="goDetail"/.test(stackListSrc) && /name: 'agent-stack-detail'/.test(stackListSrc))
+check('手动登记: 外部项目配置区保留预检登记 fallback', /@click="handleApply\(editorContent\)"/.test(externalSection) && /登记到 Arkade/.test(externalSection))
+check('手动导入: 保留可达的独立导入入口', /StackImportModal|stack-import-modal|openImport/.test(stackListSrc + externalSection))
+check('登记: 明确不启动不重启', /不启动也不重启/.test(externalSection))
+check('详情: 常驻未同步警告直接由 synced_at 推出', /v-if="managed && managed\.synced_at === 0"/.test(detailViewSrc))
+check('详情: 后端同步原因与通用文案均渲染', /managed\.sync_hint \|\|/.test(detailViewSrc) && /尚未成功下发/.test(detailViewSrc) && /请检查同步状态/.test(detailViewSrc))
+check('详情: 通用文案劝阻启动重建且不承诺自动重试', /不要启动或重建/.test(detailViewSrc) && !/自动重试/.test(detailViewSrc.replace(/<!--[^]*?-->/g, '')))
+check('详情: 容器获取失败显示警告而非空容器结论', /v-if="detail\.containersError\.value"/.test(detailViewSrc) && /<stack-containers-table v-else/.test(detailViewSrc))
 
-// unknown 必须完全不渲染：它是「旧 Hub 没这功能」，不是一种后端判定
-check(
-  'auto_adopt: unknown 不渲染任何内容',
-  /unknown: null/.test(adoptSrc) && /v-if="meta !== null"/.test(adoptSrc)
-)
-// 三种状态必须有中文文案，不能把英文枚举直接显示给用户
-check('auto_adopt: pending 显示中文', /pending: \{ label: '接管中'/.test(adoptSrc))
-check('auto_adopt: skipped 显示中文', /skipped: \{ label: '配置未登记'/.test(adoptSrc))
-check('auto_adopt: failed 显示中文', /failed: \{ label: '接管失败'/.test(adoptSrc))
-// 原因只对 skipped/failed 展示，pending 没必要、unknown 不允许推测
-check(
-  'auto_adopt: 原因仅在 skipped/failed 展示',
-  /props\.status === 'skipped' \|\| props\.status === 'failed'/.test(adoptSrc)
-)
-/*
- * 原因不能只靠 hover：手机上没有 hover。
- * 必须是「可见的一行截断文本」，title 只作桌面端补充。
- */
-check(
-  'auto_adopt: 原因直接可见（不只 tooltip）',
-  /<span v-if="showReason"[^>]*>\{\{ reason \}\}<\/span>/.test(adoptSrc),
-  '原因被塞进只有 hover 才显示的地方，手机上读不到'
-)
-check(
-  'auto_adopt: 原因一行截断不撑破表格',
-  /text-overflow: ellipsis/.test(adoptSrc) && /white-space: nowrap/.test(adoptSrc)
-)
-
-// 列表：整列可见性由后端是否给信息决定，旧 Hub 不能多出一整列空白
-check(
-  'stack 列表: 接管列仅在有非 unknown 行时才显示',
-  /const showAutoAdoptColumn = computed/.test(stackListSrc) &&
-    /some\(\(s\) => \(s\.auto_adopt_status \?\? 'unknown'\) !== 'unknown'\)/.test(stackListSrc),
-  '缺少按行判断的可见性逻辑'
-)
-check(
-  'stack 列表: 列定义里实际使用 showAutoAdoptColumn',
-  /\.\.\.\(showAutoAdoptColumn\.value/.test(stackListSrc),
-  'computed 没被列定义使用'
-)
-// 说明文案必须讲清「不重启不重建」，否则用户不敢用自动登记
-check(
-  'stack 列表: 文案说明不重启不重建',
-  /不重启或重建/.test(stackListSrc),
-  '缺少「不重启或重建」，用户会担心自动登记有副作用'
-)
-// 措辞已从「接管」改为「登记配置」：用户看到的是配置有没有记录，不是被谁接管
-check('stack 列表: 文案指向下方原因列', /未登记的原因见下方/.test(stackListSrc))
-// 手动导入必须保留（自动接管不支持时的 fallback）
-check('stack 列表: 保留手动导入入口', /openImport/.test(stackListSrc))
-
-/* ── 未同步状态的可见性（列表 + 详情） ── */
-const detailViewSrc = readFileSync(
-  join(here, '..', 'src', 'views', 'StackDetailView.vue'),
-  'utf8'
-)
-
-// 列表：必须有独立「同步」列，未同步用 error 色 tag 而非仅 tooltip
-check(
-  'stack 列表: 有独立「同步」列',
-  /title: '同步'/.test(stackListSrc),
-  '未同步只藏在 tooltip 里，用户看不到'
-)
-check(
-  'stack 列表: 未同步显示 error 色 tag',
-  /type: 'error'/.test(stackListSrc) && /未同步/.test(stackListSrc)
-)
-// 有原因就挂 title，没原因也要照样显示 tag（Hub 重启后原因为空不能伪装成功）
-check(
-  'stack 列表: 有 sync_hint 时展示原因',
-  /row\.sync_hint/.test(stackListSrc),
-  '没有把 sync_hint 接上'
-)
-
-// 详情：常驻警告必须由 synced_at 推出，而不是某次保存动作
-check(
-  'stack 详情: 常驻未同步警告由 synced_at 推出',
-  /const unsyncedHint = computed/.test(detailViewSrc) &&
-    /synced_at > 0\) return null/.test(detailViewSrc),
-  '常驻警告不是从编排状态推出的，刷新就消失'
-)
-check('stack 详情: 常驻警告在模板里渲染', /v-if="unsyncedHint !== null"/.test(detailViewSrc))
-// 拿不到原因必须退回通用文案，不能既不显示也不提示
-check(
-  'stack 详情: 无 sync_hint 时退回通用文案',
-  /尚未成功下发到服务器/.test(detailViewSrc) && /请检查同步状态/.test(detailViewSrc),
-  '缺原因时没有通用兜底文案'
-)
-/*
- * 通用文案**不能**承诺「后台自动重试」：自动扫描只覆盖外部/Agent 工作区项目，
- * 手工新建的编排不在扫描范围内，那句承诺对它们不成立，会让用户干等。
- *
- * 只检查字符串字面量：源码注释里为了解释这条约束会提到「自动重试」四个字，
- * 拿整份文件匹配会误报。这里把注释剥掉再判断。
- */
-const detailCodeOnly = detailViewSrc
-  .replace(/\/\*[\s\S]*?\*\//g, '')
-  .replace(/\/\/[^\n]*/g, '')
-check(
-  'stack 详情: 通用文案不承诺自动重试',
-  !/自动重试/.test(detailCodeOnly),
-  '文案承诺了后台自动重试，但手工新建的编排并不在自动扫描范围内'
-)
-// 通用文案要明确劝阻启动/重建
-check(
-  'stack 详情: 通用文案劝阻启动/重建',
-  /不要启动或重建/.test(detailViewSrc)
-)
+// Managed configuration and operations retain security/confirmation contracts after extraction.
+const managedConfigSrc = source('composables/useManagedStackConfig.ts')
+const managedPanelSrc = source('components/stack/ManagedStackConfigPanel.vue')
+const managedActionsSrc = source('components/stack/ManagedStackActions.vue')
+check('配置: env 三态通过真实 payload builder，未变省略/空串清空/新值替换', /env !== originalEnv \? \{ env_content: env \} : \{\}/.test(managedConfigSrc) && /managedUpdatePayload\(content.value, version.value, envContent.value, originalEnv.value\)/.test(managedConfigSrc))
+check('配置: env 编辑器仍接入且保存时锁定', /<stack-env-editor v-model="config.envContent.value" :disabled="config.saving.value"/.test(managedPanelSrc))
+check('配置: manage 403 不影响容器与日志', /err.status === 403/.test(managedConfigSrc) && /容器与日志仍可查看/.test(managedConfigSrc))
+check('配置: 保存需确认 compose up 部署而非草稿', /await confirmAction/.test(managedConfigSrc) && /立即执行 compose up/.test(managedConfigSrc) && /danger: true/.test(managedConfigSrc))
+check('配置: CAS 使用后端新版本，冲突不得覆盖用户内容', /version.value = res.stack.version/.test(managedConfigSrc) && /err.status === 409/.test(managedConfigSrc) && /请先复制当前修改/.test(managedConfigSrc))
+check('配置: 确认前快照 payload 且异步回执受卸载 guard 保护', managedConfigSrc.indexOf('const payload = managedUpdatePayload') < managedConfigSrc.indexOf('await confirmAction') && /if \(!alive\) return/.test(managedConfigSrc))
+check('安全: env 不写浏览器存储且卸载时清空', !/localStorage|sessionStorage/.test(managedConfigSrc) && /content.value = originalContent.value = envContent.value = originalEnv.value = ''/.test(managedConfigSrc))
+check('操作: 启停等需明确确认并受在线/busy/进行中保护', /await confirmAction/.test(managedActionsSrc) && /running.value \|\| !props.online \|\| props.busy/.test(managedActionsSrc))
+check('操作: 未同步阻止启动重建', /unsynced && \['start', 'recreate'\].includes\(item.action\)/.test(managedActionsSrc))
+check('操作: 删除默认保留卷，显式危险确认后才提交删卷选项', /optionDefault: false, danger: true/.test(managedActionsSrc) && /if \(!result.confirmed \|\| !alive\) return/.test(managedActionsSrc) && /deleteStack\(id, name, result.optionChecked\)/.test(managedActionsSrc))
 
 // ───────────────────────── 结果 ─────────────────────────
 const total = passed + failures.length

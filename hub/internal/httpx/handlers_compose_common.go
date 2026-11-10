@@ -150,6 +150,10 @@ const composeProjectStatusOffline = "offline"
 type composeStackView struct {
 	AgentID string `json:"agent_id"`
 	Name    string `json:"name"`
+	// Managed表示配置已记录在Hub；不表示容器是否可管理。
+	Managed         bool   `json:"managed"`
+	AutoAdoptStatus string `json:"auto_adopt_status,omitempty"`
+	AutoAdoptReason string `json:"auto_adopt_reason,omitempty"`
 	// Status 来自 Agent 实时状态；Agent 离线时为 "offline"。
 	Status string `json:"status"`
 	// ConfigHash 是 Hub 侧权威副本的哈希。

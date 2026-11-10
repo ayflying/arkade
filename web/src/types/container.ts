@@ -59,6 +59,9 @@ export interface Container {
    * 一个打不开的链接。拿不到就老老实实显示「无端口映射」。
    */
   published_ports?: PublishedPort[]
+  /** Summary networks; never substitute the server direct address for a container IP. */
+  networks?: ContainerNetwork[]
+  network_mode?: string
 }
 
 /** GET /api/agents/{id}/containers 响应体 */
@@ -85,6 +88,7 @@ export interface ContainerLogsResponse {
 export interface ContainerNetwork {
   name: string
   ip_address: string
+  ipv6_address?: string
 }
 
 /** 挂载点 */

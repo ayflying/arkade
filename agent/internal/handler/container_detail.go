@@ -65,8 +65,9 @@ func toInspectResult(d runtime.InspectDetail) envelope.ContainerInspectResult {
 	}
 	for _, n := range d.Networks {
 		out.Networks = append(out.Networks, envelope.ContainerNetwork{
-			Name:      n.Name,
-			IPAddress: n.IPAddress,
+			Name:        n.Name,
+			IPAddress:   n.IPAddress,
+			IPv6Address: n.IPv6Address,
 		})
 	}
 	for _, m := range d.Mounts {

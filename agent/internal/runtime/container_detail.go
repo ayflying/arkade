@@ -53,9 +53,15 @@ type InspectDetail struct {
 }
 
 // InspectNetwork 是容器接入的一个网络。
+//
+// 与列表的 ContainerNetwork 保持同样两个地址字段，
+// 让 Hub 用同一套结构渲染"网络名 + IPv4 + IPv6"，不必区分数据来源。
 type InspectNetwork struct {
-	Name      string
+	Name string
+	// IPAddress 是 IPv4；host/none 模式下为空。
 	IPAddress string
+	// IPv6Address 是全局 IPv6；非双栈时为空。
+	IPv6Address string
 }
 
 // InspectMount 是一个挂载点。
@@ -99,6 +105,8 @@ type inspectResp struct {
 		Ports    map[string][]portBinding `json:"Ports"`
 		Networks map[string]struct {
 			IPAddress string `json:"IPAddress"`
+			// GlobalIPv6Address 与列表接口同一个字段名，双栈网络才有值。
+			GlobalIPv6Address string `json:"GlobalIPv6Address"`
 		} `json:"Networks"`
 	} `json:"NetworkSettings"`
 	Mounts []struct {
@@ -158,7 +166,11 @@ func toInspectDetail(r inspectResp) InspectDetail {
 
 	// 网络：按名字排序前的收集。
 	for name, n := range r.NetworkSettings.Networks {
-		d.Networks = append(d.Networks, InspectNetwork{Name: name, IPAddress: n.IPAddress})
+		d.Networks = append(d.Networks, InspectNetwork{
+			Name:        name,
+			IPAddress:   n.IPAddress,
+			IPv6Address: n.GlobalIPv6Address,
+		})
 	}
 	sortNetworks(d.Networks)
 
