@@ -45,7 +45,33 @@ docker pull ghcr.io/ayflying/arkade-agent:latest
 
 生产建议固定 `sha-<完整提交号>` 或摘要，避免下一次推送 `master` 后浮动标签变化。私有包需要拥有 `read:packages` 的账号凭据，使用 `docker login ghcr.io --password-stdin`，不要把 Token 放在命令行、Compose 文件或 Git 中。
 
-现有本地调试部署方式不变。本次 CI 只构建并发布镜像，不连接测试服、不重启任何业务容器，也不会自动升级现有运行实例。更换镜像前仍应备份配置和数据并确认发布版本。
+### 用 CI 镜像替换本地构建
+
+编排文件本来就从 `.env` 读镜像名，所以**不需要改 `docker-compose.yml`**，只改 `deploy/docker/.env` 里的两个变量：
+
+```sh
+# 先取得摘要（推荐固定摘要，而不是浮动标签）
+docker pull ghcr.io/<owner>/arkade-hub:latest
+docker image inspect ghcr.io/<owner>/arkade-hub:latest --format '{{index .RepoDigests 0}}'
+# ghcr.io/<owner>/arkade-hub@sha256:...
+```
+
+```dotenv
+ARKADE_HUB_IMAGE=ghcr.io/<owner>/arkade-hub@sha256:<digest>
+ARKADE_AGENT_IMAGE=ghcr.io/<owner>/arkade-agent@sha256:<digest>
+```
+
+然后**必须去掉 `--build`**：
+
+```sh
+cd deploy/docker
+docker compose pull          # 按 .env 里的镜像名拉取
+docker compose up -d --no-build --force-recreate hub agent
+```
+
+`--no-build` 是关键：留下 `--build` 会让 compose 忽略刚拉取的镜像、就地重新构建并重新打上同名标签，结果「用上了 CI 镜像」只是错觉。数据卷（hub-data/agent-data）与 `.env`、`*.config.toml` 都不受影响，重建只换容器。
+
+回滚：把 `.env` 里两个变量改回原值（本地标签或上一个摘要），再执行一遍 `docker compose up -d --no-build --force-recreate hub agent`。
 
 ## 查看产物与排障
 
