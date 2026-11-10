@@ -5,10 +5,6 @@
  * 独立成页而不是弹窗：
  * compose.yml 动辄几十行，弹窗里写代码体验差，而且弹窗容易被误关丢内容。
  *
- * 编辑器实现：`NInput type="textarea"` + 等宽字体 + 行号关闭。
- * 刻意不引 CodeMirror/Monaco——按项目「不轻易加依赖」的基调，
- * 这里的需求只是「能舒服地贴一段 YAML」，原生 textarea 足够。
- *
  * ## 为什么 compose 旁边必须有 .env
  *
  * compose 里写 `${DB_PASSWORD}` 是最常见写法。若界面上没有 .env 的位置，
@@ -26,6 +22,7 @@ import { useRouter } from 'vue-router'
 import { NAlert, NButton, NForm, NFormItem, NInput } from 'naive-ui'
 import type { FormInst, FormRules } from 'naive-ui'
 import PageHeader from '@/components/common/PageHeader.vue'
+import CodeEditor from '@/components/common/CodeEditor.vue'
 import StackEnvEditor from '@/components/stack/StackEnvEditor.vue'
 import { createStack } from '@/api/stacks'
 import { useCurrentAgent } from '@/composables/useCurrentAgent'
@@ -221,18 +218,13 @@ onUnmounted(() => {
               <span class="editor__hint">直接粘贴或编辑 YAML 内容</span>
               <span class="editor__meta">{{ lineCount }} 行</span>
             </div>
-            <!--
-              只用 textarea + 等宽字体，不引编辑器依赖。
-              :autosize 让内容多时自动长高，避免在小框里滚动。
-            -->
-            <n-input
-              v-model:value="form.content"
-              type="textarea"
-              class="editor__input"
-              placeholder="services:&#10;  web:&#10;    image: nginx:1.27"
-              :autosize="{ minRows: 16, maxRows: 30 }"
+            <!-- 共享 CodeMirror 编辑器：行号、YAML 高亮、两空格缩进 -->
+            <code-editor
+              v-model="form.content"
+              aria-label="compose.yml 内容"
               :disabled="submitting"
-              spellcheck="false"
+              :min-height="380"
+              :max-height="560"
             />
           </div>
         </n-form-item>

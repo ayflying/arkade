@@ -28,6 +28,7 @@
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { NAlert, NButton, NInput, NModal, NTag } from 'naive-ui'
 import StackEnvEditor from '@/components/stack/StackEnvEditor.vue'
+import CodeEditor from '@/components/common/CodeEditor.vue'
 import { importStack, previewImport } from '@/api/stacks'
 import type { ImportPreviewResponse } from '@/types/stack'
 import { ApiError } from '@/types/api'
@@ -266,14 +267,12 @@ onUnmounted(() => {
 
     <div class="import__field">
       <label class="import__label">compose.yml</label>
-      <n-input
-        v-model:value="content"
-        type="textarea"
-        class="import__code"
-        placeholder="把服务器上该项目的 compose.yml 内容粘贴到这里"
-        :autosize="{ minRows: 10, maxRows: 20 }"
+      <code-editor
+        v-model="content"
+        aria-label="compose.yml 内容"
         :disabled="importing"
-        spellcheck="false"
+        :min-height="280"
+        :max-height="420"
       />
     </div>
 

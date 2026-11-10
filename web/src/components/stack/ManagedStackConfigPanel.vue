@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted } from 'vue'
-import { NAlert, NButton, NInput, NSpin } from 'naive-ui'
+import { NAlert, NButton, NSpin } from 'naive-ui'
+import CodeEditor from '@/components/common/CodeEditor.vue'
 import StackEnvEditor from './StackEnvEditor.vue'
 import { useManagedStackConfig } from '@/composables/useManagedStackConfig'
 const props = defineProps<{ agentId: string; stackName: string }>()
@@ -21,7 +22,14 @@ onMounted(() => { void config.load() })
       <n-alert v-if="config.saveError.value" type="error">{{ config.saveError.value }}</n-alert>
       <n-alert v-if="config.syncWarning.value" type="warning">{{ config.syncWarning.value }}</n-alert>
       <label for="managed-compose">compose.yml</label>
-      <n-input id="managed-compose" v-model:value="config.content.value" type="textarea" :autosize="{ minRows: 14, maxRows: 28 }" :disabled="config.saving.value" spellcheck="false" />
+      <code-editor
+        id="managed-compose"
+        v-model="config.content.value"
+        aria-label="compose.yml 内容"
+        :disabled="config.saving.value"
+        :min-height="340"
+        :max-height="560"
+      />
       <stack-env-editor v-model="config.envContent.value" :disabled="config.saving.value" />
       <div class="config-panel__actions">
         <n-button type="primary" size="small" :loading="config.saving.value" :disabled="!config.dirty.value || config.saving.value" @click="config.save">保存并部署</n-button>

@@ -12,7 +12,8 @@
  * 那一步在父组件里，并且会先做预检。
  */
 import { computed, ref, watch } from 'vue'
-import { NAlert, NButton, NInput, NSpin, NTag } from 'naive-ui'
+import { NAlert, NButton, NSpin, NTag } from 'naive-ui'
+import CodeEditor from '@/components/common/CodeEditor.vue'
 import type { ConfigState } from '@/composables/useExternalStack'
 import type { ExternalStackDraft } from '@/types/externalStack'
 
@@ -145,13 +146,17 @@ function handleSave(): void {
         <n-tag size="small" :bordered="false">磁盘原文</n-tag>
       </div>
 
-      <n-input
-        v-model:value="content"
-        type="textarea"
-        class="ext-config__editor"
-        spellcheck="false"
-        :autosize="{ minRows: 14, maxRows: 28 }"
+      <!--
+        projectKey 区分「磁盘原文」与「草稿」两份不同文档：
+        切换时清空撤销栈，避免在新草稿里 Ctrl+Z 把磁盘原文调回来。
+      -->
+      <code-editor
+        v-model="content"
+        aria-label="compose.yml 配置内容"
         :disabled="!canEdit"
+        :project-key="showingDraft ? 'draft' : 'raw'"
+        :min-height="340"
+        :max-height="560"
       />
 
       <!--
