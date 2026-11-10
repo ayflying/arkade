@@ -35,11 +35,41 @@ type Handler func(ctx context.Context, payload []byte) (any, error)
 type Registry struct {
 	mu       sync.RWMutex
 	handlers map[string]Handler
+	// closers 是随 Registry 一起关闭的子系统（当前是编排镜像更新任务表）。
+	//
+	// 为什么挂在 Registry 上而不是单独返回：main 已经持有 Registry 并负责
+	// 它的生命周期，让清理动作跟着它走就不需要再给 main 增加一条接线，
+	// 也就不会出现"某个部署路径忘了 defer Close"而留下孤儿进程。
+	closers []func()
 }
 
 // NewRegistry 创建空注册表。
 func NewRegistry() *Registry {
 	return &Registry{handlers: make(map[string]Handler)}
+}
+
+// AddCloser 注册一个在 Registry 关闭时执行的清理动作。
+func (r *Registry) AddCloser(fn func()) {
+	if fn == nil {
+		return
+	}
+	r.mu.Lock()
+	r.closers = append(r.closers, fn)
+	r.mu.Unlock()
+}
+
+// Close 执行全部清理动作（幂等）。
+//
+// Agent 优雅退出时必须调用：镜像更新任务里的 compose 子进程若不被取消，
+// 会变成孤儿进程继续拉镜像，而此时 Agent 已经不在了，没人回收它。
+func (r *Registry) Close() {
+	r.mu.Lock()
+	fns := r.closers
+	r.closers = nil
+	r.mu.Unlock()
+	for _, fn := range fns {
+		fn()
+	}
 }
 
 // Register 注册一个方法。重复注册直接覆盖并在语义上视为配置错误——
@@ -202,6 +232,27 @@ func RegisterDefaultsWithTransfer(reg *Registry, rt runtime.Runtime, composeMgr 
 	reg.Register(envelope.MethodComposeStop, newComposeStopHandler(composeMgr))
 	reg.Register(envelope.MethodComposeRestart, newComposeRestartHandler(composeMgr))
 	reg.Register(envelope.MethodComposePull, newComposePullHandler(composeMgr))
+	// 编排镜像更新的**异步流式**版本（用户要看真实命令输出）。
+	//
+	// 与上面的同步 MethodComposePull 并存：同步版保留给不需要进度展示的
+	// 既有调用方，异步版给"更新镜像"弹窗。
+	//
+	// ============================ 必须共用一个实例 ============================
+	// start 与 get 必须操作**同一张任务表**。各自 NewPullManager 会让
+	// start 写进 A 实例、get 去 B 实例里查，结果永远是 not_found。
+	//
+	// 任务的生命周期上下文来自 composeMgr.RootCtx（CLI 注入），
+	// 因此 HTTP/WebSocket 断开**不会**取消正在跑的任务。
+	// 生命周期：任务挂在 composeMgr.RootCtx（Agent 主循环的 ctx，SIGTERM 时取消）。
+	// 落盘到 Registry，由 main 的 defer reg.Close() 触发取消子进程。
+	//
+	// 这条接线必须真实存在，而不是"方法看起来能关"：
+	// 若 composeMgr.RootCtx 为 nil，任务只随进程退出而结束，
+	// 优雅退出就**不会**取消正在跑的 compose pull，会留下孤儿进程。
+	pullMgr := compose.NewPullManager(composeMgr, composeMgr.RootCtx)
+	reg.Register(envelope.MethodComposePullStart, newComposePullStartHandler(pullMgr))
+	reg.Register(envelope.MethodComposePullGet, newComposePullGetHandler(pullMgr))
+	reg.AddCloser(pullMgr.Close)
 	reg.Register(envelope.MethodComposeRebuild, newComposeRebuildHandler(composeMgr))
 	reg.Register(envelope.MethodComposeRemove, newComposeRemoveHandler(composeMgr))
 	reg.Register(envelope.MethodComposeBackup, newComposeBackupHandler(composeMgr))

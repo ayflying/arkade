@@ -26,6 +26,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -66,6 +67,13 @@ type Runner struct {
 	//     看起来没问题，但这类隐式依赖在重构时最容易断）；
 	//   - 显式传路径让"哪个文件参与插值"是完全确定的，便于排查。
 	EnvFile string
+
+	// ProjectName 是这份 Runner 对应的编排项目名。
+	//
+	// 由 runnerFor 填入，便于"已经拿到 runner 的调用方"再去读同一项目的
+	// .env 与正文（脱敏用），而不必重新解析一遍 runnerFor——
+	// 重解析会引入"两次读到的 .env 不一致"的窗口。
+	ProjectName string
 
 	// EnvExcludeKeys 是必须从**继承环境**里剔除的变量名。
 	//
@@ -140,9 +148,23 @@ func composeArgs(project, envFile string, args ...string) []string {
 }
 
 // Run 执行一条 docker compose 命令。
+// Run 执行一条 docker compose 命令（**原版实现，字节语义完全不变**）。
 //
 // project 为空表示不指定项目名（用于 docker compose version 这类全局命令）。
 // timeout<=0 时使用 TimeoutShort 兜底——绝不允许无超时执行。
+//
+// ============================ 为什么不复用 RunStream ============================
+//
+// Run 的调用方会**解析 Stdout 的原始字节**：compose ps --format json 输出的是
+// 一段 JSON，末尾没有换行，且可能长到几十 KB 单行。
+// 若用"逐行回调 + 每行补 \n"的实现，会：
+//   - 给无尾换行的输出强加一个 \n（字节不再相同）；
+//   - 超长单行被 Scanner 的缓冲上限截断（JSON 直接被切碎）。
+//
+// 这两点都会让既有调用静默出错。
+//
+// 因此 Run 保持 bytes.Buffer 直连 cmd.Stdout/Stderr 的原版形态，
+// 与 RunStream 只共享"参数/环境/超时"的构造逻辑（composeArgs / environ）。
 func (r *Runner) Run(ctx context.Context, project string, timeout time.Duration, args ...string) Result {
 	if timeout <= 0 {
 		timeout = TimeoutShort
@@ -153,6 +175,13 @@ func (r *Runner) Run(ctx context.Context, project string, timeout time.Duration,
 	cmd := exec.CommandContext(runCtx, r.binary(), composeArgs(project, r.EnvFile, args...)...)
 	cmd.Dir = r.Dir
 	cmd.Env = r.environ()
+
+	// 与 RunStream 一致：超时时要杀整个进程组，否则 compose fork 出的
+	// 子进程会占着管道，让 Wait 一直等下去。
+	cmd.SysProcAttr = sysProcAttrSetPgid()
+	cmd.Cancel = func() error {
+		return killProcessGroup(cmd)
+	}
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -186,6 +215,201 @@ func (r *Runner) Run(ctx context.Context, project string, timeout time.Duration,
 	res.Output = truncate(joinOutput(stdout.String(), stderr.String(), ""))
 	return res
 }
+
+// StreamSink 接收子进程输出的一行（**不含行尾换行**）。
+//
+// 实现方必须保证并发安全：RunStream 会用同一把锁串行化 stdout/stderr。
+type StreamSink interface {
+	Stdout(line string)
+	Stderr(line string)
+}
+
+// streamWriter 是给 cmd.Stdout / cmd.Stderr 用的行缓冲写入器。
+//
+// ============================ 为什么不用 StdoutPipe ============================
+//
+// 手写管道 + 自己起 goroutine 有两个真实陷阱：
+//   - 必须在 Start **之前**起 goroutine，否则管道写满会阻塞子进程；
+//   - Wait 会**关闭**管道，若此时读者还没读完，尾部落日志就丢了
+//     （而 compose 的失败原因恰好在尾部）。
+//
+// 直接给 cmd.Stdout/Stderr 赋值则没有这些问题：os/exec 会在 Wait 内
+// 同步完成 copy（内部只起 goroutine 当 Writer 不是 *os.File 时，
+// 并且**保证**它们结束后才返回）。因此这里只需实现一个 Write。
+//
+// 行缓冲语义：按 \n 切分后回调；**残留的半行**在 Close 时补发，
+// 因此不会因为进程输出不以换行结尾而丢掉最后一行。
+// ============================ 超长行绝不 emit 前缀 ============================
+//
+// 直觉做法是"到上限就先发一段"。那是**泄密**：
+// 一个 100KB 的行里，密码可能横跨 64KB 边界，
+// 先发前半段就会把密码的前半个字符送出去，且破坏"按完整行脱敏"的前提
+// （脱敏器只看得到半行，匹配不上完整值）。
+//
+// 因此超限时：**整行丢弃**，只发一个固定标记，并把 truncated 置位。
+// 调用方据此知道"这里少了内容"，但拿不到任何原文片段。
+type streamWriter struct {
+	mu     sync.Mutex
+	emit   func(string)
+	buf    []byte
+	closed bool
+	// discarding 表示当前行已超限、正在丢弃剩余部分直到换行。
+	discarding bool
+}
+
+// newStreamWriter 构造行缓冲写入器。
+func newStreamWriter(emit func(string)) *streamWriter {
+	return &streamWriter{emit: emit}
+}
+
+// Write 实现 io.Writer。
+func (w *streamWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	// ============================ io.Writer 契约 ============================
+	// Write 必须报告"消费了多少**输入**字节"。本实现总是把入参全部收下
+	// （丢弃也是消费），因此所有返回点都必须是入口的 len(p)。
+	//
+	// 若在丢弃态返回 0，os/exec 的 copy goroutine 会认为发生短路写，
+	// 报 io.ErrShortWrite 并让整条命令报错——用户看到的"拉取失败"
+	// 实际上是我们自己的 bug。
+	nIn := len(p)
+
+	// 正在丢弃超长行：整块跳过直到遇到换行，**只**把换行之后的内容当新数据。
+	//
+	// 不能只"找换行然后 append 中间部分"：换行之前的每个字节都属于那条
+	// 被丢弃的行，append 回来它就变成了新行的开头——正是跨边界泄漏。
+	if w.discarding {
+		i := bytes.IndexByte(p, '\n')
+		if i < 0 {
+			return nIn, nil // 整块都属于被丢弃的行
+		}
+		w.discarding = false
+		p = p[i+1:] // 只保留换行之后的残余
+		if len(p) == 0 {
+			return nIn, nil
+		}
+	}
+
+	w.buf = append(w.buf, p...)
+	for {
+		i := bytes.IndexByte(w.buf, '\n')
+		if i < 0 {
+			// 还没有完整行。若已超限：整行丢弃（**不发任何前缀**）。
+			if len(w.buf) > maxLineBytes {
+				w.buf = w.buf[:0]
+				w.discarding = true
+				w.emit(longLineMarker)
+			}
+			return nIn, nil
+		}
+		line := string(w.buf[:i])
+		w.buf = w.buf[i+1:]
+		// 单行超限（确实以换行结尾但太长）：同样整行丢弃。
+		if len(line) > maxLineBytes {
+			w.emit(longLineMarker)
+			continue
+		}
+		w.emit(strings.TrimSuffix(line, "\r"))
+	}
+}
+
+// Close 补发残留的半行。
+func (w *streamWriter) Close() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.closed {
+		return
+	}
+	w.closed = true
+	if len(w.buf) > 0 {
+		// 收尾时若残留半行已超限，同样整行丢弃而不是发出去。
+		if len(w.buf) > maxLineBytes {
+			w.emit(longLineMarker)
+		} else {
+			w.emit(strings.TrimSuffix(string(w.buf), "\r"))
+		}
+		w.buf = nil
+	}
+}
+
+// RunStream 执行命令并把输出逐行推给 sink。
+func (r *Runner) RunStream(ctx context.Context, project string, timeout time.Duration, sink StreamSink, args ...string) Result {
+	if timeout <= 0 {
+		timeout = TimeoutShort
+	}
+	runCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(runCtx, r.binary(), composeArgs(project, r.EnvFile, args...)...)
+	cmd.Dir = r.Dir
+	cmd.Env = r.environ()
+	// ============================ 必须杀整个进程组 ============================
+	// exec.CommandContext 默认只 kill 直接子进程。真实场景里 compose 会 fork
+	// 出子进程（拉取、解包），它们继承同一批管道描述符；只杀父进程时，
+	// 这些"孙进程"还活着并占着管道，cmd.Wait() 会一直等 copy 结束——
+	// 表现为任务永远 running，直到子进程自己退出。
+	//
+	// 因此超时/取消时杀整个进程组。Setpgid 让子进程成为新进程组的组长。
+	cmd.SysProcAttr = sysProcAttrSetPgid()
+	cmd.Cancel = func() error {
+		return killProcessGroup(cmd)
+	}
+
+	// 两路输出共用一把锁：stdout 与 stderr 会由 os/exec 内部并发写入，
+	// sink 的调用顺序必须与写入顺序一致，否则 seq 会错乱。
+	var mu sync.Mutex
+	outW := newStreamWriter(func(line string) {
+		mu.Lock()
+		sink.Stdout(line)
+		mu.Unlock()
+	})
+	errW := newStreamWriter(func(line string) {
+		mu.Lock()
+		sink.Stderr(line)
+		mu.Unlock()
+	})
+	cmd.Stdout = outW
+	cmd.Stderr = errW
+
+	err := cmd.Run()
+
+	// cmd.Run 返回时 os/exec 已把两路输出全部 copy 完，
+	// 此时补发各自的半行是安全的。
+	outW.Close()
+	errW.Close()
+
+	res := Result{ExitCode: 0}
+	if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+		res.TimedOut = true
+		res.ExitCode = -1
+		res.Output = fmt.Sprintf("命令执行超时（%s）", timeout)
+		return res
+	}
+	if err != nil {
+		res.ExitCode = -1
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			res.ExitCode = exitErr.ExitCode()
+		}
+		res.Output = err.Error()
+		return res
+	}
+	return res
+}
+
+// 行缓冲参数。
+const (
+	// maxLineBytes 是单行上限。超过则**整行丢弃**（只发标记，不发前缀）。
+	//
+	// 定 64KB 的理由：compose 的正常输出行远小于它（进度行通常 < 200 字节），
+	// 超长行基本只可能来自镜像内的异常输出。丢弃不影响可用性，
+	// 却能同时守住内存上限与"敏感值跨块泄漏"两个边界。
+	maxLineBytes = 64 << 10
+	// longLineMarker 是超长行被丢弃时上报的占位行。
+	longLineMarker = "（输出行过长，已截断丢弃）"
+)
 
 // agentEnvPrefix 是 Agent 自身配置变量名的前缀。
 //

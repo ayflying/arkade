@@ -91,15 +91,26 @@ function toMenuOption(item: MenuItemDef): MenuOption {
 /**
  * 生成 NMenu 的 options。
  *
- * @param agentId 当前选中的服务器 id；为 null 时**不展开**操作菜单
- *                （未选中服务器时只显示「服务器」入口）
+ * @param agentId   当前选中的服务器 id；为 null 时**不展开**操作菜单
+ * @param agentName 当前服务器的显示名。**必须与 agentId 同源**——
+ *                  服务器列表是异步加载的，切换服务器时名字可能还是上一台的。
  *
- * 关于分组标题：
- * - 只有「服务器」一项时不给标题，避免纯占一行高度；
- * - 展开操作菜单后有两组，此时给操作组加标题「当前服务器」，
- *   让用户清楚下面这些是针对某台服务器的操作，而不是全局入口。
+ * ## 分组标题显示真实服务器名
+ *
+ * 原本文案是固定的「当前服务器」，用户看不出到底在哪台机器上操作，
+ * 在多台服务器之间切换时很容易在错误机器上下错命令。
+ * 现在标题直接写服务器名，误操作的代价最低。
+ *
+ * ## 名字为空时的兜底
+ *
+ * 列表还没加载完、或服务器已被删除时 `agentName` 为空。
+ * 此时**退到服务器 id**，而不是沿用上一次的名字——
+ * 显示旧名字比显示 id 更危险，用户会以为自己还在旧服务器上。
  */
-export function buildMenuOptions(agentId: string | null): MenuOption[] {
+export function buildMenuOptions(
+  agentId: string | null,
+  agentName = ''
+): MenuOption[] {
   const groups: MenuOption[] = [
     {
       type: 'group',
@@ -110,15 +121,40 @@ export function buildMenuOptions(agentId: string | null): MenuOption[] {
   ]
 
   if (agentId !== null) {
+    /*
+     * 名字优先；空名退回 id。真正空到连 id 都没有的情况不会进来
+     * （agentId === null 时整组不渲染）。
+     */
+    const displayName = agentName.trim() === '' ? agentId : agentName.trim()
     groups.push({
       type: 'group',
       key: 'agent-operations',
-      label: '当前服务器',
+      label: renderGroupLabel(displayName),
       children: AGENT_OPERATION_ITEMS.map((item) => toMenuOption(item))
     } as MenuOption)
   }
 
   return groups
+}
+
+/**
+ * 分组标题渲染器。
+ *
+ * 为什么不用纯字符串：服务器名是用户输入，可能很长（甚至带 HTML 字符）。
+ * - 用 `h()` 渲染成文本节点，天然转义，不会把名字里的 `<b>` 当标签解析；
+ * - 溢出用 CSS ellipsis 截断，并通过 `title` 提供原生悬浮完整名，
+ *   长名字不会把侧边栏撑破。
+ */
+function renderGroupLabel(name: string) {
+  return (): ReturnType<typeof h> =>
+    h(
+      'span',
+      {
+        class: 'menu-group-label',
+        title: name
+      },
+      name
+    )
 }
 
 /**

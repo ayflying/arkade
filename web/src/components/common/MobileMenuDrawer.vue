@@ -72,7 +72,7 @@ function handleUpdateShow(value: boolean): void {
       </template>
 
       <!-- 与桌面侧边栏共用同一份菜单；导航完成后由父组件关闭抽屉 -->
-      <site-menu :active-key="activeKey" :agent-id="agentId" @navigate="emit('navigate')" />
+      <site-menu :active-key="activeKey" :agent-id="agentId" :agent-name="agentName" @navigate="emit('navigate')" />
 
       <template #footer>
         <div class="drawer-footer">

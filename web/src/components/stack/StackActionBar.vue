@@ -34,13 +34,23 @@ interface Props {
    * 真正的拦截永远在后端。
    */
   permitted?: boolean
+  /**
+   * 父组件是否能处理「更新镜像」。
+   *
+   * 该动作需要 agentId + 编排名才能打开实时输出弹窗，本组件两者都没有。
+   * 父组件不接 `pull` 事件时这个按钮不显示——宁可没有入口，
+   * 也不要留一个点下去什么都不发生（或退回旧 runStackAction）的按钮。
+   */
+  canPull?: boolean
 }
 
-const props = withDefaults(defineProps<Props>(), { deleting: false, permitted: true })
+const props = withDefaults(defineProps<Props>(), { deleting: false, permitted: true, canPull: false })
 
 const emit = defineEmits<{
   (e: 'action', action: StackAction): void
   (e: 'delete'): void
+  /** 请求父组件打开「更新镜像」输出弹窗 */
+  (e: 'pull'): void
 }>()
 
 /** 正在执行的操作名；空字符串表示空闲 */
@@ -123,15 +133,15 @@ function handleRestart(): void {
   run('restart')
 }
 
-/** 更新镜像：拉取最新镜像并重建容器 */
-function handlePull(): void {
-  void confirmAndRun(
-    'pull',
-    '确认更新镜像？',
-    '将拉取 compose 文件中声明的最新镜像，并用新镜像重建容器。\n\n' +
-      '重建期间服务会短暂中断（通常几秒到几十秒）。'
-  )
-}
+/**
+ * 更新镜像：不再从这里触发。
+ *
+ * 「更新镜像」现在是一个带实时命令输出的独立弹窗（StackPullModal），
+ * 它需要 agentId + 编排名，而本组件两者都没有（只接收状态与回调）。
+ * 所以这里改为把意图抛给父组件，由父组件决定挂载弹窗；
+ * 没有父级处理时不显示该按钮，避免点出一个没有内容的旧路径。
+ */
+const pullAvailable = computed(() => props.canPull === true)
 
 /** 重建：强制重新创建所有容器 */
 function handleRecreate(): void {
@@ -203,10 +213,10 @@ defineExpose({ finish })
     </n-button>
 
     <n-button
+      v-if="pullAvailable"
       size="small"
       :disabled="!canOperate"
-      :loading="runningAction === 'pull'"
-      @click="handlePull"
+      @click="emit('pull')"
     >
       更新镜像
     </n-button>

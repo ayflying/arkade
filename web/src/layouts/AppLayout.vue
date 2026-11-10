@@ -174,6 +174,7 @@ async function handleLogout(): Promise<void> {
         <site-menu
           :active-key="activeMenuKey"
           :agent-id="agentId"
+          :agent-name="agent?.name ?? ''"
           :collapsed="sidebarCollapsed"
         />
       </div>

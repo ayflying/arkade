@@ -20,6 +20,12 @@ import (
 type Manager struct {
 	ws     *Workspace
 	runner *Runner
+	// RootCtx 是 Agent 的生命周期上下文（SIGTERM 时取消）。
+	//
+	// 长任务（镜像更新）必须挂在它上面，而不是挂请求 ctx：
+	// 请求在 RPC 返回时就结束，挂请求会导致任务刚启动就被取消。
+	// 由 CLI 在构造后注入；nil 表示任务只随进程退出而结束。
+	RootCtx context.Context
 	// labelSource 用于在 Apply 前探测"这个名字是否已被外部项目占用"。
 	// 为 nil 表示不做该检查（仅测试场景），生产路径一定注入。
 	labelSource containerLabelSource
@@ -559,6 +565,7 @@ func (m *Manager) requireExists(name string) error {
 // 那是最难查的一类偏差。
 func (m *Manager) runnerFor(name string) *Runner {
 	r := *m.runner
+	r.ProjectName = name
 
 	if p, err := m.ws.EnvPath(name); err == nil {
 		if _, statErr := os.Stat(p); statErr == nil {
@@ -588,6 +595,17 @@ func (m *Manager) run(ctx context.Context, name string, timeout time.Duration, a
 	r := m.runnerFor(name)
 	r.Dir = dir
 	return r.Run(ctx, name, timeout, args...)
+}
+
+// runStream 与 run 完全一样，只是把输出逐行推给 sink（用于异步任务的流式输出）。
+func (m *Manager) runStream(ctx context.Context, name string, timeout time.Duration, sink StreamSink, args ...string) Result {
+	dir, err := m.ws.ProjectDir(name)
+	if err != nil {
+		return Result{Output: err.Error(), ExitCode: -1}
+	}
+	r := m.runnerFor(name)
+	r.Dir = dir
+	return r.RunStream(ctx, name, timeout, sink, args...)
 }
 
 // appendServices 把服务名列表追加到参数尾部（空列表时不追加任何东西）。

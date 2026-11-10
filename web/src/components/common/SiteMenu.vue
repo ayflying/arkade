@@ -20,6 +20,14 @@ interface Props {
   activeKey: string | null
   /** 当前选中的服务器 id；为 null 时不展开「当前服务器」操作菜单 */
   agentId: string | null
+  /**
+   * 当前服务器的显示名，用作操作分组标题。
+   *
+   * **必须与 agentId 来自同一份数据**：两者分别传入却不同源时，
+   * 切换服务器会短暂出现「新服务器 id + 旧服务器名」的组合，
+   * 用户可能因此在错误的机器上操作。空串时菜单自动退回显示 id。
+   */
+  agentName?: string
   /** 是否折叠为图标窄栏（平板档）；折叠后 NMenu 只显示图标 */
   collapsed?: boolean
   /** 导航完成后的回调（手机端用它关闭抽屉） */
@@ -27,6 +35,7 @@ interface Props {
 }
 
 const props = withDefaults(defineProps<Props>(), {
+  agentName: '',
   collapsed: false,
   onNavigate: undefined
 })
@@ -39,7 +48,7 @@ const router = useRouter()
  * 不用 ref 缓存一次的原因：agentId 会随用户切换服务器实时变化，
  * 操作菜单里的跳转参数必须跟着变，否则切了服务器仍跳到旧服务器。
  */
-const menuOptions = computed(() => buildMenuOptions(props.agentId))
+const menuOptions = computed(() => buildMenuOptions(props.agentId, props.agentName))
 
 /**
  * 菜单点击：key 即 routeName（约定见 menuConfig.buildMenuOptions）。
@@ -89,3 +98,18 @@ function handleUpdateValue(key: string): void {
     @update:value="handleUpdateValue"
   />
 </template>
+
+<style scoped>
+/*
+ * 服务器名可能很长（用户自定义），必须截断 + 悬浮看全名，
+ * 否则会把侧边栏撑出横向滚动条。
+ * title 属性由 menuConfig 渲染时一并设置（原生 tooltip）。
+ */
+:deep(.menu-group-label) {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+</style>
