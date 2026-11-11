@@ -72,7 +72,18 @@ Lead 已在冻结代码后以 Go 1.24.13、CGO_ENABLED=0 执行：
 - Agent 与 protocol 全量测试及 vet 通过；前端 typecheck、build 和所有契约测试通过。pnpm 自动依赖校验出现本机 store/无 TTY 警告，但脚本实际执行成功；不将警告描述为无告警安装成功。
 - Linux 纯 Go Hub / dbtool 构建通过；驱动依赖检查未发现第二个注册 `sqlite` 的顶层包。
 
-以上是本地阶段验证，不等于镜像 CI、测试服务器发布或跨引擎 Compose 迁移端到端已经完成。后续提交、镜像构建与备份后测试服部署应单独记录结果。
+### 测试服发布记录（2026-11-11）
+
+- 阶段提交 `12a2af8`，测试服镜像 `arkade-hub:gf-12a2af8`，地址 `http://192.168.50.243:18080`。
+- 升级前以 dbtool VACUUM INTO 生成 `/opt/arkade-demo/backup-gf-12a2af8/hub-before-gf.db`，完整性检查通过；恢复到独立新路径 `hub-restored-rehearsal.db` 并再次 check 通过，没有覆盖活动数据库。
+- 仅替换 `arkade-hub-demo`；旧容器停止并保留为 `arkade-hub-demo-before-gf-12a2af8`，Agent 未重建。旧 Hub 镜像保留以供回滚。
+- health 返回 `version=gf-12a2af8, agents_online=1`；旧账号 login/me 与 logout 204 空体通过，原用户 ID/名称/密码哈希与备份逐行一致；cursor 为 `(10,0)`，10 条校验和，integrity_check 为 ok。
+- 浏览器沿用既有会话进入概览及服务器容器页，能够显示在线 Agent、容器和新 Hub 镜像，无需重新登录。
+- 对 lanet-node、portainer_agent、act-runner、两个 adinsight PostgreSQL 业务容器，发布前后容器 ID、RestartCount、StartedAt 全部未变。
+- 新 Hub 日志未发现 `panic serving` 或重复 WriteHeader。发布结果记录在测试服备份目录的 `activation-result.txt`。
+- GitHub HTTPS 推送先遇到 TLS EOF / connection aborted；网络恢复后的最终回执为 `Invalid username or token / Authentication failed`。需用户恢复 Git 凭据后再推送，未绕过认证。这与测试服本地源码构建发布独立，未宣称远端 CI 或 GHCR 镜像已通过。
+
+跨引擎 Compose 迁移端到端仍未完成；生产 Backend 装配仍需后续阶段实现，不属于本次框架迁移发布验收。
 
 ## 改造前已发现但尚未闭环的事项
 
