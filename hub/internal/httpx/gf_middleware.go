@@ -53,6 +53,24 @@ func gfChain(
 	guardTarget func() any,
 	mws ...middlewareFunc,
 ) ghttp.HandlerFunc {
+	return gfChainWithSanitizer(log, afterNext, prepare, func(_ *ghttp.Request, req *http.Request) (*http.Request, error) {
+		var target any
+		if guardTarget != nil {
+			target = guardTarget()
+		}
+		return sanitizeBody(req, target)
+	}, mws...)
+}
+
+type requestSanitizer func(*ghttp.Request, *http.Request) (*http.Request, error)
+
+func gfChainWithSanitizer(
+	log *slog.Logger,
+	afterNext func(*ghttp.Request),
+	prepare func(context.Context) context.Context,
+	sanitize requestSanitizer,
+	mws ...middlewareFunc,
+) ghttp.HandlerFunc {
 	return func(r *ghttp.Request) {
 		start := r.Response.Writer
 
@@ -66,19 +84,8 @@ func gfChain(
 			start.ResponseWriter = w
 			defer func() { start.ResponseWriter = old }()
 
-			// 严格校验请求体并净化参数来源：必须在 GF 的
-			// `r.Middleware.Next()`（内部会 Parse）之前。
-			//
-			// GF 默认合并 query/form/body 多来源参数，这是它的设计；
-			// 本项目的契约是"只认 JSON body"，所以这里按契约收敛来源。
-			//
-			// 靶子在**每个请求内新建**：共享实例会被并发写，
-			// 也会把残值带到下一个请求。
-			var target any
-			if guardTarget != nil {
-				target = guardTarget()
-			}
-			guarded, gerr := sanitizeBody(req, target)
+			// 参数来源策略必须在框架解析请求之前执行。
+			guarded, gerr := sanitize(r, req)
 			req = guarded
 			r.Request = req
 			if gerr != nil {
@@ -202,7 +209,11 @@ func privResponseChainGF(
 	gates []gate,
 	extra []middlewareFunc,
 ) ghttp.HandlerFunc {
-	wrapped := make([]middlewareFunc, 0, len(gates)+len(extra))
+	return responseChainGFWith(log, d, sessionTTL, reqFactory, append(gateMiddlewares(gates), extra...))
+}
+
+func gateMiddlewares(gates []gate) []middlewareFunc {
+	wrapped := make([]middlewareFunc, 0, len(gates))
 	for _, g := range gates {
 		g := g
 		wrapped = append(wrapped, func(next http.Handler) http.Handler {
@@ -237,8 +248,7 @@ func privResponseChainGF(
 			})
 		})
 	}
-	wrapped = append(wrapped, extra...)
-	return responseChainGFWith(log, d, sessionTTL, reqFactory, wrapped)
+	return wrapped
 }
 
 // responseChainGFWith 是两条链的共同实现。

@@ -10,10 +10,11 @@ package httpx
 //
 // ## 迁移说明（GoFrame 阶段二）
 //
-// 路由全部由 **GoFrame 原生注册**（`ghttp.BindHandler("METHOD:/path", ...)`），
-// 本包不再依赖 chi，也没有任何自建的路由匹配代码。
+// 路由由 GoFrame 匹配；认证、用户、用户组及审计使用 g.Meta + Bind。
+// 尚未迁移的容器与编排等 handler 使用 BindHandler + wrapToGF 桥接。
+// 不依赖 chi，不自行匹配请求路径。
 //
-// 业务 handler 保持 `http.HandlerFunc` 签名不变，由 wrapToGF 桥接：
+// 桥接部分的职责：
 //
 //	ghttp 负责：路径匹配、`{param}` 解析、404 兜底
 //	wrapToGF 负责：取参写入 context（GetRouter）、桥接到标准库请求
@@ -44,9 +45,6 @@ package httpx
 import (
 	"log/slog"
 	"net/http"
-	"os"
-	"path/filepath"
-	"strings"
 
 	"github.com/gogf/gf/v2/net/ghttp"
 
@@ -238,9 +236,8 @@ func NewRouter(d Deps) *ghttp.Server {
 	priv(http.MethodPost, "/agents/{agentID}/images/export", handleStartImageTask(d, "export"))
 	priv(http.MethodPost, "/agents/{agentID}/images/migrate", handleStartImageTask(d, "migrate"))
 	priv(http.MethodPost, "/agents/{agentID}/images/import", handleUploadImage(d))
-	// 操作审计：admin 看全部，非 admin 只看自己的（权限在 handler 内收紧）。
-	priv(http.MethodGet, "/audit", handleListAudit(d))
-	priv(http.MethodGet, "/audit/actions", handleListAuditActions(d))
+	// 独立模块由各自 API 的 g.Meta 声明路由，入口只负责装配。
+	bindManagementRoutes(s, d)
 	// 服务器记录的管理：改名/备注/禁用/删除。
 	// 全部要求 admin（在 handler 里用 requireAdmin 判断），
 	// 因为它们改的是纳管关系本身，会影响到所有用户组。
@@ -299,23 +296,6 @@ func NewRouter(d Deps) *ghttp.Server {
 	priv(http.MethodGet, "/agents/{agentID}/volumes", handleListVolumes(d))
 	priv(http.MethodDelete, "/agents/{agentID}/volumes/{name}", handleRemoveVolume(d))
 
-	// 用户管理（仅 admin，闸门在各自的 handler 里，见 requireAdmin）。
-	priv(http.MethodGet, "/users", handleListUsers(d))
-	priv(http.MethodPost, "/users", handleCreateUser(d))
-	priv(http.MethodPatch, "/users/{userID}", handleUpdateUser(d))
-	priv(http.MethodPut, "/users/{userID}/password", handleResetPassword(d))
-	priv(http.MethodDelete, "/users/{userID}", handleDeleteUser(d))
-
-	// 用户组管理（仅 admin）。
-	priv(http.MethodGet, "/groups", handleListGroups(d))
-	priv(http.MethodPost, "/groups", handleCreateGroup(d))
-	priv(http.MethodPatch, "/groups/{groupID}", handleUpdateGroup(d))
-	priv(http.MethodDelete, "/groups/{groupID}", handleDeleteGroup(d))
-	priv(http.MethodGet, "/groups/{groupID}/members", handleListGroupMembers(d))
-	priv(http.MethodPut, "/groups/{groupID}/members", handleSetGroupMembers(d))
-	priv(http.MethodGet, "/groups/{groupID}/grants", handleListGroupGrants(d))
-	priv(http.MethodPut, "/groups/{groupID}/grants", handleSetGroupGrants(d))
-
 	// ---------- 兜底 ----------
 	//
 	// GF 的兜底 handler 处理所有未命中的请求（含路径不存在与方法不匹配）。
@@ -324,181 +304,6 @@ func NewRouter(d Deps) *ghttp.Server {
 	s.BindHandler("/*", fallbackHandler(d))
 
 	return s
-}
-
-// register 注册一条路由。
-//
-// 组装顺序（从外到内）：
-//
-//	recoverer → requestLogger → securityHeaders → [路由中间件…] → handler
-//
-// 整条链在 wrapToGF 里作用于同一个 r.Response.Writer，
-// 所以 statusWriter 包装、Hijacker 透传都正常（见文件头说明）。
-func register(
-	s *ghttp.Server,
-	method, pattern string,
-	d Deps,
-	mws []middlewareFunc,
-	h httpHandlerFunc,
-) {
-	var chain http.Handler = h
-	// 路由级中间件先包（它们在全局三层的内侧）。
-	for i := len(mws) - 1; i >= 0; i-- {
-		chain = mws[i](chain)
-	}
-	// 再包全局三层。
-	chain = globalChain(chain, d.Log)
-
-	s.BindHandler(method+":"+pattern, wrapToGF(pattern, chain))
-}
-
-// wrapToGF 把标准库 handler 包成 ghttp 的 handler。
-//
-// 它做两件必要的事：
-//  1. 把 ghttp 的路径参数（GetRouter）与路由模板写入 request context，
-//     供 pathParam / routePattern 读取；
-//  2. 桥接到标准库请求/响应对象，让既有 handler 原样执行。
-//
-// **不包装 ResponseWriter**：直接把 r.Response.Writer 交给标准库链，
-// 这样链上任何一个中间件包的 statusWriter 都能一路透传到最终写入，
-// 不会被 GF 替换掉（这正是不能用 s.Use 的原因）。
-func wrapToGF(pattern string, h http.Handler) func(*ghttp.Request) {
-	params := paramsOf(pattern)
-	return func(r *ghttp.Request) {
-		ri := &routeInfo{Pattern: pattern}
-		if len(params) > 0 {
-			ri.Params = make(map[string]string, len(params))
-			for _, name := range params {
-				// 必须用 GetRouter 而不是 Get：
-				// Get 会被同名 query/表单参数覆盖（见 routeparams.go 说明）。
-				// GetRouter 返回 *gvar.Var，String() 取字符串值。
-				ri.Params[name] = r.GetRouter(name).String()
-			}
-		}
-		// 把 *ghttp.Request 一并放进 context：
-		// ① 路径参数与路由模板（所有 handler 都要用）；
-		// ② ghttp.Request 本身（仅 typed controller 需要，registerGF 取用）。
-		//
-		// 这样做而不是让控制器重新构造一个 Request：控制器拿到的必须是
-		// **同一个**请求对象，否则响应缓冲、状态码、Cookie 会分叉到两个
-		// 不同的 Response 上，出现"写了但没发出去"这类难查的问题。
-		ctx := withRouteInfo(r.Request.Context(), ri)
-		h.ServeHTTP(r.Response.Writer, r.Request.WithContext(ctx))
-	}
-}
-
-// paramsOf 从模板中解析出参数名（按出现顺序）。
-//
-// 模板形如 /api/agents/{agentID}/containers/{containerID}。
-func paramsOf(pattern string) []string {
-	var names []string
-	for i := 0; i < len(pattern); i++ {
-		if pattern[i] != '{' {
-			continue
-		}
-		j := i + 1
-		for j < len(pattern) && pattern[j] != '}' {
-			j++
-		}
-		if j < len(pattern) {
-			names = append(names, pattern[i+1:j])
-			i = j
-		}
-	}
-	return names
-}
-
-// fallbackHandler 处理 GF 未命中的请求。
-//
-// 覆盖两种情况：路径不存在、路径存在但方法不匹配（GF 都走到这里）。
-//
-// 语义与迁移前保持一致：
-//   - /api 下未命中：先过认证与审计（漏登记的写接口要能进审计，
-//     未登录探测要得到 401 而不是 404），再按 API 规则返回 JSON 404；
-//   - 非 /api：走 SPA 回落。
-//
-// 两条分支同样按"全局三层 + 路由中间件"完整包一遍，
-// 保证兜底响应的状态码/大小也被 requestLogger 记录（含 401/404/500）。
-func fallbackHandler(d Deps) ghttp.HandlerFunc {
-	privMW := []middlewareFunc{
-		authenticator(d.Auth),
-		auditMiddleware(d.DB, d.Log),
-	}
-
-	// API 未命中：认证 + 审计 + JSON 404。
-	var apiChain http.Handler = http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		respondError(w, d.Log, "not_found", "接口不存在")
-	})
-	for i := len(privMW) - 1; i >= 0; i-- {
-		apiChain = privMW[i](apiChain)
-	}
-	apiChain = globalChain(apiChain, d.Log)
-
-	// 非 API：SPA 回落（可能返回 index.html 或静态文件）。
-	var spaChain http.Handler = http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if d.WebDist != "" {
-			spaHandler(d.WebDist, d.Log).ServeHTTP(w, req)
-			return
-		}
-		respondError(w, d.Log, "not_found", "接口不存在（Hub 未配置前端产物目录）")
-	})
-	spaChain = globalChain(spaChain, d.Log)
-
-	return func(r *ghttp.Request) {
-		// 未命中任何模板，pattern 记空串：
-		// 审计据此把 target 记成原始路径，便于发现"漏登记的接口"。
-		req := r.Request.WithContext(withRouteInfo(r.Request.Context(), &routeInfo{Pattern: ""}))
-
-		if isAPIPath(req.URL.Path) {
-			apiChain.ServeHTTP(r.Response.Writer, req)
-			return
-		}
-		spaChain.ServeHTTP(r.Response.Writer, req)
-	}
-}
-
-// spaHandler 处理前端 history 模式的路由回落。
-//
-// 规则（web 侧明确要求）：
-//   - /api/* 未命中一律 404 JSON，绝不回落到 index.html，
-//     否则前端会拿到 HTML 去解析 JSON，报出无法理解的错误；
-//   - 存在同名静态文件则返回文件；
-//   - 其余 GET 返回 index.html，让前端路由接管（例如刷新 /agents/xxx）。
-func spaHandler(dist string, log *slog.Logger) http.HandlerFunc {
-	indexPath := filepath.Join(dist, "index.html")
-	files := http.FileServer(http.Dir(dist))
-
-	return func(w http.ResponseWriter, r *http.Request) {
-		if isAPIPath(r.URL.Path) {
-			respondError(w, log, "not_found", "接口不存在")
-			return
-		}
-		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			respondError(w, log, "not_found", "资源不存在")
-			return
-		}
-
-		clean := filepath.Clean(strings.TrimPrefix(r.URL.Path, "/"))
-		if clean != "." && clean != "" {
-			candidate := filepath.Join(dist, clean)
-			// 只允许访问产物目录内的文件，防目录穿越。
-			if rel, err := filepath.Rel(dist, candidate); err == nil && !strings.HasPrefix(rel, "..") {
-				if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-					files.ServeHTTP(w, r)
-					return
-				}
-			}
-		}
-
-		// 回落：交给 index.html，由前端路由决定展示哪个页面。
-		w.Header().Set("Cache-Control", "no-cache")
-		http.ServeFile(w, r, indexPath)
-	}
-}
-
-// isAPIPath 判断是否属于接口路径。
-func isAPIPath(p string) bool {
-	return p == "/api" || strings.HasPrefix(p, "/api/")
 }
 
 // uniqueServerName 生成进程内唯一的 ghttp 实例名。

@@ -8,6 +8,18 @@
 - 数据库继续使用 SQLite，原地升级，不重建业务数据。
 - 锁定 GoFrame 与官方 SQLite 驱动 v2.9.6、golang-migrate v4.19.1；兼容项目 Go 1.24。
 
+## 管理接口模块化并发迁移（第二阶段）
+
+三名子智能体分别独占 users、groups、audit 的 API 和 controller 子目录；Lead 独占路由、中间件、严格解码与集成，不并发修改同一共享文件。
+
+- 新增原生 Bind：用户 5 条、用户组 8 条、审计查询 2 条；加上首阶段 4 条，共 19 条。容器、服务器、镜像和编排等其他接口仍保留桥接，并未宣称全部迁移。
+- 按读取/写入、成员、授权、筛选、视图拆文件；新的 controller 实现文件均低于 200 个物理行。路由入口由 525 行降为约 330 行，桥接与 SPA 回退各独立文件。
+- 删除旧 users/groups/audit 三个 handler 实现，测试仅保留 API 视图类型别名，不保留第二套业务逻辑。
+- 写接口严格 JSON 解码结果按请求存入 typed context，补偿 GF 通用转换跳过显式 null，以及大小写重复键的解码差异；路径身份仍来自 GF 路由参数，不信任 JSON/query 的同名字段。GF 只接收首个有效 JSON 值，保持旧 decoder 允许尾随内容的既有行为，不借本次迁移悄悄收紧契约。
+- GET 审计只读取 query，重复键保留首值，丢弃 body；写接口不接受 query/form 代替 JSON。管理接口保留旧 decoder 精确错误和 EOF 行为，认证 → 审计 → admin → 解码的顺序不变。
+- 独立模块单测通过；Go 1.24.13、CGO=0 下 Windows Hub 全量测试通过（最终冻结节点 HTTP 64.494 秒）及 vet 通过；Linux 完整 HTTP 实际执行通过。两平台输出均未出现 `panic serving` / `superfluous response.WriteHeader`。
+- 本阶段尚未部署，测试服仍为第一阶段 `gf-12a2af8`；不把本地测试当作远端验收。
+
 ## 已实测的驱动组合
 
 GoFrame 官方驱动与 migrate 的 `database/sqlite` 都注册 SQL 驱动名 `sqlite`，同进程导入会在 init 阶段 panic，传 `WithInstance` 不能绕过。采用 migrate 官方 `database/sqlite3.WithInstance` 接受 GF 驱动创建的纯 Go `*sql.DB`；只借用其迁移执行器，不调用 mattn 的 `Open`。探针在 Windows 与 Linux 的 `CGO_ENABLED=0` 下实际运行通过。依赖树中的 `modernc.org/sqlite/lib` 是底层库，不等于注册冲突；必须禁止的是第二个顶层驱动注册 import。
