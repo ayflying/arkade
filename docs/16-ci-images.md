@@ -47,7 +47,7 @@ docker pull ghcr.io/ayflying/arkade-agent:latest
 
 ### 用 CI 镜像替换本地构建
 
-镜像名直接写在 `deploy/docker/docker-compose.yml` 里，不需要另配变量。把 hub、agent 的 `image:` 改成 CI 镜像：
+镜像名直接写在编排文件里，不需要另配变量。主节点改 `deploy/docker/hub-compose.yml` 的 hub 服务，被管节点改 `deploy/docker/agent-compose.yml` 的 agent 服务：
 
 ```sh
 # 先取得摘要（推荐固定摘要，而不是浮动标签）
@@ -57,22 +57,27 @@ docker image inspect ghcr.io/<owner>/arkade-hub:latest --format '{{index .RepoDi
 ```
 
 ```yaml
-  hub:
+  hub:                                   # hub-compose.yml
     image: ghcr.io/<owner>/arkade-hub@sha256:<digest>
-  agent:
+```
+
+```yaml
+  agent:                                 # agent-compose.yml（部署到被管服务器）
     image: ghcr.io/<owner>/arkade-agent@sha256:<digest>
 ```
 
 然后**必须去掉 `--build`**：
 
 ```sh
-docker compose -f deploy/docker/docker-compose.yml pull          # 按编排里的镜像名拉取
-docker compose -f deploy/docker/docker-compose.yml up -d --no-build --force-recreate
+docker compose -f deploy/docker/hub-compose.yml pull               # 按编排里的镜像名拉取
+docker compose -f deploy/docker/hub-compose.yml up -d --no-build --force-recreate
 ```
 
-`--no-build` 是关键：留下 `--build` 会让 compose 忽略刚拉取的镜像、就地重新构建并重新打上同名标签，结果「用上了 CI 镜像」只是错觉。数据卷（hub-data/agent-data）与 `.env`、`*.config.toml` 都不受影响，重建只换容器。
+被管节点同理，在 Agent 部署目录里 `docker compose -f agent-compose.yml pull` 后再 `up -d --no-build --force-recreate`。
 
-回滚：把编排里的两个 `image:` 改回原值（本地标签或上一个摘要），再执行一遍 `docker compose -f deploy/docker/docker-compose.yml up -d --no-build --force-recreate`。
+`--no-build` 是关键：留下 `--build` 会让 compose 忽略刚拉取的镜像、就地重新构建并重新打上同名标签，结果「用上了 CI 镜像」只是错觉。数据卷（`arkade-hub-data` / `arkade-agent-data`）与 `.env`、`*.config.toml` 都不受影响，重建只换容器。
+
+回滚：把编排里的 `image:` 改回原值（本地标签或上一个摘要），再执行一遍上面的 `up -d --no-build --force-recreate`。
 
 ## 查看产物与排障
 
@@ -88,16 +93,21 @@ Agent 是容器，看不到宿主机路径；而外部编排的配置路径来�
 `读取编排配置失败`。**这不是权限问题**：Agent 的 helper 已经带 `DAC_READ_SEARCH`，
 容器内实测能读 0700 目录和 0600 文件；缺的是"宿主路径没有被挂进 Agent 容器"。
 
-配置方式（仓库根目录 `.env`，因为 compose 只读项目目录的 `.env`）：
+配置方式（在被管服务器的 Agent 部署目录，`agent-compose.yml` 里给 agent 服务加一段只读挂载）：
 
-```dotenv
-ARKADE_COMPOSE_SOURCE_ROOT=/www/server/panel/data/compose
+```yaml
+    volumes:
+      - type: bind
+        source: /www/server/panel/data/compose
+        target: /arkade/external
+        read_only: true
 ```
 
 然后重建 Agent：
 
 ```sh
-docker compose -f deploy/docker/docker-compose.yml up -d --no-build --force-recreate agent
+cd <Agent 部署目录>
+docker compose -f agent-compose.yml up -d --force-recreate
 ```
 
 机制与边界：
@@ -106,9 +116,10 @@ docker compose -f deploy/docker/docker-compose.yml up -d --no-build --force-recr
 - 只挂一个目录而不是 `/`：挂根目录等于把整台宿主机文件系统交给 Agent；
 - Agent 收到容器标签里的宿主路径后，先按原有规则做安全校验（单配置文件、规范路径、
   非系统顶层目录、配置在工程目录内），校验通过才换算成容器内路径去读；
-- 路径不在 `ARKADE_COMPOSE_SOURCE_ROOT` 之下时给出明确原因（"该目录没有挂载进 Agent 容器"），
+- 路径不在挂载目录之下时给出明确原因（"该目录没有挂载进 Agent 容器"），
   不会去猜一个相近目录，避免把别的项目当成这个项目；
-- 留空 = 不挂载，行为与以前一致（原生部署的 Agent 本来就能直接读宿主路径）。
+- 不挂载 = 保持旧行为（原生部署的 Agent 本来就能直接读宿主路径）。
+- **主节点不需要这项**：Hub 不读宿主机路径，只接收 Agent 上报的内容。
 
 只读挂载的一个注意点：如果一个编排文件同时被 Arkade 和宝塔改，后保存的会覆盖先保存的。
 之所以只读挂载，是为了让 Arkade 不会在你不知情的时候改动宝塔的配置；编辑请以"谁的事实为准"决定在哪边改。

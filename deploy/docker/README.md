@@ -1,38 +1,72 @@
-# Arkade 容器化调试部署
+# Arkade 容器化部署编排
 
-在一台装有 Docker 的机器上，用 `docker compose` 把 Hub 与 Agent 一起跑起来，验证从
-「浏览器 → Hub → Agent → 本机容器」的完整链路。
+主从两套编排，**分开部署，互不混装**：
 
-> **这不是生产部署模板。** 生产形态是：Hub 单独一台，Agent 部署在每台被管服务器上
-> （见 `deploy/arkade-agent.service`）。这里的 Agent 挂载宿主 `docker.sock`，只用于本机自测。
+- **主节点**跑 Hub（控制面）：`hub-compose.yml`。不挂任何宿主套接字，不装 docker CLI，操作不到 Docker。
+- **被管节点**跑 Agent（执行面）：`agent-compose.yml`。必须挂宿主 `docker.sock` 才能操作本机容器。
+
+> 这是刻意的安全边界（见 `README.md` 与 `docs/01-architecture.md`）：Hub 只下发指令，
+> 真正的容器操作全部发生在被管服务器上的 Agent 里。
 
 ## 目录
 
 | 文件 | 说明 |
 | --- | --- |
-| `docker-compose.yml` | Hub + Agent 两个服务，含健康检查与依赖顺序；普通参数直接写在这里 |
+| `hub-compose.yml` | 主节点：只有 hub 服务，含健康检查；**没有 agent 服务、没有 docker.sock** |
+| `agent-compose.yml` | 被管节点：只有 agent 服务；挂宿主 docker.sock（等价 root 权限） |
 | `hub.config.toml` | Hub 容器内配置（路径均为容器内路径） |
-| `agent.config.toml` | Agent 容器内配置（`hub_url` 用服务名 `hub`） |
-| `.env.example` | 凭据样例（只有密码与令牌），复制到**仓库根目录** `.env` |
+| `agent.config.toml` | Agent 容器内配置（Hub 地址由环境变量覆盖） |
+| `.env.example` | 主节点凭据样例（密码与令牌），复制到**仓库根目录** `.env` |
+| `agent.env.example` | 被管节点凭据样例（专属令牌与 Hub 地址），复制为 Agent 目录的 `.env` |
 | `../../hub/Dockerfile` | Hub 镜像：先构建前端产物，再构建 Go 二进制 |
 | `../../agent/Dockerfile` | Agent 镜像：静态 Go 二进制 |
 
 ## 配置约定
 
-- **只有凭据走变量**：`ARKADE_INITIAL_PASS`、`ARKADE_AGENT_TOKEN`（独立部署还要 `ARKADE_AGENT_HUB_URL`）从 `.env` 读取，用 `${VAR:?提示}` 做必填校验，不写进编排文件。
+- **只有凭据走变量**：`ARKADE_INITIAL_PASS`、`ARKADE_AGENT_TOKEN`（Agent 侧另有专属令牌和 `ARKADE_AGENT_HUB_URL`）从 `.env` 读取，用 `${VAR:?提示}` 做必填校验，不写进编排文件。
 - **其余参数直接写在编排文件里**：端口 8080、容器/镜像/卷/网络名、日志级别、心跳间隔等，一眼可见，改直接改 YAML。
-- **`.env` 的位置**：compose 只自动读取「项目目录」的 `.env`。Hub+Agent 编排的项目目录是**仓库根目录**，所以凭据文件是 `./.env`，不是 `deploy/docker/.env`。
+- **`.env` 的位置**：compose 只自动读取「项目目录」的 `.env`。Hub 编排的项目目录是**仓库根目录**，所以凭据文件是 `./.env`，不是 `deploy/docker/.env`。
 
-## 独立部署 Agent（网页预建服务器）
+## 主节点：部署 Hub
+
+```bash
+cd <仓库根目录>
+
+# 1. 准备凭据（只在这一次填写）
+cp deploy/docker/.env.example .env
+#    编辑 .env，填 ARKADE_INITIAL_PASS 与 ARKADE_AGENT_TOKEN
+chmod 600 .env
+
+# 2. 构建并启动（compose 自动读取根目录 .env，不需要 --env-file）
+docker compose -f deploy/docker/hub-compose.yml up -d --build
+
+# 3. 看状态
+docker compose -f deploy/docker/hub-compose.yml ps
+curl http://127.0.0.1:8080/healthz
+
+# 4. 浏览器打开 http://<机器IP>:8080，用 .env 里的管理员账号登录
+```
+
+主节点的权限边界（有意为之）：容器内只有 `/data` 数据卷与只读的 `hub.config.toml`，
+看不到 `/var/run/docker.sock`，因此即使 Hub 有漏洞也无法直接操纵宿主机容器。
+要管哪台机器的容器，就在**那台机器**上部署 Agent。
+
+改动 `.env` 后需要重建容器才生效（环境变量在容器创建时注入）：
+
+```bash
+docker compose -f deploy/docker/hub-compose.yml up -d --force-recreate
+```
+
+## 被管节点：部署 Agent（网页预建服务器）
 
 这是受管服务器上的 **Agent**，不是 HTTP/SOCKS 网络代理。网页先点击“添加服务器”创建待接入记录，取得该记录的专属接入密钥；首次连接后绑定该记录，不再重复创建。
 
 在目标服务器上准备可信的 Agent 镜像（当前不假设存在公开镜像仓库）：
 
 ```bash
-# 在仓库根目录构建Linux镜像
+# 在仓库根目录构建Linux镜像（跨架构请在目标机器上构建，或换成 CI 发布的多架构镜像）
 docker build -f agent/Dockerfile -t arkade-agent:debug .
-# 准备独立目录，不覆盖Hub演示部署现有的.env
+# 准备独立目录放三件套
 mkdir -p ./agent-node
 cp deploy/docker/agent-compose.yml deploy/docker/agent.config.toml ./agent-node/
 cp deploy/docker/agent.env.example ./agent-node/.env
@@ -49,42 +83,35 @@ docker compose -f agent-compose.yml ps
 - 保留Agent数据卷，以复用身份和本地编排。只有明确要清除该节点数据时才删除卷。
 - Docker socket允许控制宿主机容器，等同高权限访问，仅在可信机器上部署。Podman的套接字路径与权限需单独验证，不能直接照搬Docker配置。
 
-## 使用
+## 本地联调（Hub 与 Agent 同一台机器）
 
-凭据只配在 `.env`，编排文件里只出现 `${VAR}` 引用。
-
-```bash
-cd <仓库根目录>
-
-# 1. 准备凭据（只在这一次填写，之后启动不用再管）
-cp deploy/docker/.env.example .env
-#    编辑 .env，填 ARKADE_INITIAL_PASS 与 ARKADE_AGENT_TOKEN
-chmod 600 .env
-
-# 2. 构建并启动（compose 自动读取根目录 .env，不需要 --env-file）
-docker compose -f deploy/docker/docker-compose.yml up -d --build
-
-# 3. 看状态
-docker compose -f deploy/docker/docker-compose.yml ps
-curl http://127.0.0.1:8080/healthz
-
-# 4. 浏览器打开 http://<机器IP>:8080，用 .env 里的管理员账号登录
-```
-
-改动 `.env` 后需要重建容器才生效（环境变量在容器创建时注入）：
+想在一台机器上验证完整链路，就在同一台机器上**分别**起两套：
 
 ```bash
-docker compose -f deploy/docker/docker-compose.yml up -d --force-recreate
+# 终端 1：主节点
+docker compose -f deploy/docker/hub-compose.yml up -d --build
+
+# 终端 2：本机作为被管节点（网页添加服务器拿到 Agent 专属密钥后）
+mkdir -p ./agent-node && cp deploy/docker/agent-compose.yml deploy/docker/agent.config.toml ./agent-node/
+cp deploy/docker/agent.env.example ./agent-node/.env
+#    ARKADE_AGENT_HUB_URL 填宿主可达地址，例如 ws://127.0.0.1:8080/agent/connect
+#    （Agent 是独立容器，这里写宿主映射出来的 8080 端口是对的）
+cd ./agent-node && docker compose -f agent-compose.yml up -d
 ```
+
+注意：这里是把本机登记成一个被管节点，Agent 才挂 socket；Hub 自身仍然没有任何容器操作能力。
 
 ## 清理（不留残留）
 
 ```bash
-docker compose -f deploy/docker/docker-compose.yml down -v --rmi local
+# 主节点
+docker compose -f deploy/docker/hub-compose.yml down -v --rmi local
+# 被管节点（在 Agent 目录）
+docker compose -f agent-compose.yml down -v
 ```
 
-`-v` 删除命名卷（数据库与 Agent 身份），`--rmi local` 删除本次构建的镜像。
-默认卷名是 `arkade-debug-*`、网络名 `arkade-debug-net`，清理后可用下面的命令核验：
+`-v` 删除命名卷（Hub 数据库 / Agent 身份），`--rmi local` 删除本次构建的镜像。
+默认卷名 `arkade-hub-data` / `arkade-agent-data`，网络名 `arkade-hub-net` / `arkade-agent-net`，清理后核验：
 
 ```bash
 docker ps -a --filter name=arkade
@@ -101,7 +128,7 @@ docker images --filter reference='arkade-*'
 <仓库根目录>/.env               ← 只放密码与令牌（已被 .gitignore 排除）
         │  compose 读取 ${VAR}
         ▼
-deploy/docker/docker-compose.yml ← 普通参数直接写值；凭据处只写 ${VAR:?提示}
+deploy/docker/hub-compose.yml    ← 普通参数直接写值；凭据处只写 ${VAR:?提示}
         │  注入
         ▼
 容器环境变量                     ← 启动时写进进程环境
@@ -111,16 +138,17 @@ deploy/docker/docker-compose.yml ← 普通参数直接写值；凭据处只写 
 进程内存                         ← 凭据不落盘
 ```
 
-改普通参数：改 `docker-compose.yml` → `up -d --force-recreate`。
+改普通参数：改编排文件 → `up -d --force-recreate`。
 改凭据：改 `.env` → 同一条命令。都不需要改 toml，也不需要重新构建镜像。
 
-凭据清单（全部变量样例见 [`.env.example`](.env.example)）：
+凭据清单（样例见 [`.env.example`](.env.example) 与 [`agent.env.example`](agent.env.example)）：
 
-| 变量 | 必填 | 说明 |
-| --- | --- | --- |
-| `ARKADE_INITIAL_PASS` | 是 | 初始管理员密码 |
-| `ARKADE_AGENT_TOKEN` | 是 | Agent 接入令牌，两侧必须一致 |
-| `ARKADE_COMPOSE_SOURCE_ROOT` | 否 | 外部编排根目录，只读挂给 Agent；留空不挂 |
+| 变量 | 位置 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `ARKADE_INITIAL_PASS` | 主节点 | 是 | 初始管理员密码 |
+| `ARKADE_AGENT_TOKEN` | 主节点 | 是 | Hub 侧 Agent 准入令牌 |
+| `ARKADE_AGENT_TOKEN` | 被管节点 | 是 | 该节点专属接入令牌，与网页生成的值一致 |
+| `ARKADE_AGENT_HUB_URL` | 被管节点 | 是 | 从该服务器可达的 Hub 地址 |
 
 编排文件里的普通参数（修改直接改 YAML）：
 
@@ -128,9 +156,9 @@ deploy/docker/docker-compose.yml ← 普通参数直接写值；凭据处只写 
 | --- | --- | --- |
 | Hub 端口 | `8080` | `ports` 里改，前后两处保持一致 |
 | 会话有效期 | `72h` | `ARKADE_SESSION_TTL`，支持 `30m`/`24h` |
-| Agent 名 | `arkade-debug-node` | 不设会用容器 ID，重建后漂移 |
+| Agent 名 | `arkade-node` | 不设会用容器 ID，重建后漂移 |
 | 日志 | `info` / `text` | 级别 `debug`/`info`/`warn`/`error`，格式 `text`/`json` |
-| 名称 | `arkade-*-debug` | 容器/镜像/卷/网络名，改掉可让多套环境并存 |
+| 心跳 | `15` 秒 | 兜底值，Hub 握手后会下发 |
 
 两个关键保障：
 
@@ -139,6 +167,16 @@ deploy/docker/docker-compose.yml ← 普通参数直接写值；凭据处只写 
 2. **`.env` 不入库**：`.gitignore` 拦截 `.env`，只放行 `.env.example`。
 
 ## 关键设计说明
+
+### 为什么 Hub 编排里没有 docker.sock
+
+Hub 是控制面：Web、鉴权、Agent 管理、编排下发、镜像凭据集中配置。它本身不改任何一台机器的容器。
+把 socket 挂给 Hub，等于给主节点开了一个「绕过 Agent 直接操作宿主机」的旁路，
+既违背主从安全边界，也让审计链路断在这里。
+
+所以主节点的容器里只有 `/data` 卷和只读配置文件；容器操作一律经过 Agent，
+而 Agent 只部署在明确授权的被管服务器上。早期为了单机联调，把 Hub 和 Agent
+写在同一个 compose 文件里、共用一个挂载，容易让人误以为主节点也需要 socket——现已拆开。
 
 ### 为什么只有凭据用变量
 
@@ -153,14 +191,14 @@ deploy/docker/docker-compose.yml ← 普通参数直接写值；凭据处只写 
 ### 为什么 `.env` 放在仓库根目录
 
 compose 只会自动读取两类 `.env`：项目目录的 `.env`，以及用 `--env-file` 指定的文件。
-本编排文件位于 `deploy/docker/`，但项目目录是仓库根目录（`context: ../..`、`name: arkade-debug`），
-所以 `cp deploy/docker/.env.example .env` 是把凭据放到**根目录**，而不是 `deploy/docker/.env`。
-这样也顺带避免了和同目录独立 Agent 部署（`agent-compose.yml`）的 `.env` 互相覆盖：
-那份是另一台服务器、另一份密钥。
+Hub 编排位于 `deploy/docker/`，但项目目录是仓库根目录（`context: ../..`、`name: arkade-hub`），
+所以 `cp deploy/docker/.env.example .env` 是把凭据放到**根目录**。
+被管节点则在自己复制出去的目录里用自己的 `.env`（`agent.env.example`），
+两份密钥天然隔离，不会互相覆盖。
 
 ### 构建上下文必须传仓库根目录
 
-`docker-compose.yml` 里的 `context: ../..` 不是笔误：`hub/` 与 `agent/` 都通过
+`hub-compose.yml` 里的 `context: ../..` 不是笔误：`hub/` 与 `agent/` 都通过
 `replace` 引用了同级的 `protocol/` 模块，只把子目录拷进镜像会找不到该模块。
 
 ### 密码与令牌只走环境变量
@@ -176,9 +214,4 @@ compose 只会自动读取两类 `.env`：项目目录的 `.env`，以及用 `--
 
 容器里要读宿主 `/var/run/docker.sock`，该 socket 属主是宿主 `root:docker`，
 非 root 用户默认无权限。更严格的做法是用 `group_add` 映射宿主 docker 组 GID，
-但那要求部署时知道宿主 GID，跨机器会失效，因此调试环境先用 root。
-
-### agent 服务依赖 hub 健康
-
-`depends_on: condition: service_healthy` 让 Agent 等 Hub 真正健康后再启动，
-避免开局进入重连退避循环、日志被刷满（重连退避是 1s→2s→4s…，刷起来很快）。
+但那要求部署时知道宿主 GID，跨机器会失效，因此当前用 root——这也是 socket 只给被管节点的原因。
