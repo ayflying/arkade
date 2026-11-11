@@ -10,12 +10,18 @@
 
 | 文件 | 说明 |
 | --- | --- |
-| `docker-compose.yml` | Hub + Agent 两个服务，含健康检查与依赖顺序 |
+| `docker-compose.yml` | Hub + Agent 两个服务，含健康检查与依赖顺序；普通参数直接写在这里 |
 | `hub.config.toml` | Hub 容器内配置（路径均为容器内路径） |
 | `agent.config.toml` | Agent 容器内配置（`hub_url` 用服务名 `hub`） |
-| `.env.example` | 端口、密码、令牌等环境变量样例 |
+| `.env.example` | 凭据样例（只有密码与令牌），复制到**仓库根目录** `.env` |
 | `../../hub/Dockerfile` | Hub 镜像：先构建前端产物，再构建 Go 二进制 |
 | `../../agent/Dockerfile` | Agent 镜像：静态 Go 二进制 |
+
+## 配置约定
+
+- **只有凭据走变量**：`ARKADE_INITIAL_PASS`、`ARKADE_AGENT_TOKEN`（独立部署还要 `ARKADE_AGENT_HUB_URL`）从 `.env` 读取，用 `${VAR:?提示}` 做必填校验，不写进编排文件。
+- **其余参数直接写在编排文件里**：端口 8080、容器/镜像/卷/网络名、日志级别、心跳间隔等，一眼可见，改直接改 YAML。
+- **`.env` 的位置**：compose 只自动读取「项目目录」的 `.env`。Hub+Agent 编排的项目目录是**仓库根目录**，所以凭据文件是 `./.env`，不是 `deploy/docker/.env`。
 
 ## 独立部署 Agent（网页预建服务器）
 
@@ -45,17 +51,17 @@ docker compose -f agent-compose.yml ps
 
 ## 使用
 
-凭据只配在编排层（`.env`），程序配置文件里一律留空——配置只有一处来源，不用两头改。
+凭据只配在 `.env`，编排文件里只出现 `${VAR}` 引用。
 
 ```bash
 cd <仓库根目录>
 
 # 1. 准备凭据（只在这一次填写，之后启动不用再管）
-cp deploy/docker/.env.example deploy/docker/.env
+cp deploy/docker/.env.example .env
 #    编辑 .env，填 ARKADE_INITIAL_PASS 与 ARKADE_AGENT_TOKEN
-chmod 600 deploy/docker/.env
+chmod 600 .env
 
-# 2. 构建并启动（compose 自动读取同目录的 .env，不需要 --env-file）
+# 2. 构建并启动（compose 自动读取根目录 .env，不需要 --env-file）
 docker compose -f deploy/docker/docker-compose.yml up -d --build
 
 # 3. 看状态
@@ -89,37 +95,42 @@ docker images --filter reference='arkade-*'
 
 ## 配置怎么流转
 
-**所有可配置项都在编排文件里用 `${VAR}` 形式声明，实际值放 `.env`。**
-程序配置文件只保留本地直跑的默认值，容器里一律被环境变量覆盖。
+**凭据放 `.env`，普通参数写在编排文件，程序侧统一从环境变量读。**
 
 ```
-deploy/docker/.env              ← 唯一填写实际值的地方（已被 .gitignore 排除）
+<仓库根目录>/.env               ← 只放密码与令牌（已被 .gitignore 排除）
         │  compose 读取 ${VAR}
         ▼
-docker-compose.yml              ← 声明有哪些变量、默认值是什么、哪些必填
+deploy/docker/docker-compose.yml ← 普通参数直接写值；凭据处只写 ${VAR:?提示}
         │  注入
         ▼
 容器环境变量                     ← 启动时写进进程环境
-  ARKADE_INITIAL_PASS / ARKADE_AGENT_TOKEN / ...
+  ARKADE_INITIAL_PASS / ARKADE_AGENT_TOKEN / ARKADE_LOG_LEVEL / ...
         │  程序启动时读取
         ▼
 进程内存                         ← 凭据不落盘
 ```
 
-改配置的流程永远是：改 `.env` → `docker compose ... up -d --force-recreate`。
-不需要改 toml，也不需要重新构建镜像。
+改普通参数：改 `docker-compose.yml` → `up -d --force-recreate`。
+改凭据：改 `.env` → 同一条命令。都不需要改 toml，也不需要重新构建镜像。
 
-完整变量清单见 [`.env.example`](.env.example)，每个变量都有注释。几个关键项：
+凭据清单（全部变量样例见 [`.env.example`](.env.example)）：
 
-| 变量 | 默认 | 说明 |
+| 变量 | 必填 | 说明 |
 | --- | --- | --- |
-| `ARKADE_INITIAL_PASS` | 必填 | 初始管理员密码 |
-| `ARKADE_AGENT_TOKEN` | 必填 | Agent 接入令牌，两侧必须一致 |
-| `ARKADE_HUB_PORT` | `8080` | Hub 对外端口 |
-| `ARKADE_SESSION_TTL` | `72h` | 会话有效期，支持 `30m`/`24h` |
-| `ARKADE_AGENT_NAME` | `arkade-debug-node` | 服务器显示名（不设会用容器 ID，重建后漂移） |
-| `ARKADE_LOG_LEVEL` | `info` | `debug`/`info`/`warn`/`error` |
-| `ARKADE_HUB_CONTAINER` 等 | `arkade-*-debug` | 容器/镜像/卷/网络名，改掉可让多套环境并存 |
+| `ARKADE_INITIAL_PASS` | 是 | 初始管理员密码 |
+| `ARKADE_AGENT_TOKEN` | 是 | Agent 接入令牌，两侧必须一致 |
+| `ARKADE_COMPOSE_SOURCE_ROOT` | 否 | 外部编排根目录，只读挂给 Agent；留空不挂 |
+
+编排文件里的普通参数（修改直接改 YAML）：
+
+| 配置 | 值 | 说明 |
+| --- | --- | --- |
+| Hub 端口 | `8080` | `ports` 里改，前后两处保持一致 |
+| 会话有效期 | `72h` | `ARKADE_SESSION_TTL`，支持 `30m`/`24h` |
+| Agent 名 | `arkade-debug-node` | 不设会用容器 ID，重建后漂移 |
+| 日志 | `info` / `text` | 级别 `debug`/`info`/`warn`/`error`，格式 `text`/`json` |
+| 名称 | `arkade-*-debug` | 容器/镜像/卷/网络名，改掉可让多套环境并存 |
 
 两个关键保障：
 
@@ -129,16 +140,23 @@ docker-compose.yml              ← 声明有哪些变量、默认值是什么�
 
 ## 关键设计说明
 
-### 为什么变量全部收敛到编排文件
+### 为什么只有凭据用变量
 
-早期做法是「toml 一份、编排环境变量一份」，结果同一个配置项有两个来源，
-改了一处以为生效、实际被另一处覆盖；而且换环境要同时改多个文件。
-现在统一成：**编排文件声明变量，`.env` 提供值，程序只读环境变量**。
-每个变量的默认值和是否必填都在一个文件里看得见。
+普通参数（端口、名字、日志级别）写死在编排文件里，读配置文件就能看到实际生效值，
+不用在「编排里改了什么、`.env` 里又覆盖成什么」之间来回对照。凭据则相反：
+它不能进 Git、不能进镜像、不该出现在 YAML 里，所以只走 `.env` + 环境变量注入。
 
-配套地，两侧程序都支持用 `ARKADE_*` 环境变量覆盖任意可调项
+两侧程序仍支持用 `ARKADE_*` 环境变量覆盖可调项
 （`hub/internal/config.applyEnv`、`agent/internal/config.applyEnvOverrides`），
 并有单元测试逐个变量盯住——漏支持一个，编排里写了也会静默失效。
+
+### 为什么 `.env` 放在仓库根目录
+
+compose 只会自动读取两类 `.env`：项目目录的 `.env`，以及用 `--env-file` 指定的文件。
+本编排文件位于 `deploy/docker/`，但项目目录是仓库根目录（`context: ../..`、`name: arkade-debug`），
+所以 `cp deploy/docker/.env.example .env` 是把凭据放到**根目录**，而不是 `deploy/docker/.env`。
+这样也顺带避免了和同目录独立 Agent 部署（`agent-compose.yml`）的 `.env` 互相覆盖：
+那份是另一台服务器、另一份密钥。
 
 ### 构建上下文必须传仓库根目录
 

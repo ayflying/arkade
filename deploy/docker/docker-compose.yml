@@ -1,26 +1,21 @@
 # Arkade 容器编排（Hub + Agent）
 #
-# 【编排规范】所有可配置项都收敛到本文件，取值一律用 ${VAR} 形式从环境变量读取，
-# 实际值放在同目录的 .env 里。程序配置文件（*.config.toml）不再承载任何可配置项，
-# 只保留内置默认值，全部由下面的 ${} 覆盖。
-#
-# 这样做的原因：
-#   - 换环境只改 .env，不用去改多个 toml 再重新构建；
-#   - 凭据只有一处来源，不会散落在多个文件里；
-#   - 每个变量的默认值与是否必填，在本文件里一眼可见。
+# 【编排规范】
+#   - 只有凭据类（密码、令牌）走 `${VAR:?}` 从根目录 .env 读取，不落进本文件；
+#   - 其余普通参数（端口、名字、日志级别等）直接写在这里，一眼可见，不绕 .env。
 #
 # 用法（在仓库根目录）：
-#   cp deploy/docker/.env.example deploy/docker/.env    # 按需修改
+#   cp deploy/docker/.env.example .env    # 复制到仓库根目录，只填两个凭据
 #   docker compose -f deploy/docker/docker-compose.yml up -d --build
-#   浏览器打开 http://<机器IP>:${ARKADE_HUB_PORT:-8080}
+#   浏览器打开 http://<机器IP>:8080
 #
-# 说明：compose 会自动读取与本文件同目录的 .env，
-# 因此不需要每次都手写 --env-file（少一个容易漏的参数）。
+# 说明：compose 只读取「项目目录」的 .env，本项目目录是仓库根目录，
+# 所以凭据文件是 <仓库根目录>/.env；与同目录独立 Agent 部署的 .env 互不影响。
 #
 # 清理：
 #   docker compose -f deploy/docker/docker-compose.yml down -v --rmi local
 
-name: ${ARKADE_PROJECT_NAME:-arkade-debug}
+name: arkade-debug
 
 services:
   hub:
@@ -30,37 +25,34 @@ services:
       dockerfile: hub/Dockerfile
       args:
         VERSION: ${ARKADE_VERSION:-0.1.0}
-    image: ${ARKADE_HUB_IMAGE:-arkade-hub:debug}
-    container_name: ${ARKADE_HUB_CONTAINER:-arkade-hub-debug}
-    restart: ${ARKADE_RESTART_POLICY:-unless-stopped}
+    image: arkade-hub:debug
+    container_name: arkade-hub-debug
+    restart: unless-stopped
     ports:
-      - "${ARKADE_HUB_PORT:-8080}:8080"
-    # env_file 与 environment 的分工：
-    #   env_file 把 .env 里的全部键值注入容器（新增变量无需改本文件也能进容器）；
-    #   environment 用 ${VAR:?...} 在宿主侧做必填校验，缺凭据时直接拒绝启动。
+      - "8080:8080"
     env_file:
-      - .env
+      # 相对 compose 文件所在目录查找；不存在时 compose 会报错，因此要先按上方用法创建。
+      - ../../.env
     environment:
-      # ---- 必填凭据 ----
-      ARKADE_INITIAL_PASS: ${ARKADE_INITIAL_PASS:?必须在 deploy/docker/.env 里设置 ARKADE_INITIAL_PASS}
-      ARKADE_AGENT_TOKEN: ${ARKADE_AGENT_TOKEN:?必须在 deploy/docker/.env 里设置 ARKADE_AGENT_TOKEN}
-      # ---- 可调项 ----
-      # 容器内必须监听 0.0.0.0 才能被端口映射访问，因此这里显式覆盖配置文件的默认值。
-      ARKADE_LISTEN: ${ARKADE_HUB_LISTEN:-0.0.0.0:8080}
+      # ---- 必填凭据（唯一需要外部提供的两项）----
+      ARKADE_INITIAL_PASS: ${ARKADE_INITIAL_PASS:?必须在仓库根目录 .env 里设置 ARKADE_INITIAL_PASS}
+      ARKADE_AGENT_TOKEN: ${ARKADE_AGENT_TOKEN:?必须在仓库根目录 .env 里设置 ARKADE_AGENT_TOKEN}
+      # ---- 普通参数：直接写值 ----
+      # 容器内必须监听 0.0.0.0 才能被端口映射访问。
+      ARKADE_LISTEN: 0.0.0.0:8080
       # 会话有效期，支持 30m / 24h / 72h 这类写法。
-      ARKADE_SESSION_TTL: ${ARKADE_SESSION_TTL:-72h}
-      # 日志级别与格式（debug/info/warn/error，text/json）。
-      ARKADE_LOG_LEVEL: ${ARKADE_LOG_LEVEL:-info}
-      ARKADE_LOG_FORMAT: ${ARKADE_LOG_FORMAT:-text}
+      ARKADE_SESSION_TTL: 72h
+      ARKADE_LOG_LEVEL: info
+      ARKADE_LOG_FORMAT: text
     volumes:
       - hub-data:/data
       - ./hub.config.toml:/data/config.toml:ro
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
-      interval: ${ARKADE_HEALTH_INTERVAL:-10s}
-      timeout: ${ARKADE_HEALTH_TIMEOUT:-3s}
-      start_period: ${ARKADE_HEALTH_START_PERIOD:-10s}
-      retries: ${ARKADE_HEALTH_RETRIES:-5}
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      retries: 5
     networks:
       - arkade
 
@@ -70,31 +62,31 @@ services:
       dockerfile: agent/Dockerfile
       args:
         VERSION: ${ARKADE_VERSION:-0.1.0}
-    image: ${ARKADE_AGENT_IMAGE:-arkade-agent:debug}
-    container_name: ${ARKADE_AGENT_CONTAINER:-arkade-agent-debug}
-    restart: ${ARKADE_RESTART_POLICY:-unless-stopped}
+    image: arkade-agent:debug
+    container_name: arkade-agent-debug
+    restart: unless-stopped
     depends_on:
       hub:
         # 等 Hub 真正健康再起 Agent，避免开局进入重连退避循环刷日志。
         condition: service_healthy
     env_file:
-      - .env
+      - ../../.env
     environment:
       # ---- 必填凭据 ----
-      ARKADE_AGENT_TOKEN: ${ARKADE_AGENT_TOKEN:?必须在 deploy/docker/.env 里设置 ARKADE_AGENT_TOKEN}
-      # ---- 可调项 ----
+      ARKADE_AGENT_TOKEN: ${ARKADE_AGENT_TOKEN:?必须在仓库根目录 .env 里设置 ARKADE_AGENT_TOKEN}
+      # ---- 普通参数：直接写值 ----
       # 服务器显示名。容器 hostname 就是容器 ID，不显式指定的话每次重建名字都会漂移。
-      ARKADE_AGENT_NAME: ${ARKADE_AGENT_NAME:-arkade-debug-node}
+      ARKADE_AGENT_NAME: arkade-debug-node
       # Hub 地址用服务名 hub，不能写 127.0.0.1（那指向 Agent 容器自身）。
-      ARKADE_HUB_URL: ${ARKADE_AGENT_HUB_URL:-ws://hub:8080/agent/connect}
-      ARKADE_DATA_DIR: ${ARKADE_AGENT_DATA_DIR:-/opt/arkade/agent}
+      ARKADE_HUB_URL: ws://hub:8080/agent/connect
+      ARKADE_DATA_DIR: /opt/arkade/agent
       # 运行时套接字留空表示自动发现（$DOCKER_HOST → docker.sock → podman.sock）。
-      ARKADE_SOCKET: ${ARKADE_AGENT_SOCKET:-}
-      ARKADE_RUNTIME_KIND: ${ARKADE_AGENT_RUNTIME_KIND:-auto}
+      ARKADE_SOCKET: ""
+      ARKADE_RUNTIME_KIND: auto
       # 兜底心跳间隔；Hub 在握手应答里给出值后以其为准。
-      ARKADE_HEARTBEAT_SEC: ${ARKADE_AGENT_HEARTBEAT_SEC:-15}
-      ARKADE_LOG_LEVEL: ${ARKADE_LOG_LEVEL:-info}
-      ARKADE_LOG_FORMAT: ${ARKADE_LOG_FORMAT:-text}
+      ARKADE_HEARTBEAT_SEC: "15"
+      ARKADE_LOG_LEVEL: info
+      ARKADE_LOG_FORMAT: text
     volumes:
       # 只读挂载外部编排根目录（宝塔、手写的 compose 项目都在这里）。
       #
@@ -106,17 +98,15 @@ services:
       #
       # 为什么用目录变量而不是直接写 /: 只挂根目录会让**整台宿主机文件系统**
       #   进入 Agent 容器。默认不挂，按需指定一个目录；挂载始终只读。
+      #   取值放仓库根目录 .env：ARKADE_COMPOSE_SOURCE_ROOT=/www/server/panel/data/compose
       #
       # ============================ 顺序有讲究 ============================
-      # 实测（Docker 29 + bind 挂载）：只要 Agent 自己的数据卷与这份挂载
-      # 处于**嵌套/覆盖**关系，靠后的挂载会遮掉靠前的那个目录——表现为
-      # 数据目录里看不到 agent_id、或者挂进来的外部目录是空的。
-      # 因此这里：
-      #   1. 先把宿主目录挂到与 Agent 数据目录完全不重叠的 /arkade/external；
-      #   2. 再挂数据卷与配置文件。
+      # Agent 自己的数据卷与这份挂载**必须不重叠**：
+      # 一旦形成嵌套（例如把外面挂到 /opt/arkade/external，而数据卷在
+      # /opt/arkade/agent），实测在这种 Docker + bind 组合下会出现
+      # "另一个目录变空"的现象——数据目录里看不到 agent_id，或外部目录是空的。
+      # 因此外部目录挂在 /arkade/external（与 /opt/arkade 完全不交叉）。
       # 运行时会把容器标签里的宿主路径换算成 /arkade/external/... 去读。
-      # 空值 = compose 对这一项报错，因此默认给一个不存在的占位目录；
-      #   需要挂载时务必在 .env 里改成真实目录。
       - type: bind
         source: ${ARKADE_COMPOSE_SOURCE_ROOT:-/var/empty/arkade-no-compose-root}
         target: /arkade/external
@@ -125,16 +115,16 @@ services:
       - ./agent.config.toml:/opt/arkade/agent/agent.toml:ro
       # 挂载宿主机 Docker 套接字：Agent 必须通过它操作本机容器。
       # 这是调试专用的「同机自管」形态，生产环境不会这样部署。
-      - ${ARKADE_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
+      - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - arkade
 
 volumes:
   hub-data:
-    name: ${ARKADE_HUB_VOLUME:-arkade-debug-hub-data}
+    name: arkade-debug-hub-data
   agent-data:
-    name: ${ARKADE_AGENT_VOLUME:-arkade-debug-agent-data}
+    name: arkade-debug-agent-data
 
 networks:
   arkade:
-    name: ${ARKADE_NETWORK:-arkade-debug-net}
+    name: arkade-debug-net

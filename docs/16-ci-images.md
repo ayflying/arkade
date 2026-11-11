@@ -47,7 +47,7 @@ docker pull ghcr.io/ayflying/arkade-agent:latest
 
 ### 用 CI 镜像替换本地构建
 
-编排文件本来就从 `.env` 读镜像名，所以**不需要改 `docker-compose.yml`**，只改 `deploy/docker/.env` 里的两个变量：
+镜像名直接写在 `deploy/docker/docker-compose.yml` 里，不需要另配变量。把 hub、agent 的 `image:` 改成 CI 镜像：
 
 ```sh
 # 先取得摘要（推荐固定摘要，而不是浮动标签）
@@ -56,22 +56,23 @@ docker image inspect ghcr.io/<owner>/arkade-hub:latest --format '{{index .RepoDi
 # ghcr.io/<owner>/arkade-hub@sha256:...
 ```
 
-```dotenv
-ARKADE_HUB_IMAGE=ghcr.io/<owner>/arkade-hub@sha256:<digest>
-ARKADE_AGENT_IMAGE=ghcr.io/<owner>/arkade-agent@sha256:<digest>
+```yaml
+  hub:
+    image: ghcr.io/<owner>/arkade-hub@sha256:<digest>
+  agent:
+    image: ghcr.io/<owner>/arkade-agent@sha256:<digest>
 ```
 
 然后**必须去掉 `--build`**：
 
 ```sh
-cd deploy/docker
-docker compose pull          # 按 .env 里的镜像名拉取
-docker compose up -d --no-build --force-recreate hub agent
+docker compose -f deploy/docker/docker-compose.yml pull          # 按编排里的镜像名拉取
+docker compose -f deploy/docker/docker-compose.yml up -d --no-build --force-recreate
 ```
 
 `--no-build` 是关键：留下 `--build` 会让 compose 忽略刚拉取的镜像、就地重新构建并重新打上同名标签，结果「用上了 CI 镜像」只是错觉。数据卷（hub-data/agent-data）与 `.env`、`*.config.toml` 都不受影响，重建只换容器。
 
-回滚：把 `.env` 里两个变量改回原值（本地标签或上一个摘要），再执行一遍 `docker compose up -d --no-build --force-recreate hub agent`。
+回滚：把编排里的两个 `image:` 改回原值（本地标签或上一个摘要），再执行一遍 `docker compose -f deploy/docker/docker-compose.yml up -d --no-build --force-recreate`。
 
 ## 查看产物与排障
 
@@ -87,7 +88,7 @@ Agent 是容器，看不到宿主机路径；而外部编排的配置路径来�
 `读取编排配置失败`。**这不是权限问题**：Agent 的 helper 已经带 `DAC_READ_SEARCH`，
 容器内实测能读 0700 目录和 0600 文件；缺的是"宿主路径没有被挂进 Agent 容器"。
 
-配置方式（`deploy/docker/.env`）：
+配置方式（仓库根目录 `.env`，因为 compose 只读项目目录的 `.env`）：
 
 ```dotenv
 ARKADE_COMPOSE_SOURCE_ROOT=/www/server/panel/data/compose
@@ -96,8 +97,7 @@ ARKADE_COMPOSE_SOURCE_ROOT=/www/server/panel/data/compose
 然后重建 Agent：
 
 ```sh
-cd deploy/docker
-docker compose up -d --no-build --force-recreate agent
+docker compose -f deploy/docker/docker-compose.yml up -d --no-build --force-recreate agent
 ```
 
 机制与边界：
