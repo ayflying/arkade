@@ -25,19 +25,20 @@ import (
 
 // App 是组装完成的 Hub 运行体。
 type App struct {
-	cfg         config.Config
-	log         *slog.Logger
-	db          *store.DB
-	registry    *agentlink.Registry
-	connections *connectionTracker
-	server      *ghttp.Server
-	stopped     chan struct{}
-	stopOnce    sync.Once
-	agentSrv    *agentlink.Server
-	authSvc     *auth.Service
-	imageTasks  *imagetask.Manager
-	migrations  *stackmigrate.Manager
-	autoAdopt   *autoAdopter
+	cfg             config.Config
+	log             *slog.Logger
+	db              *store.DB
+	registry        *agentlink.Registry
+	connections     *connectionTracker
+	server          *ghttp.Server
+	stopped         chan struct{}
+	stopOnce        sync.Once
+	agentSrv        *agentlink.Server
+	authSvc         *auth.Service
+	imageTasks      *imagetask.Manager
+	migrations      *stackmigrate.Manager
+	autoAdopt       *autoAdopter
+	backgroundClose []func(context.Context) error
 }
 
 // NewApp 构造 Hub。所有依赖在此一次性创建，失败时返回明确原因。
@@ -75,18 +76,20 @@ func NewApp(ctx context.Context, cfg config.Config, log *slog.Logger, version st
 	}))
 	autoAdopt := newAutoAdopter(db, ops, reg.OnlineIDs)
 	connections := &connectionTracker{}
+	var backgroundClose []func(context.Context) error
 	router := NewRouter(Deps{
-		AutoAdopt:    autoAdopt,
-		ImageTasks:   imageTasks,
-		StackMigrate: migrations,
-		Log:          log,
-		DB:           db,
-		Auth:         authSvc,
-		Registry:     reg,
-		Ops:          ops,
-		AgentConn:    connections.wrap(http.HandlerFunc(agentSrv.HandleConnect)),
-		WebDist:      cfg.Web.Dist,
-		HubVersion:   version,
+		RegisterBackgroundClose: func(close func(context.Context) error) { backgroundClose = append(backgroundClose, close) },
+		AutoAdopt:               autoAdopt,
+		ImageTasks:              imageTasks,
+		StackMigrate:            migrations,
+		Log:                     log,
+		DB:                      db,
+		Auth:                    authSvc,
+		Registry:                reg,
+		Ops:                     ops,
+		AgentConn:               connections.wrap(http.HandlerFunc(agentSrv.HandleConnect)),
+		WebDist:                 cfg.Web.Dist,
+		HubVersion:              version,
 		// 传给 handler 只为"生成密钥时避开与共享 token 同值"。
 		// 它不会写库、不会进响应、不会进日志。
 		AgentSharedToken: cfg.Auth.AgentToken,
@@ -105,18 +108,19 @@ func NewApp(ctx context.Context, cfg config.Config, log *slog.Logger, version st
 	httpSrv.SetSessionCookieOutput(false) // 登录仅使用现有数据库会话 Cookie。
 
 	return &App{
-		cfg:         cfg,
-		log:         log,
-		db:          db,
-		registry:    reg,
-		connections: connections,
-		server:      httpSrv,
-		stopped:     make(chan struct{}),
-		agentSrv:    agentSrv,
-		authSvc:     authSvc,
-		imageTasks:  imageTasks,
-		migrations:  migrations,
-		autoAdopt:   autoAdopt,
+		cfg:             cfg,
+		log:             log,
+		db:              db,
+		registry:        reg,
+		connections:     connections,
+		server:          httpSrv,
+		stopped:         make(chan struct{}),
+		agentSrv:        agentSrv,
+		authSvc:         authSvc,
+		imageTasks:      imageTasks,
+		migrations:      migrations,
+		autoAdopt:       autoAdopt,
+		backgroundClose: backgroundClose,
 	}, nil
 }
 
@@ -144,6 +148,13 @@ func (a *App) Shutdown(ctx context.Context) error {
 	// 先停止监听并等待框架的请求排空期限，再关闭后台任务和业务池。
 	// 避免退出期间仍接受请求、却已经销毁请求依赖的任务管理器。
 	err := a.server.Shutdown()
+	// Route-owned compose watchers can still finalize database rows and call
+	// Agent RPC. Join them after HTTP drains, before destroying either dependency.
+	for _, close := range a.backgroundClose {
+		if cerr := close(ctx); cerr != nil {
+			return cerr
+		}
+	}
 	// 后台迁移仍可能使用 Agent RPC 和数据库；先取消并等待资源释放，
 	// 再断开 Agent，避免中断导入后连清理临时归档的通道也先被关闭。
 	if a.migrations != nil {

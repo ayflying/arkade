@@ -6,6 +6,7 @@ import (
 	imagescontroller "arkade/hub/internal/controller/imagetasks"
 	resourcescontroller "arkade/hub/internal/controller/resources"
 	stackscontroller "arkade/hub/internal/controller/stacks"
+	"context"
 	"github.com/gogf/gf/v2/net/ghttp"
 )
 
@@ -21,7 +22,7 @@ func bindOperationalRoutes(s *ghttp.Server, d Deps) {
 		state := d.AutoAdopt.state(agent, name)
 		return state.Status, state.Reason
 	}}))
-	bindNativeModule(s, d, stackscontroller.New(stackscontroller.Deps{DB: d.DB, Ops: d.Ops, Session: session, Log: d.Log, Migrate: d.StackMigrate, AutoState: func(agent, name string) (string, string, bool) {
+	stacks := stackscontroller.New(stackscontroller.Deps{DB: d.DB, Ops: d.Ops, Session: session, Log: d.Log, Migrate: d.StackMigrate, AutoState: func(agent, name string) (string, string, bool) {
 		if d.AutoAdopt == nil {
 			return "pending", "等待后台扫描，兼容项目将自动登记配置；容器仍可直接管理", false
 		}
@@ -30,5 +31,9 @@ func bindOperationalRoutes(s *ghttp.Server, d Deps) {
 			state = d.AutoAdopt.state(agent, name)
 		}
 		return state.Status, state.Reason, ok
-	}}))
+	}})
+	if d.RegisterBackgroundClose != nil {
+		d.RegisterBackgroundClose(func(ctx context.Context) error { return stackscontroller.Close(ctx, stacks) })
+	}
+	bindNativeModule(s, d, stacks)
 }

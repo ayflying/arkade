@@ -35,6 +35,7 @@ package httpx
 // 兜底路由同样按这个方式包一遍（见 fallbackHandler）。
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 
@@ -81,6 +82,9 @@ type Deps struct {
 	// 否则会与在途握手产生竞态：那次握手的 Close 找不到连接，
 	// 而它会照常上线甚至复活已删记录（详见 agentlink/generation.go）。
 	Guard *agentlink.EnrollmentGuard
+	// RegisterBackgroundClose attaches route-owned workers to the App lifecycle.
+	// Called during router construction, never concurrently with serving requests.
+	RegisterBackgroundClose func(func(context.Context) error)
 }
 
 // globalChain 把标准库全局中间件依次包在最外层。
