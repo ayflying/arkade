@@ -8,7 +8,20 @@
 - 数据库继续使用 SQLite，原地升级，不重建业务数据。
 - 锁定 GoFrame 与官方 SQLite 驱动 v2.9.6、golang-migrate v4.19.1；兼容项目 Go 1.24。
 
-## 管理接口模块化并发迁移（第二阶段）
+## 全部 HTTP 原生迁移（第三阶段，当前源码状态）
+
+用户要求完成后自行配置部署，本阶段不修改服务器环境。
+
+- 新增 51 条业务原生路由：服务器管理 7、容器及资源 14、镜像任务 8、核心编排 14、外部编排及导入 8。与前两阶段 19 条合计 **70 条 HTTP API**；另将 Agent WebSocket 握手独立接入 typed controller，总计 71 条 g.Meta 路由。
+- 全部业务入口使用 `(ctx,*Req)(*Res,error)` + `Bind`，删除剩余 19 个旧 handler/权限适配文件。仅静态资源及未知路由使用 BindHandler；旧 wrapToGF 只供隔离测试探针，没有生产业务调用。
+- API/controller/service 按功能域和读取、写入、任务、上传、下载、成员、授权拆文件；实现文件均小于 300 行。公共权限决策集中在 controller.Access，Compose 校验、哈希、脱敏与视图集中于 service/compose，避免多模块复制。
+- 新模块仅让 GF 绑定路径/query；所有可能匹配路径名的大小写/下划线 query 别名被排除。原 body 通过 context 临时隐藏，controller 在权限/项目存在性检查后再严格解码 typed Input，保持旧错误优先级及各自长度/未知字段策略。
+- 归档上传下载维持流式、不读全量内存；202、空 411、204、WebSocket hijack 使用明确响应策略，不通过 Recorder 包装旧 handler。
+- 此处“全部迁移”指 GoFrame HTTP 与数据访问架构迁移，不等于新增业务已完成。跨服务器 Compose 迁移仍缺生产 backend 装配和真实双引擎验收；本次没有借框架迁移默默启用它。
+- 验证：Go 1.24.13、CGO=0，Windows Hub 全量测试及 vet 通过（HTTP 104.210 秒），Linux 完整 HTTP 实跑通过；Agent 全量测试和 protocol 测试通过。真实网络补测 raw JSON Content-Type 上传、tar 下载、空 411 和慢上传取消释放。Windows/Linux 日志均未发现 `panic serving` / 重复 WriteHeader。
+- 本地源码状态与远端镜像/测试服状态分开：本阶段未部署，不宣称 GHCR latest 含新改动；配置前必须确认部署源码包含本阶段提交。第二阶段的测试服状态是历史记录，不代表本阶段已部署。
+
+## 管理接口模块化并发迁移（第二阶段，历史）
 
 三名子智能体分别独占 users、groups、audit 的 API 和 controller 子目录；Lead 独占路由、中间件、严格解码与集成，不并发修改同一共享文件。
 

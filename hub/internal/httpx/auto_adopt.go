@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"arkade/hub/internal/agentlink"
+	"arkade/hub/internal/service/compose"
 	"arkade/hub/internal/store"
 	"arkade/protocol/envelope"
 )
@@ -124,7 +125,7 @@ func (a *autoAdopter) scan(parent context.Context, agent string) {
 			continue
 		}
 		seen[p.Name] = true
-		if !validComposeName(p.Name) {
+		if !compose.ValidName(p.Name) {
 			a.set(agent, p.Name, "skipped", "项目名称不符合管理规范，暂不能自动接管")
 			continue
 		}
@@ -153,7 +154,7 @@ func (a *autoAdopter) adopt(ctx context.Context, agent, name string, known map[s
 		a.set(agent, name, "skipped", safeAutoReason(source.Blockers))
 		return
 	}
-	if source.Name != name || validateComposeContent(source.Content) != nil || source.ConfigHash != composeProjectHash(source.Content, "") {
+	if source.Name != name || compose.ValidateContent(source.Content) != nil || source.ConfigHash != compose.ProjectHash(source.Content, "") {
 		a.set(agent, name, "skipped", "项目配置为空、超限或校验不一致，未自动登记配置")
 		return
 	}
@@ -202,13 +203,4 @@ func (a *autoAdopter) adopt(ctx context.Context, agent, name string, known map[s
 }
 
 // Agent只应返回脱敏原因；再限制数量与长度，避免无限量结果进入列表。
-func safeAutoReason(reasons []string) string {
-	if len(reasons) == 0 {
-		return "项目暂不满足自动接管条件"
-	}
-	r := []rune(reasons[0])
-	if len(r) > 300 {
-		r = r[:300]
-	}
-	return string(r)
-}
+func safeAutoReason(reasons []string) string { return compose.SafeAutoReason(reasons) }

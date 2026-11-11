@@ -9,11 +9,8 @@ import (
 
 // 类型别名：让签名简洁，同时保持与标准库完全兼容。
 type (
-	// httpHandlerFunc 是业务 handler 的类型。
-	//
-	// 迁移期间保持标准库签名（而不是 ghttp 的 func(*ghttp.Request)），
-	// 这样 40+ 个 handler 一行不用改，也能继续用 httptest 直接测。
-	// 后续按 GF 惯例拆 controller 时，逐个改成 ghttp handler 即可。
+	// httpHandlerFunc 仅为中间件/路径安全测试探针保留标准库签名。
+	// 生产业务方法使用原生 GoFrame typed controller。
 	httpHandlerFunc = http.HandlerFunc
 
 	// middlewareFunc 是标准库中间件类型。

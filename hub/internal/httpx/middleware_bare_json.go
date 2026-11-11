@@ -48,10 +48,14 @@ func writeBareResult(r *ghttp.Request, d Deps) {
 	//
 	// 不能只看 Response.Status：GF 会在请求生命周期里写入该字段，
 	// 用它判断会把正常请求也跳过，导致"响应为空"。
+	if errors.Is(r.GetError(), controller.ErrResponseCommitted) {
+		r.SetError(nil)
+		markCommitted(r)
+		return
+	}
 	if r.Response.BufferLength() > 0 || r.Response.BytesWritten() > 0 || isCommitted(r) {
 		return
 	}
-
 	if err := r.GetError(); err != nil {
 		writeBareError(r, d, err)
 		return
@@ -63,7 +67,7 @@ func writeBareResult(r *ghttp.Request, d Deps) {
 		commit(r, d.Log, http.StatusNoContent, nil, "", "")
 		return
 	}
-	commit(r, d.Log, http.StatusOK, res, "", "")
+	commit(r, d.Log, controller.ResponseStatus(r), res, "", "")
 }
 
 // commit 是唯一的响应写出口。

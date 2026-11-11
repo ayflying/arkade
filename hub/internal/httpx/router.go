@@ -8,17 +8,9 @@ package httpx
 //   /api/*               业务接口（必须经过会话认证）
 //   其余 GET             前端 SPA 回落（history 模式必需）
 //
-// ## 迁移说明（GoFrame 阶段二）
-//
-// 路由由 GoFrame 匹配；认证、用户、用户组及审计使用 g.Meta + Bind。
-// 尚未迁移的容器与编排等 handler 使用 BindHandler + wrapToGF 桥接。
-// 不依赖 chi，不自行匹配请求路径。
-//
-// 桥接部分的职责：
-//
-//	ghttp 负责：路径匹配、`{param}` 解析、404 兜底
-//	wrapToGF 负责：取参写入 context（GetRouter）、桥接到标准库请求
-//	handler 负责：业务逻辑（一行不改）
+// 所有业务及 Agent 连接入口均由 API g.Meta + 原生 typed Bind 注册。
+// 仅静态资源/404 兜底使用 BindHandler，不再桥接旧业务 handler。
+// 普通 JSON 返回裸响应；上传下载和 WebSocket 显式保留传输控制。
 //
 // ## 中间件为什么不用 s.Use（重要）
 //
@@ -34,7 +26,7 @@ package httpx
 //
 // 所以这里不挂 GF 全局中间件，而是**把标准库中间件链整体塞进每个路由**：
 //
-//	wrapToGF(pattern, recoverer(logger(security(handler))))
+//	gfChainWithSanitizer(..., recoverer, requestLogger, securityHeaders, ...)
 //
 // 整条链始终作用于同一个 `r.Response.Writer`，writer 一路透传，
 // 状态码、响应大小、Hijacker 全部正常。代价是每条路由各包一遍，
@@ -165,8 +157,11 @@ func NewRouter(d Deps) *ghttp.Server {
 	// 注意：这是 WebSocket 升级路径，必须能拿到 http.Hijacker。
 	// ghttp 的 Response.Writer 实现了 Hijacker，经 statusWriter 包装后
 	// 仍透传（statusWriter 有 Hijack/Flush/Unwrap），因此整条链路可用。
-	register(s, http.MethodGet, "/agent/connect", d, nil, func(w http.ResponseWriter, req *http.Request) {
-		d.AgentConn.ServeHTTP(w, req)
+	s.Group("/", func(group *ghttp.RouterGroup) {
+		group.Middleware(gfChainWithSanitizer(d.Log, func(req *ghttp.Request) { writeBareResult(req, d) }, nil,
+			func(_ *ghttp.Request, req *http.Request) (*http.Request, error) { return req, nil },
+			recoverer(d.Log), requestLogger(d.Log), securityHeaders))
+		group.Bind(&controller.AgentTransport{Handler: d.AgentConn})
 	})
 
 	// 登录不需要已有会话。
@@ -188,17 +183,6 @@ func NewRouter(d Deps) *ghttp.Server {
 
 	// ---------- 需要登录的路由 ----------
 	//
-	// 桥接路由用的标准库链：authenticator → auditMiddleware。
-	// 顺序与迁移前一致；audit 必须在认证之后，否则只能记到空用户名。
-	privMW := []middlewareFunc{
-		authenticator(d.Auth),
-		auditMiddleware(d.DB, d.Log),
-	}
-
-	priv := func(method, pattern string, h httpHandlerFunc) {
-		register(s, method, "/api"+pattern, d, privMW, h)
-	}
-
 	// 退出与 me 需要已在登录态，因此把 authenticator + auditMiddleware
 	// **并入同一条链**（顺序在全局三层之后，与迁移前一致）。
 	//
@@ -227,74 +211,9 @@ func NewRouter(d Deps) *ghttp.Server {
 		g.Bind(authPrivCtl)
 	})
 
-	priv(http.MethodGet, "/agents", handleListAgents(d))
-	priv(http.MethodGet, "/image-tasks", handleListImageTasks(d))
-	priv(http.MethodGet, "/image-tasks/{taskID}", handleGetImageTask(d))
-	priv(http.MethodPost, "/image-tasks/{taskID}/cancel", handleCancelImageTask(d))
-	priv(http.MethodGet, "/image-tasks/{taskID}/download", handleDownloadImage(d))
-	priv(http.MethodPost, "/agents/{agentID}/images/pull", handleStartImageTask(d, "pull"))
-	priv(http.MethodPost, "/agents/{agentID}/images/export", handleStartImageTask(d, "export"))
-	priv(http.MethodPost, "/agents/{agentID}/images/migrate", handleStartImageTask(d, "migrate"))
-	priv(http.MethodPost, "/agents/{agentID}/images/import", handleUploadImage(d))
+	bindOperationalRoutes(s, d)
 	// 独立模块由各自 API 的 g.Meta 声明路由，入口只负责装配。
 	bindManagementRoutes(s, d)
-	// 服务器记录的管理：改名/备注/禁用/删除。
-	// 全部要求 admin（在 handler 里用 requireAdmin 判断），
-	// 因为它们改的是纳管关系本身，会影响到所有用户组。
-	priv(http.MethodPatch, "/agents/{agentID}", handlePatchAgent(d))
-	// 预创建服务器：先建记录并下发专属密钥，再由那台机器接入。
-	priv(http.MethodPost, "/agents", handleCreateAgent(d))
-	// 重置专属密钥：旧密钥立即失效并踢掉现有连接。
-	priv(http.MethodPost, "/agents/{agentID}/token/reset", handleResetAgentToken(d))
-	priv(http.MethodDelete, "/agents/{agentID}", handleDeleteAgent(d))
-	priv(http.MethodPost, "/agents/{agentID}/disable", handleDisableAgent(d))
-	priv(http.MethodPost, "/agents/{agentID}/enable", handleEnableAgent(d))
-
-	priv(http.MethodGet, "/agents/{agentID}/containers", handleListContainers(d))
-	priv(http.MethodGet, "/agents/{agentID}/containers/{containerID}", handleContainerDetail(d))
-	priv(http.MethodPost, "/agents/{agentID}/containers/{containerID}/start", handleContainerStart(d))
-	priv(http.MethodPost, "/agents/{agentID}/containers/{containerID}/stop", handleContainerStop(d))
-	// 重启与启停同级（operate）：不销毁对象、不改纳管关系。
-	priv(http.MethodPost, "/agents/{agentID}/containers/{containerID}/restart", handleContainerRestart(d))
-	// 删除是唯一不可逆的容器操作，权限提到 manage。
-	priv(http.MethodDelete, "/agents/{agentID}/containers/{containerID}", handleContainerRemove(d))
-	priv(http.MethodGet, "/agents/{agentID}/containers/{containerID}/logs", handleContainerLogs(d))
-
-	// 容器编排（docker compose）。
-	// 权限分档：列表/详情/日志/ps 要 view，动作要 operate，创建/更新/删除要 manage。
-	// 分档在各自的 handler 里判断（requirePermission），不在这里按路径分组——
-	// 同一前缀下不同动作的权限要求不同，路径分组表达不了这种差异。
-	priv(http.MethodGet, "/agents/{agentID}/stacks", handleListStacks(d))
-	priv(http.MethodPost, "/agents/{agentID}/stacks", handleCreateStack(d))
-	priv(http.MethodPost, "/agents/{agentID}/stacks/import-preview", handleImportStackPreview(d))
-	priv(http.MethodPost, "/agents/{agentID}/stacks/import", handleImportStack(d))
-	priv(http.MethodGet, "/agents/{agentID}/external-stacks/{name}", handleExternalStack(d))
-	priv(http.MethodGet, "/agents/{agentID}/external-stacks/{name}/config", handleExternalConfig(d))
-	priv(http.MethodPut, "/agents/{agentID}/external-stacks/{name}/draft", handleExternalDraft(d))
-	priv(http.MethodPost, "/agents/{agentID}/external-stacks/{name}/apply-preview", handleExternalPreview(d))
-	priv(http.MethodPost, "/agents/{agentID}/external-stacks/{name}/apply", handleExternalApply(d))
-	priv(http.MethodPost, "/agents/{agentID}/external-stacks/{name}/copy", handleExternalCopy(d))
-	priv(http.MethodGet, "/agents/{agentID}/stacks/{name}", handleGetStack(d))
-	priv(http.MethodPut, "/agents/{agentID}/stacks/{name}", handleUpdateStack(d))
-	priv(http.MethodDelete, "/agents/{agentID}/stacks/{name}", handleDeleteStack(d))
-	priv(http.MethodGet, "/agents/{agentID}/stacks/{name}/config", handleGetStackConfig(d))
-	priv(http.MethodPost, "/agents/{agentID}/stacks/{name}/actions", handleStackAction(d))
-	priv(http.MethodPost, "/agents/{agentID}/stacks/{name}/migrate", handleStartStackMigrate(d))
-	priv(http.MethodPost, "/agents/{agentID}/stacks/{name}/operation-tasks", handleStartComposeOperation(d))
-	priv(http.MethodGet, "/agents/{agentID}/stacks/{name}/operation-tasks/{taskID}", handleGetComposeOperation(d))
-	priv(http.MethodPost, "/agents/{agentID}/stacks/{name}/pull-tasks", handleStartComposePull(d))
-	priv(http.MethodGet, "/agents/{agentID}/stacks/{name}/pull-tasks/{taskID}", handleGetComposePull(d))
-	priv(http.MethodGet, "/agents/{agentID}/stacks/{name}/logs", handleStackLogs(d))
-	priv(http.MethodGet, "/agents/{agentID}/stacks/{name}/ps", handleStackPS(d))
-
-	// 镜像 / 网络 / 存储卷（实时透传 Agent，Hub 不缓存）。
-	priv(http.MethodGet, "/agents/{agentID}/images", handleListImages(d))
-	priv(http.MethodDelete, "/agents/{agentID}/images/{imageID}", handleRemoveImage(d))
-	priv(http.MethodGet, "/agents/{agentID}/networks", handleListNetworks(d))
-	priv(http.MethodDelete, "/agents/{agentID}/networks/{networkID}", handleRemoveNetwork(d))
-	priv(http.MethodPost, "/agents/{agentID}/volume-files", handleVolumeFiles(d))
-	priv(http.MethodGet, "/agents/{agentID}/volumes", handleListVolumes(d))
-	priv(http.MethodDelete, "/agents/{agentID}/volumes/{name}", handleRemoveVolume(d))
 
 	// ---------- 兜底 ----------
 	//

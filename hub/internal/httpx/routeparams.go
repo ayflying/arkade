@@ -13,15 +13,14 @@ package httpx
 //
 // ## 本次方案（原生 GF 路由，不做任何自建匹配）
 //
-// GoFrame 负责路由匹配，但 handler 仍保持 `http.HandlerFunc` 签名——
-// 由一个极薄的 wrapper 把 (ghttp.Request → 标准库请求) 桥接起来，
-// 同时把两样东西放进 context：
+// GoFrame 负责路由匹配及 typed controller 绑定。绑定中间件把用于审计的
+// 路由元数据放进 context；业务方法直接读取自己的 typed Req，不经过旧 handler。
+// 元数据包含：
 //
 //  1. **路径参数**：从 `r.GetRouter(key)` 取，写入 context 供 pathParam 读取；
 //  2. **路由模板**：注册时就是确定的字符串，直接写入，供审计查动作映射表。
 //
-// 这样 40+ 处 handler 只需把 `chi.URLParam(r, "x")` 换成 `pathParam(r, "x")`，
-// 签名与业务逻辑一行不动。
+// 审计沿用 pathParam/routePattern，避免框架内部路由类型泄漏到审计存储。
 //
 // ## 为什么不用 ghttp 的 r.Get()
 //

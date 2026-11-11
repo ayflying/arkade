@@ -1,25 +1,18 @@
 // Package httpx 是 Hub 的 HTTP 层：路由装配、中间件、JSON 编解码。
 //
 // 分层约定：
-//   - handlers*.go 只做「取参数 → 调 service → 写响应」，不写业务判断；
-//   - 所有错误都经 respondError 统一映射成 {"error":{"code","message"}}，
-//     前端只依赖这一种错误结构（契约见 docs/05-decisions.md 与 web 侧实现）；
-//   - 权限校验在中间件里完成，handler 内不再重复判断。
+//   - API 声明契约，typed controller 调用 service/store/agentlink；
+//   - 本包集中输出裸 JSON 和 {"error":{"code","message"}} 错误信封；
+//   - 认证在中间件，按资源的权限与输入校验在 controller，保留错误优先级。
 package httpx
 
 import (
 	"encoding/json"
-	"errors"
-	"io"
 	"log/slog"
 	"net/http"
 
 	"arkade/protocol/envelope"
 )
-
-// 请求体大小上限。Hub 的 API 只接受小型 JSON，不接收大文件
-// （镜像与卷走独立流式通道，见 03-tech-stack.md）。
-const maxBodyBytes = 1 << 20 // 1 MiB
 
 // apiError 是统一错误响应体。
 type apiError struct {
@@ -43,25 +36,6 @@ func respondJSON(w http.ResponseWriter, log *slog.Logger, status int, body any) 
 	if err := json.NewEncoder(w).Encode(body); err != nil {
 		log.Error("写入响应失败", "err", err)
 	}
-}
-
-// respondSecretJSON 用于响应体含**一次性密钥**的接口。
-//
-// 除了 respondJSON 已有的 no-store，还额外加三条：
-//
-//	Pragma: no-cache         —— 兼容 HTTP/1.0 的中间代理（它们只认这个）；
-//	Cache-Control: no-store  —— 覆盖所有现代缓存，且明确"不要存到磁盘"；
-//	X-Content-Type-Options   —— 防止浏览器把 JSON 当 HTML 嗅探渲染。
-//
-// 为什么值得单开一个函数：这些头只对"含密钥的响应"是必须的，
-// 而"必须"的理由是密钥一旦被浏览器缓存或中间代理留存，
-// 就等价于把凭据写进了一个用户无法清除、我们也看不到的地方。
-// 把它们和普通响应用同一个函数，将来很容易在重构时丢失。
-func respondSecretJSON(w http.ResponseWriter, log *slog.Logger, status int, body any) {
-	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
-	w.Header().Set("Pragma", "no-cache")
-	w.Header().Set("Expires", "0")
-	respondJSON(w, log, status, body)
 }
 
 // respondError 是唯一的错误出口。
@@ -124,21 +98,4 @@ func statusForCode(code string) int {
 	default:
 		return http.StatusInternalServerError
 	}
-}
-
-// decodeJSON 解析请求体，拒绝未知字段。
-//
-// DisallowUnknownFields 是刻意的：前端多传字段说明契约已漂移，
-// 静默忽略会让两边长期不一致却不被发现。
-func decodeJSON(r *http.Request, out any) error {
-	if r.Body == nil {
-		return errors.New("请求体为空")
-	}
-	limited := io.LimitReader(r.Body, maxBodyBytes)
-	dec := json.NewDecoder(limited)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(out); err != nil {
-		return err
-	}
-	return nil
 }
