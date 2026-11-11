@@ -1,5 +1,12 @@
 # Arkade 主节点编排（只跑 Hub）
 #
+# 【镜像来源】直接拉 CI 构建并推送到 GitHub Container Registry 的镜像：
+#   ghcr.io/ayflying/arkade-hub:latest
+#   来源工作流 .github/workflows/images.yml（master 推送发 latest + sha-<提交号>）。
+#   生产建议固定摘要或 sha- 标签，不要跟 latest 漂移：
+#     image: ghcr.io/ayflying/arkade-hub@sha256:<digest>
+#   本地想自己构建，用 --build 显式覆盖即可（见下方用法）。
+#
 # 【编排规范】
 #   - 只有凭据类（密码、令牌）走 `${VAR:?}` 从根目录 .env 读取，不落进本文件；
 #   - 其余普通参数（端口、名字、日志级别等）直接写在这里，一眼可见，不绕 .env。
@@ -12,8 +19,12 @@
 #
 # 用法（在仓库根目录）：
 #   cp deploy/docker/.env.example .env    # 复制到仓库根目录，只填两个凭据
-#   docker compose -f deploy/docker/hub-compose.yml up -d --build
+#   docker compose -f deploy/docker/hub-compose.yml pull
+#   docker compose -f deploy/docker/hub-compose.yml up -d
 #   浏览器打开 http://<机器IP>:8080
+#
+#   本地源码构建（不拉 CI 镜像）：
+#   docker compose -f deploy/docker/hub-compose.yml up -d --build
 #
 # 说明：compose 只读取「项目目录」的 .env，本项目目录是仓库根目录，
 # 所以凭据文件是 <仓库根目录>/.env；与 agent-compose.yml 的 .env 互不影响。
@@ -25,13 +36,15 @@ name: arkade-hub
 
 services:
   hub:
+    # CI 发布的 Hub 镜像（内含编译好的前端产物，多架构 amd64/arm64）。
+    image: ghcr.io/ayflying/arkade-hub:latest
+    # 保留 build 段：只有显式加 --build 才会本地构建，平时的 pull/up 用上面那个镜像。
     build:
       # 构建上下文是仓库根目录：hub 依赖共享的 protocol 模块，且要打包前端产物。
       context: ../..
       dockerfile: hub/Dockerfile
       args:
         VERSION: ${ARKADE_VERSION:-0.1.0}
-    image: arkade-hub:debug
     container_name: arkade-hub
     restart: unless-stopped
     ports:
@@ -70,4 +83,4 @@ volumes:
 
 networks:
   arkade:
-    name: arkade-net
+    name: arkade-hub-net

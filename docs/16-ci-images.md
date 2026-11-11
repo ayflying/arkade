@@ -2,6 +2,9 @@
 
 工作流：`.github/workflows/images.yml`。使用 GitHub Actions 构建，镜像发布到 GitHub Container Registry（GHCR），可以在 GitHub 的 Packages 页面查看，不把镜像二进制提交进 Git 仓库。
 
+**部署链路就是这个闭环**：本地改代码 → 推送 `master` → CI 跑测试并构建发布镜像 → 部署机 `docker compose pull && up -d`。
+部署机不编译、不需要源码，镜像来源统一，回滚只改一个标签。
+
 ## 镜像地址
 
 本仓库 `ayflying/arkade` 会发布：
@@ -45,39 +48,44 @@ docker pull ghcr.io/ayflying/arkade-agent:latest
 
 生产建议固定 `sha-<完整提交号>` 或摘要，避免下一次推送 `master` 后浮动标签变化。私有包需要拥有 `read:packages` 的账号凭据，使用 `docker login ghcr.io --password-stdin`，不要把 Token 放在命令行、Compose 文件或 Git 中。
 
-### 用 CI 镜像替换本地构建
+### 部署默认就用 CI 镜像
 
-镜像名直接写在编排文件里，不需要另配变量。主节点改 `deploy/docker/hub-compose.yml` 的 hub 服务，被管节点改 `deploy/docker/agent-compose.yml` 的 agent 服务：
-
-```sh
-# 先取得摘要（推荐固定摘要，而不是浮动标签）
-docker pull ghcr.io/<owner>/arkade-hub:latest
-docker image inspect ghcr.io/<owner>/arkade-hub:latest --format '{{index .RepoDigests 0}}'
-# ghcr.io/<owner>/arkade-hub@sha256:...
-```
+`deploy/docker/hub-compose.yml` 与 `deploy/docker/agent-compose.yml` 的 `image:` 直接指向 GHCR：
 
 ```yaml
   hub:                                   # hub-compose.yml
-    image: ghcr.io/<owner>/arkade-hub@sha256:<digest>
+    image: ghcr.io/ayflying/arkade-hub:latest
+  agent:                                 # agent-compose.yml（部署到被管服务器）
+    image: ghcr.io/ayflying/arkade-agent:latest
+```
+
+部署流程就是「拉取 + 起容器」，不需要在服务器上装 Go/Node，也不需要源码：
+
+```sh
+docker compose -f deploy/docker/hub-compose.yml pull
+docker compose -f deploy/docker/hub-compose.yml up -d
+# 被管节点在 Agent 部署目录：
+docker compose -f agent-compose.yml pull && docker compose -f agent-compose.yml up -d
+```
+
+固定版本（生产推荐）与回滚都只是改这一个字符串：
+
+```sh
+# 先取得摘要（推荐固定摘要，而不是浮动标签）
+docker pull ghcr.io/ayflying/arkade-hub:latest
+docker image inspect ghcr.io/ayflying/arkade-hub:latest --format '{{index .RepoDigests 0}}'
+# ghcr.io/ayflying/arkade-hub@sha256:...
 ```
 
 ```yaml
-  agent:                                 # agent-compose.yml（部署到被管服务器）
-    image: ghcr.io/<owner>/arkade-agent@sha256:<digest>
+    image: ghcr.io/ayflying/arkade-hub@sha256:<digest>
 ```
 
-然后**必须去掉 `--build`**：
+然后 `docker compose -f deploy/docker/hub-compose.yml up -d`（**不要加 `--build`**）。
 
-```sh
-docker compose -f deploy/docker/hub-compose.yml pull               # 按编排里的镜像名拉取
-docker compose -f deploy/docker/hub-compose.yml up -d --no-build --force-recreate
-```
-
-被管节点同理，在 Agent 部署目录里 `docker compose -f agent-compose.yml pull` 后再 `up -d --no-build --force-recreate`。
-
-`--no-build` 是关键：留下 `--build` 会让 compose 忽略刚拉取的镜像、就地重新构建并重新打上同名标签，结果「用上了 CI 镜像」只是错觉。数据卷（`arkade-hub-data` / `arkade-agent-data`）与 `.env`、`*.config.toml` 都不受影响，重建只换容器。
-
-回滚：把编排里的 `image:` 改回原值（本地标签或上一个摘要），再执行一遍上面的 `up -d --no-build --force-recreate`。
+`--build` 是关键开关：Hub 编排同时保留了 `build:` 段，加了 `--build` 就会忽略刚拉取的镜像、
+就地重新构建并打上同名标签，结果「用上了 CI 镜像」只是错觉——那条路径只用于本地未推送的自测。
+显式加 `--no-build` 可以彻底杜绝这种误用。数据卷（`arkade-hub-data` / `arkade-agent-data`）与 `.env`、`*.config.toml` 都不受影响，重建只换容器。
 
 ## 查看产物与排障
 

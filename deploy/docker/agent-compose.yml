@@ -1,5 +1,13 @@
 # Arkade 被管节点编排（只跑 Agent，不含 Hub）
 #
+# 【镜像来源】直接拉 CI 构建并推送到 GitHub Container Registry 的镜像：
+#   ghcr.io/ayflying/arkade-agent:latest
+#   来源工作流 .github/workflows/images.yml（master 推送发 latest + sha-<提交号>）。
+#   生产建议固定摘要或 sha- 标签，不要跟 latest 漂移：
+#     image: ghcr.io/ayflying/arkade-agent@sha256:<digest>
+#   本地构建：docker build -f agent/Dockerfile -t arkade-agent:debug . 后
+#   把 image 改成 arkade-agent:debug（本文件不带 build 段，Agent 镜像在仓库里构建）。
+#
 # 【安全边界】Agent 必须有宿主 Docker 套接字才能操作本机容器（等价宿主机 root），
 #   所以本文件**只能部署在你信任的被管服务器上**；
 #   主节点用的 Hub 编排（hub-compose.yml）不含任何套接字，两者不要混在一份文件里。
@@ -8,7 +16,7 @@
 #   其余普通参数（名字、日志级别、心跳等）直接写值。
 #
 # 用法：把 agent-compose.yml、agent.config.toml、agent.env.example（改名为 .env）
-#   放进被管服务器上的一个独立目录，填好密钥与 Hub 地址后 up -d。
+#   放进被管服务器上的一个独立目录，填好密钥与 Hub 地址后 pull + up -d。
 #   详见 deploy/docker/README.md。
 #
 # 注意：compose 会自动读取本项目目录的 .env，也就是这里 agent.env.example 复制出的那份。
@@ -17,7 +25,8 @@ name: arkade-agent
 
 services:
   agent:
-    image: arkade-agent:debug
+    # CI 发布的 Agent 镜像：内置 docker-cli 与 compose 插件，多架构 amd64/arm64。
+    image: ghcr.io/ayflying/arkade-agent:latest
     container_name: arkade-agent
     restart: unless-stopped
     env_file:
