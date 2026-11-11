@@ -96,11 +96,6 @@ services:
       ARKADE_LOG_LEVEL: ${ARKADE_LOG_LEVEL:-info}
       ARKADE_LOG_FORMAT: ${ARKADE_LOG_FORMAT:-text}
     volumes:
-      - agent-data:/opt/arkade/agent
-      - ./agent.config.toml:/opt/arkade/agent/agent.toml:ro
-      # 挂载宿主机 Docker 套接字：Agent 必须通过它操作本机容器。
-      # 这是调试专用的「同机自管」形态，生产环境不会这样部署。
-      - ${ARKADE_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
       # 只读挂载外部编排根目录（宝塔、手写的 compose 项目都在这里）。
       #
       # 为什么需要：Agent 是容器，看不到宿主机路径；而已有项目的配置路径来自
@@ -110,17 +105,27 @@ services:
       #   也就无法「宝塔照旧管、Arkade 也能读」。
       #
       # 为什么用目录变量而不是直接写 /: 只挂根目录会让**整台宿主机文件系统**
-      #   进入 Agent 容器。默认不通配，按需指定一个目录；挂载始终只读。
-      # 为什么套一层 bind：容器里的同路径挂载点会遮住这份挂载，
-      #   因此再 bind 一次到固定的 /arkade/external，运行时按该前缀映射路径。
-      # 空值 = 不挂（默认，行为与以前完全一致）。
+      #   进入 Agent 容器。默认不挂，按需指定一个目录；挂载始终只读。
+      #
+      # ============================ 顺序有讲究 ============================
+      # 实测（Docker 29 + bind 挂载）：只要 Agent 自己的数据卷与这份挂载
+      # 处于**嵌套/覆盖**关系，靠后的挂载会遮掉靠前的那个目录——表现为
+      # 数据目录里看不到 agent_id、或者挂进来的外部目录是空的。
+      # 因此这里：
+      #   1. 先把宿主目录挂到与 Agent 数据目录完全不重叠的 /arkade/external；
+      #   2. 再挂数据卷与配置文件。
+      # 运行时会把容器标签里的宿主路径换算成 /arkade/external/... 去读。
+      # 空值 = compose 对这一项报错，因此默认给一个不存在的占位目录；
+      #   需要挂载时务必在 .env 里改成真实目录。
       - type: bind
         source: ${ARKADE_COMPOSE_SOURCE_ROOT:-/var/empty/arkade-no-compose-root}
         target: /arkade/external
         read_only: true
-        bind:
-          propagation: rslave
-      - /arkade/external:/arkade/external
+      - agent-data:/opt/arkade/agent
+      - ./agent.config.toml:/opt/arkade/agent/agent.toml:ro
+      # 挂载宿主机 Docker 套接字：Agent 必须通过它操作本机容器。
+      # 这是调试专用的「同机自管」形态，生产环境不会这样部署。
+      - ${ARKADE_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
     networks:
       - arkade
 

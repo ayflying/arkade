@@ -161,8 +161,15 @@ func (e *engine) runComposeSource(ctx context.Context, name string, readSearch b
 
 	raw, err := e.runHelper(ctx, helperSpec{
 		// 隐藏子命令：固定从 /source 读，不接受挂载点参数。
-		cmd:          []string{"compose-source-helper"},
-		mounts:       []helperMount{readonlyBind(workDir, sourceMountPoint)},
+		cmd: []string{"compose-source-helper"},
+		// ============================ helper 必须带上 Agent 的挂载根 ============================
+		// Agent 是容器时，编排放置的目录是**宿主路径**；helper 同样是新容器，
+		// 只挂 Agent 自己的容器内路径（/arkade/external/...）是挂不到的——
+		// 那里只有宿主机上恰好存在同名路径时才看得到东西。
+		//
+		// 所以：宿主机目录按**宿主路径**挂进来；Agent 内存路径额外挂一份。
+		// 真正要读的那份在宿主挂载里，容器内路径只是兜底与排障便利。
+		mounts:       e.composeSourceMounts(workDir),
 		request:      reqJSON,
 		responsePath: helperSourceResponsePath,
 		// 只有 raw 路径会加 DAC_READ_SEARCH。
@@ -200,6 +207,43 @@ func readonlyBind(src, dst string) helperMount {
 		ReadOnly:    true,
 		BindOptions: &helperBindOptions{CreateMountpoint: false},
 	}
+}
+
+// composeSourceMounts 构造 compose-source-helper 的挂载列表。
+//
+// 容器化部署（配了宿主根目录）时挂两份：
+//   - 宿主路径 → /source：这是真正被读取的那份，helper 是新容器，
+//     只有用宿主路径挂才能看到宿主目录；
+//   - 容器内路径 → 容器内路径：Agent 内存路径本身来自宿主目录的只读挂载，
+//     挂一份等价实现，方便排障时对照。
+//
+// 原生部署（没有配宿主根目录）时只有第二份，行为与以前完全一致。
+func (e *engine) composeSourceMounts(workDir string) []helperMount {
+	mounts := make([]helperMount, 0, 2)
+	if e != nil && e.hostRoot != "" {
+		if hostDir, ok := e.containerPathToHost(workDir); ok {
+			mounts = append(mounts, readonlyBind(hostDir, sourceMountPoint))
+		}
+	}
+	return append(mounts, readonlyBind(workDir, sourceMountPoint))
+}
+
+// containerPathToHost 是 hostPath 的逆运算：把容器内路径还回宿主路径。
+//
+// 只用于"再挂一份给 helper"这种等价补偿，路径不合规时返回 ok=false，
+// 由调用方跳过这一份，不影响主挂载。
+func (e *engine) containerPathToHost(p string) (string, bool) {
+	if e == nil || e.hostRoot == "" {
+		return "", false
+	}
+	mount := e.hostMount
+	if mount == "" {
+		mount = DefaultHostMount
+	}
+	if !strings.HasPrefix(p, mount+"/") {
+		return "", false
+	}
+	return strings.TrimSuffix(e.hostRoot, "/") + p[len(mount):], true
 }
 
 // resolveComposeSource 从容器标签反查工作目录与相对配置文件路径。
