@@ -23,8 +23,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-
 	"arkade/hub/internal/audit"
 )
 
@@ -234,7 +232,7 @@ func writeAuditRecord(w auditWriter, log *slog.Logger, r *http.Request, rec *sta
 	// 目标对象：优先取路由参数（容器名、编排名等）。
 	target := ""
 	if route.TargetParam != "" {
-		target = chi.URLParam(r, route.TargetParam)
+		target = pathParam(r, route.TargetParam)
 	}
 	// 未登记路由时把原始路径记进 target：
 	// 否则审计里只有 unknown.POST 而对端无从知道是哪条路径，
@@ -288,7 +286,7 @@ func writeAuditRecord(w auditWriter, log *slog.Logger, r *http.Request, rec *sta
 		ID:         audit.NewID(),
 		UserID:     u.ID,
 		Username:   u.Username,
-		AgentID:    chi.URLParam(r, "agentID"),
+		AgentID:    pathParam(r, "agentID"),
 		AgentName:  "",
 		Action:     route.Action,
 		Target:     target,
@@ -313,17 +311,12 @@ func writeAuditRecord(w auditWriter, log *slog.Logger, r *http.Request, rec *sta
 	}
 }
 
-// routePattern 取当前请求匹配到的路由模式。
+// routePattern 的实现已移到 routeparams.go。
 //
-// 必须在 handler 执行**之后**调用：chi 在路由匹配阶段才把模式
-// 写进 RouteContext，之前取不到。
-func routePattern(r *http.Request) string {
-	rc := chi.RouteContext(r.Context())
-	if rc == nil {
-		return ""
-	}
-	return rc.RoutePattern()
-}
+// 迁移前的实现依赖 chi 的 RouteContext，且必须等 handler 执行后才能取到
+// （chi 在路由分发到 handler 时才补写 RouteContext）。
+// 现在由 dispatch 在**匹配阶段**就写入 context（见 router_dispatch.go），
+// 因此本中间件执行时已经可用，时序比原来更可靠。
 
 // 关于"为什么不记录请求体"的说明，写在这里以免后来人以为是遗漏：
 //

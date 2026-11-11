@@ -116,6 +116,10 @@ func securityHeaders(next http.Handler) http.Handler {
 //
 // 契约要求（web 侧确认）：所有接口未登录一律 401 + code=unauthorized，
 // 绝不能用 200 + 空数据伪装成功，否则前端路由守卫会误判。
+//
+// 这是**桥接路由**（GF BindHandler + net/http handler）用的形态。
+// 那里没有 GF 规范的 Res/error 生命周期，提前拒绝直接写标准库响应
+// 即可，不会触发 handleResponse 补写。
 func authenticator(svc *auth.Service) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

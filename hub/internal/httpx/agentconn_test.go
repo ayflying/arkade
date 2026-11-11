@@ -5,7 +5,11 @@ package httpx
 // 为什么必须有这个测试：曾经出现过真实缺陷——日志中间件的 ResponseWriter 包装器
 // 没有透传 http.Hijacker，导致 WebSocket 升级稳定失败并返回 500，
 // 而当时所有单元测试都通过（因为没有一个测试真的把 Agent 连上来）。
-// 这个测试用真实的 httptest.Server + gorilla 拨号器，是该缺陷的回归防线。
+// agentconn_test.go 用真实 WebSocket 验证 Agent 建连与握手。
+//
+// 所有用例都必须走原生 Start() 的 GF 服务器：未 Start 时
+// gsession 为 nil，请求收尾会 panic（Linux 上可能被吞但日志仍在）。
+// 这个测试用真实的 GF 服务 + gorilla 拨号器，是该缺陷的回归防线。
 //
 // 模拟方式说明：测试里的"Agent"刻意按真实 Agent 的会话语义实现——
 // 收到 request 就执行处理并回 response（与 agent/internal/handler.Registry.Dispatch 一致），
@@ -16,7 +20,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -151,19 +154,52 @@ func (c *fakeAgentClient) serveRequests(t *testing.T, results map[string]any) {
 	}()
 }
 
-// newConnectRouter 构造一条包含完整中间件的路由，只挂 Agent 连接入口。
-// 关键点：必须经过 NewRouter 的真实中间件链，否则复现不了 Hijacker 被遮断的问题。
-func newConnectRouter(reg *agentlink.Registry, sink agentlink.HelloHandler, token string) http.Handler {
+// agentTestSrv 是 Agent 连接测试用的原生服务实例。
+//
+// 必须用真实 Start() 的 *ghttp.Server，不能用 httptest.NewServer 包一层：
+// ghttp 的完整生命周期（含 sessionManager）由 Start() 建立，
+// 未 Start 直接 ServeHTTP 会在请求收尾时因 gsession 为 nil 而 panic。
+// 这个 panic 在 Linux 上可能被 recover 吞掉（exit 0），日志里却真实存在。
+type agentTestSrv struct {
+	url     string
+	tracker *connectionTracker
+	reg     *agentlink.Registry
+}
+
+// close 关闭所有 Agent 连接并 join service 端 handler，再停服务器。
+//
+// WebSocket 是 hijack 的连接，http.Server.Shutdown 不会等它；
+// 不 join 就结束会让 handler 在库关闭后继续写。
+func (s *agentTestSrv) close(t *testing.T) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := s.tracker.close(ctx, s.reg); err != nil {
+		t.Errorf("等待 Agent handler 退出超时: %v", err)
+	}
+}
+
+// startConnectRouter 用真实 Start() 启动一条只挂 Agent 连接入口的路由。
+//
+// 关键点：必须经过 NewRouter 的真实中间件链，否则复现不了
+// Hijacker 被遮断的问题。
+func startConnectRouter(t *testing.T, reg *agentlink.Registry, sink agentlink.HelloHandler, token string) *agentTestSrv {
+	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
 	agentSrv := agentlink.NewServer(reg, token, "test", sink, log)
-	return NewRouter(Deps{
+	tracker := &connectionTracker{}
+	router := NewRouter(Deps{
 		Log:        log,
 		Registry:   reg,
 		Ops:        agentlink.NewOps(reg),
 		Auth:       auth.NewService(nil, time.Hour),
-		AgentConn:  http.HandlerFunc(agentSrv.HandleConnect),
+		AgentConn:  tracker.wrap(http.HandlerFunc(agentSrv.HandleConnect)),
 		HubVersion: "test",
 	})
+	h := &agentTestSrv{reg: reg, tracker: tracker}
+	h.url = startRouterForTest(t, router)
+	t.Cleanup(func() { h.close(t) })
+	return h
 }
 
 // TestAgentConnectHandshake 验证：真实 WebSocket 能连上、握手成功、拿到 agent_id、
@@ -173,10 +209,9 @@ func TestAgentConnectHandshake(t *testing.T) {
 
 	reg := agentlink.NewRegistry()
 	sink := &fakeSink{}
-	srv := httptest.NewServer(newConnectRouter(reg, sink, agentToken))
-	defer srv.Close()
+	srv := startConnectRouter(t, reg, sink, agentToken)
 
-	client, ack := dialAsAgent(t, srv.URL, agentToken)
+	client, ack := dialAsAgent(t, srv.url, agentToken)
 
 	// --- 1. Hub 必须分配 agent_id 与正数心跳间隔 ---
 	if ack.AgentID == "" {
@@ -243,10 +278,9 @@ func TestAgentConnectRejectsWrongToken(t *testing.T) {
 	const agentToken = "correct-token-0123456789"
 
 	reg := agentlink.NewRegistry()
-	srv := httptest.NewServer(newConnectRouter(reg, &fakeSink{}, agentToken))
-	defer srv.Close()
+	srv := startConnectRouter(t, reg, &fakeSink{}, agentToken)
 
-	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + envelope.AgentConnectPath
+	wsURL := "ws" + strings.TrimPrefix(srv.url, "http") + envelope.AgentConnectPath
 
 	// 错误 Token
 	header := http.Header{}

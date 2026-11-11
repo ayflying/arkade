@@ -19,7 +19,6 @@ package httpx
 import (
 	"net/http"
 
-	"github.com/go-chi/chi/v5"
 
 	"arkade/hub/internal/user"
 	"arkade/protocol/envelope"
@@ -59,7 +58,7 @@ func handleRemoveImage(d Deps) http.HandlerFunc {
 		if !requirePermission(w, d, r, agentID, user.PermManage) {
 			return
 		}
-		imageID := chi.URLParam(r, "imageID")
+		imageID := pathParam(r, "imageID")
 		if imageID == "" {
 			badRequest(w, d, "镜像 ID 不能为空")
 			return
@@ -107,7 +106,7 @@ func handleRemoveNetwork(d Deps) http.HandlerFunc {
 		if !requirePermission(w, d, r, agentID, user.PermManage) {
 			return
 		}
-		networkID := chi.URLParam(r, "networkID")
+		networkID := pathParam(r, "networkID")
 		if networkID == "" {
 			badRequest(w, d, "网络 ID 不能为空")
 			return
@@ -157,7 +156,7 @@ func handleRemoveVolume(d Deps) http.HandlerFunc {
 		if !requirePermission(w, d, r, agentID, user.PermManage) {
 			return
 		}
-		name := chi.URLParam(r, "name")
+		name := pathParam(r, "name")
 		if name == "" {
 			badRequest(w, d, "存储卷名称不能为空")
 			return

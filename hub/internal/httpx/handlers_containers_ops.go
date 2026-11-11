@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/go-chi/chi/v5"
 
 	"arkade/hub/internal/user"
 	"arkade/protocol/envelope"
@@ -23,11 +22,11 @@ import (
 // 与启停同级即可——把它提到 manage 会让日常运维（滚动重启）变得寸步难行。
 func handleContainerRestart(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		agentID := chi.URLParam(r, "agentID")
+		agentID := pathParam(r, "agentID")
 		if !requirePermission(w, d, r, agentID, user.PermOperate) {
 			return
 		}
-		cid := chi.URLParam(r, "containerID")
+		cid := pathParam(r, "containerID")
 		if strings.TrimSpace(cid) == "" {
 			respondError(w, d.Log, envelope.CodeBadRequest, "容器 ID 不能为空")
 			return
@@ -57,11 +56,11 @@ func handleContainerRestart(d Deps) http.HandlerFunc {
 //     这是数据丢失操作，绝不能用默认值替用户决定。
 func handleContainerRemove(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		agentID := chi.URLParam(r, "agentID")
+		agentID := pathParam(r, "agentID")
 		if !requirePermission(w, d, r, agentID, user.PermManage) {
 			return
 		}
-		cid := chi.URLParam(r, "containerID")
+		cid := pathParam(r, "containerID")
 		if strings.TrimSpace(cid) == "" {
 			respondError(w, d.Log, envelope.CodeBadRequest, "容器 ID 不能为空")
 			return

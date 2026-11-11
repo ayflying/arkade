@@ -26,7 +26,6 @@ import (
 	"sort"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 
 	"arkade/hub/internal/agentlink"
 	"arkade/hub/internal/store"
@@ -148,7 +147,7 @@ type updateStackRequest struct {
 func handleUpdateStack(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		agentID := agentIDFromPath(r)
-		name := chi.URLParam(r, "name")
+		name := pathParam(r, "name")
 		if !requirePermission(w, d, r, agentID, user.PermManage) {
 			return
 		}
@@ -398,7 +397,7 @@ func toStackView(rec store.ComposeStack, remote *envelope.ComposeProjectSummary)
 func handleGetStack(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		agentID := agentIDFromPath(r)
-		name := chi.URLParam(r, "name")
+		name := pathParam(r, "name")
 		if !requirePermission(w, d, r, agentID, user.PermView) {
 			return
 		}
@@ -445,7 +444,7 @@ func handleGetStack(d Deps) http.HandlerFunc {
 func handleGetStackConfig(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		agentID := agentIDFromPath(r)
-		name := chi.URLParam(r, "name")
+		name := pathParam(r, "name")
 		if !requirePermission(w, d, r, agentID, user.PermManage) {
 			return
 		}
@@ -475,7 +474,7 @@ func handleGetStackConfig(d Deps) http.HandlerFunc {
 func handleDeleteStack(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		agentID := agentIDFromPath(r)
-		name := chi.URLParam(r, "name")
+		name := pathParam(r, "name")
 		if !requirePermission(w, d, r, agentID, user.PermManage) {
 			return
 		}
@@ -544,7 +543,7 @@ type actionRequest struct {
 func handleStackAction(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		agentID := agentIDFromPath(r)
-		name := chi.URLParam(r, "name")
+		name := pathParam(r, "name")
 		if !requirePermission(w, d, r, agentID, user.PermOperate) {
 			return
 		}
@@ -669,7 +668,7 @@ func (d Deps) dispatchSimpleAction(ctx context.Context, agentID, action string, 
 func handleStackLogs(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		agentID := agentIDFromPath(r)
-		name := chi.URLParam(r, "name")
+		name := pathParam(r, "name")
 		if !requirePermission(w, d, r, agentID, user.PermView) {
 			return
 		}
@@ -717,7 +716,7 @@ func handleStackLogs(d Deps) http.HandlerFunc {
 func handleStackPS(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		agentID := agentIDFromPath(r)
-		name := chi.URLParam(r, "name")
+		name := pathParam(r, "name")
 		if !requirePermission(w, d, r, agentID, user.PermView) {
 			return
 		}

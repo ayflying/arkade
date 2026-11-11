@@ -9,6 +9,7 @@
 import { httpGet, httpPost } from './request'
 import { ApiError } from '@/types/api'
 import type {
+  StackMigrateRequest,
   StackOperationAction,
   StackOperationTask,
   StackOperationTaskResponse
@@ -88,6 +89,56 @@ export async function getStackOperationTask(
   const task = normalizeOperationTask((res as { task?: unknown } | null)?.task)
   if (task === null) throw new ApiError(500, 'invalid_response', '服务器返回了无法识别的任务信息')
   return task
+}
+
+/**
+ * 迁移编排到另一台服务器。
+ *
+ * 端点与普通操作任务**不同**（`/migrate` 而不是 `/operation-tasks`）：
+ * 迁移的语义是「源编排 → 另一台服务器」，入参里有目标服务器这类
+ * 操作任务没有的字段。但返回的任务体与读取方式完全一致，
+ * 所以进度直接复用 `getStackOperationTask`。
+ *
+ * `requestId` 同样是幂等键，由调用方生成并复用。
+ */
+export async function migrateStack(
+  agentId: string,
+  name: string,
+  requestId: string,
+  request: StackMigrateRequest
+): Promise<StackOperationTask> {
+  const path = `/agents/${encodeURIComponent(agentId)}/stacks/${encodeURIComponent(name)}/migrate`
+  const body: Record<string, unknown> = {
+    request_id: requestId,
+    target_agent_id: request.target_agent_id,
+    /*
+     * 两个布尔值都**显式发送**，不靠后端默认值：
+     * 界面上的勾选框就是用户的明确选择，省略等于让后端猜。
+     */
+    include_volumes: request.include_volumes,
+    start_after: request.start_after,
+    // 硬性确认位：后端要求 true 才执行
+    confirmation: request.confirmation
+  }
+  const res = await httpPost<StackOperationTaskResponse>(path, body)
+  const task = normalizeOperationTask((res as { task?: unknown } | null)?.task)
+  if (task === null) throw new ApiError(500, 'invalid_response', '服务器返回了无法识别的任务信息')
+  return task
+}
+
+/**
+ * 判断错误是不是「该接口在这个后端上还不存在」。
+ *
+ * 迁移是新增能力，后端可能还没部署。404 在用户眼里必须呈现为
+ * 「功能尚未就绪」，而不是「迁移失败」——后者会让用户以为是自己
+ * 的编排或目标服务器有问题，从而去排查根本不存在的原因。
+ *
+ * 403 不算：那是权限问题，得如实告诉用户。
+ */
+export function isMigrateNotDeployed(err: unknown): boolean {
+  if (err === null || typeof err !== 'object') return false
+  const status = (err as { status?: unknown }).status
+  return status === 404
 }
 
 /**

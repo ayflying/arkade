@@ -10,7 +10,6 @@ import (
 	"arkade/hub/internal/imagetask"
 	"arkade/hub/internal/user"
 	"arkade/protocol/envelope"
-	"github.com/go-chi/chi/v5"
 )
 
 // 所有归档操作要求manage，迁移同时要求源和目标权限。
@@ -143,7 +142,7 @@ func handleListImageTasks(d Deps) http.HandlerFunc {
 	}
 }
 func imageTaskFromRequest(w http.ResponseWriter, d Deps, r *http.Request) (imagetask.Task, bool) {
-	t, err := d.ImageTasks.Get(chi.URLParam(r, "taskID"))
+	t, err := d.ImageTasks.Get(pathParam(r, "taskID"))
 	if err != nil {
 		respondError(w, d.Log, envelope.CodeNotFound, "镜像任务不存在或已过期")
 		return t, false

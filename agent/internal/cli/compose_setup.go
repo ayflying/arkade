@@ -9,6 +9,7 @@ package cli
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"arkade/agent/internal/compose"
@@ -68,6 +69,37 @@ func buildImageTransferManager(cfg config.Config, rt runtime.Runtime) *imagetran
 		return nil
 	}
 	return mgr
+}
+
+// imageTransferRoot 返回镜像与卷归档共用的临时区根目录（<data_dir>/transfers）。
+//
+// ============================ 为什么必须和 imagetransfer 用同一个目录 ============================
+// 编排迁移的卷归档与镜像归档是同一类东西（可复用的大文件）、同一批生命周期
+// 约束（TTL、数量上限、启动时清理无主残留）。各自新开一个目录会出现两套清理规则，
+// 其中一套漏了就永久占盘；而且 transfers 的符号链接校验、越界检查这些
+// 安全处理也已经在 imagetransfer 里做完了，重复实现只会让两边不一致。
+//
+// 与 buildImageTransferManager 的 data_dir 判断同源：镜像传输可用时它才存在。
+func imageTransferRoot(cfg config.Config) string {
+	if !dataDirUsable(cfg.DataDir) {
+		return ""
+	}
+	return filepath.Join(cfg.DataDir, imagetransfer.TransfersDirName())
+}
+
+// buildTransferManagers 一次构造镜像传输管理器与迁移临时区。
+//
+// 单独成函数是为了保证两者**永不分裂**：它们同源于一个 data_dir 判断，
+// 分开调用就可能出现"镜像能传、卷不能迁"的半可用状态，
+// 而这种状态在界面上表现为"迁移跑到一半失败"，很难归因。
+func buildTransferManagers(cfg config.Config, rt runtime.Runtime) (*imagetransfer.Manager, string) {
+	mgr := buildImageTransferManager(cfg, rt)
+	if mgr == nil {
+		// 传输管理器不可用时临时区也一并视为不可用：
+		// 卷归档没有 TTL 与清理规则的归属，落盘就是永久占用。
+		return nil, ""
+	}
+	return mgr, imageTransferRoot(cfg)
 }
 
 // dockerHostFor 推导要传给 compose 子进程的 DOCKER_HOST。

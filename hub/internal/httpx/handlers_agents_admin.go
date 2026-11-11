@@ -14,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 
 	"arkade/hub/internal/agentlink"
 	"arkade/hub/internal/store"
@@ -50,7 +49,7 @@ func handlePatchAgent(d Deps) http.HandlerFunc {
 		if _, ok := requireAdmin(w, d, r); !ok {
 			return
 		}
-		agentID := chi.URLParam(r, "agentID")
+		agentID := pathParam(r, "agentID")
 
 		var req agentAdminPatchRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -145,7 +144,7 @@ func handleDeleteAgent(d Deps) http.HandlerFunc {
 		if _, ok := requireAdmin(w, d, r); !ok {
 			return
 		}
-		agentID := chi.URLParam(r, "agentID")
+		agentID := pathParam(r, "agentID")
 
 		// 先统计该服务器名下有多少编排，删除后它们会成为孤儿。
 		//
@@ -233,7 +232,7 @@ func handleSetAgentDisabled(d Deps, disabled bool) http.HandlerFunc {
 		if _, ok := requireAdmin(w, d, r); !ok {
 			return
 		}
-		agentID := chi.URLParam(r, "agentID")
+		agentID := pathParam(r, "agentID")
 
 		// 写库与踢连接必须在临界区内。
 		//

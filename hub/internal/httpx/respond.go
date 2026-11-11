@@ -77,7 +77,17 @@ func respondSecretJSON(w http.ResponseWriter, log *slog.Logger, status int, body
 // Agent 返回的业务错误（如「未检测到 Docker/Podman」）必须原样透出，
 // 否则运维看不到真实原因，只能干瞪着眼看日志。
 func respondError(w http.ResponseWriter, log *slog.Logger, code, message string) {
-	status := statusForCode(code)
+	respondErrorCode(w, log, statusForCode(code), code, message)
+}
+
+// respondErrorCode 与 respondError 相同，但由调用方显式指定 HTTP 状态码。
+//
+// 存在的理由：typed controller 已经用 Req/Resp 结构精确表达了每个接口
+// 的状态语义（例如登录失败固定 401、退出固定 204），不该再经过
+// "code → status"的一次推断，否则两处映射会各自演化、逐渐不一致。
+//
+// 脱敏规则与 respondError 保持一致：internal 码一律替换为兜底文案。
+func respondErrorCode(w http.ResponseWriter, log *slog.Logger, status int, code, message string) {
 	if code == envelope.CodeInternal {
 		log.Error("接口返回内部错误", "code", code, "message", message)
 		message = "服务器内部错误，请联系管理员查看日志"

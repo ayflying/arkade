@@ -12,10 +12,12 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"path/filepath"
 	"sort"
 	"sync"
 
 	"arkade/agent/internal/compose"
+	"arkade/agent/internal/compose/migrate"
 	"arkade/agent/internal/imagetransfer"
 	"arkade/agent/internal/runtime"
 	"arkade/protocol/envelope"
@@ -167,6 +169,45 @@ func RegisterDefaults(reg *Registry, rt runtime.Runtime, composeMgr *compose.Man
 // 注册了也只会在调用时失败。
 func RegisterDefaultsWithTransfer(reg *Registry, rt runtime.Runtime, composeMgr *compose.Manager,
 	imageMgr *imagetransfer.Manager, log *slog.Logger) {
+	registerAll(reg, rt, composeMgr, imageMgr, "", log)
+}
+
+// RegisterDefaultsFull 是完整的注册入口：在 WithTransfer 的基础上
+// 额外接受传输临时区根目录，用于挂载编排迁移的卷归档与导入。
+//
+// ============================ 为什么用"再加一层"而不是改签名 ============================
+// 现有调用点（含大量测试与 CLI）都在用前两个函数。直接给它们加参数
+// 会让每一处都得改，而那些调用点根本不关心迁移。
+// 可选能力因此保持可选：不传就没有对应方法，
+// 而不是"注册了但调用时才失败"——后者会让 Hub 看到方法存在却永远失败。
+//
+// ============================ 委托关系（别再写"层层委托"） ============================
+// 三个入口是**并列**的，不是链式的：
+//
+//	RegisterDefaults            → registerAll(..., imageMgr=nil, transferDir="")
+//	RegisterDefaultsWithTransfer → registerAll(..., imageMgr, transferDir="")
+//	RegisterDefaultsFull         → registerAll(..., imageMgr, transferDir)
+//
+// 前两个是"功能更少"的便捷入口，第三个是完整入口；
+// 它们都直接落到 registerAll，谁都不经过谁。
+// （早期注释写成"层层委托"是不准确的：Full 并不经过 WithTransfer。）
+//
+// ============================ 服务模式必须用这个函数 ============================
+// 实测踩过：服务模式曾调 RegisterDefaultsWithTransfer，而它内部把
+// transferDir 固定传空——于是卷归档/导入方法**根本没注册**，
+// 界面上能点"同时迁移数据卷"，一点就报方法不存在，且极难归因。
+// 测试全绿是因为测试自己传了值，覆盖不到真实启动路径。
+// 因此真实启动路径必须走本函数，并由 cli 层保证传进来的是有效目录。
+//
+// transferDir 为空 → 不注册卷归档/导入（只注册 compose.import）。
+func RegisterDefaultsFull(reg *Registry, rt runtime.Runtime, composeMgr *compose.Manager,
+	imageMgr *imagetransfer.Manager, transferDir string, log *slog.Logger) {
+	registerAll(reg, rt, composeMgr, imageMgr, transferDir, log)
+}
+
+// registerAll 是全部注册逻辑的唯一实现。
+func registerAll(reg *Registry, rt runtime.Runtime, composeMgr *compose.Manager,
+	imageMgr *imagetransfer.Manager, transferDir string, log *slog.Logger) {
 	if log == nil {
 		log = slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
 	}
@@ -204,6 +245,16 @@ func RegisterDefaultsWithTransfer(reg *Registry, rt runtime.Runtime, composeMgr 
 		reg.Register(envelope.MethodImageTaskStatus, newImageTaskStatusHandler(imageMgr))
 		reg.Register(envelope.MethodImageTaskCancel, newImageTaskCancelHandler(imageMgr))
 		reg.Register(envelope.MethodImageTaskRelease, newImageTaskReleaseHandler(imageMgr))
+
+		// 可复用归档导出（编排迁移用）。
+		//
+		// 与上面的 image.save 同一处注册，理由相同：这些能力只需要
+		// data_dir 建 transfers 目录，与编排工作区无关。
+		// 但它们的归档**不随任务终态消失**，因此迁移流程能跨阶段持有。
+		reg.Register(envelope.MethodImageArchiveExport, newImageArchiveExportHandler(imageMgr))
+		reg.Register(envelope.MethodImageArchiveOpen, newImageArchiveOpenHandler(imageMgr))
+		reg.Register(envelope.MethodImageArchiveChunkGet, newImageArchiveChunkGetHandler(imageMgr))
+		reg.Register(envelope.MethodImageArchiveClose, newImageArchiveCloseHandler(imageMgr))
 	}
 
 	// 存储卷文件管理：同样是"有运行时就能提供"的纯代理能力，
@@ -264,4 +315,62 @@ func RegisterDefaultsWithTransfer(reg *Registry, rt runtime.Runtime, composeMgr 
 	// 外部编排的显式纳管：preview 只读、adopt 只落盘（绝不 up/down）。
 	reg.Register(envelope.MethodComposePreview, newComposePreviewHandler(composeMgr, labelSrc))
 	reg.Register(envelope.MethodComposeAdopt, newComposeAdoptHandler(composeMgr))
+
+	// 编排跨服务器迁移的 Agent 侧原语。
+	//
+	// ============================ 为什么放在 composeMgr 分支内 ============================
+	// 迁移的输入是"这个编排用了哪些卷"，而那需要读取已落盘的编排配置；
+	// 没有 composeMgr 就没有编排，也就没有可迁移的东西。
+	// 目标端只需要 compose.import，它同样依赖工作区。
+	//
+	// transferDir 为空时只注册 compose.import（不需要临时区），
+	// 卷归档与导入需要落盘空间，因此依赖它存在。
+	migrateReg := registerMigrateHandlers(reg, composeMgr, transferDir, log)
+	if migrateReg == nil {
+		// ============================ 这条警告必须说清后果与修法 ============================
+		// 实测踩过：服务模式调错入口，transferDir 传了空，于是卷迁移方法
+		// 根本没注册。界面上"同时迁移数据卷"能勾选、点了才报方法不存在，
+		// 用户与运维都很难从中看出是**启动装配**的问题。
+		//
+		// 所以这里不只说"缺少目录"，而要点明：这是配置/装配问题、
+		// 影响哪个功能、该去查哪里。
+		log.Warn("未注册数据卷迁移方法（volume.archive.* / volume.import.*）："+
+			"传输临时目录为空。勾选「同时迁移数据卷」的迁移会在调用时失败。",
+			"提示", "请检查服务启动时是否调用了 RegisterDefaultsFull 并传入有效的 data_dir")
+	}
+}
+
+// registerMigrateHandlers 注册编排迁移的 Agent 侧方法。
+//
+// ============================ 为什么单独成函数 ============================
+// 它需要的装配点比其它方法多（传输目录、docker 执行器、编排工作区适配器），
+// 全部塞进 RegisterDefaultsWithTransfer 会让那个函数再长一截，
+// 而它现在已经接近"读不完"的程度。
+//
+// 返回 nil 表示只完成了不需要临时区的那部分注册。
+func registerMigrateHandlers(reg *Registry, composeMgr *compose.Manager, transferDir string, log *slog.Logger) any {
+	// compose.import 只需要工作区，与临时区无关，因此先注册。
+	reg.Register(envelope.MethodComposeImport, newComposeImportHandler(composeWorkspaceImporter{composeMgr}))
+
+	if transferDir == "" {
+		return nil
+	}
+
+	exporter := migrate.NewVolumeExporter(filepath.Join(transferDir, "volumes"), nil)
+	importer := migrate.NewImporter(filepath.Join(transferDir, "imports"), nil)
+
+	reg.Register(envelope.MethodVolumeArchiveExport, newVolumeArchiveExportHandler(exporter))
+	reg.Register(envelope.MethodVolumeArchiveOpen, newVolumeArchiveOpenHandler(exporter))
+	reg.Register(envelope.MethodVolumeArchiveChunkGet, newVolumeArchiveChunkGetHandler(exporter))
+	reg.Register(envelope.MethodVolumeArchiveClose, newVolumeArchiveCloseHandler(exporter))
+	reg.Register(envelope.MethodVolumeImportBegin, newVolumeImportBeginHandler(importer))
+	reg.Register(envelope.MethodVolumeImportChunkPut, newVolumeImportChunkPutHandler(importer))
+	reg.Register(envelope.MethodVolumeImportCommit, newVolumeImportCommitHandler(importer))
+	reg.Register(envelope.MethodVolumeImportStatus, newVolumeImportStatusHandler(importer))
+
+	// 启动即清理：进程被 kill 时 defer 不会执行。
+	// 与镜像传输同样的理由——重启后的登记表是空的，
+	// 磁盘上的归档无法证明仍然有效，一律删除。
+	exporter.CleanupOrphans()
+	return exporter
 }

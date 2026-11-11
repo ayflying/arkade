@@ -35,6 +35,18 @@ const (
 	ActionStackPreview    = "stack.preview"
 	ActionStackAdopt      = "stack.adopt"
 	ActionStackCopyConfig = "stack.copy_config"
+	// ActionStackMigrate 是跨服务器迁移整个编排（配置 + 镜像 + 可选数据卷）。
+	//
+	// ============================ 为什么单独一个动作而不是并入 stack.action ============================
+	// stack.action 表达的是"对某个编排做了一次操作"（在那个服务器上）。
+	// 迁移的语义完全不同：它跨两台服务器、会在目标上**创建**编排、
+	// 可能搬几十 GB 数据。财务/合规视角看这是两件事，
+	// 混在一起会让"这台机器上发生过什么"的查询失真。
+	//
+	// 与 ActionImageMigrate 的区别：那个是单个镜像的搬运，
+	// 这个是整个编排（含镜像与卷）。两者会在同一次操作里同时出现，
+	// 因此不能共用同一个动作名。
+	ActionStackMigrate = "stack.migrate"
 
 	// 资源
 	ActionImagePull     = "image.pull"
@@ -97,6 +109,7 @@ var labels = map[string]string{
 	ActionStackPreview:    "预检外部编排登记",
 	ActionStackAdopt:      "登记外部编排",
 	ActionStackCopyConfig: "复制编排配置",
+	ActionStackMigrate:    "迁移容器编排",
 
 	ActionImagePull:     "提交镜像拉取",
 	ActionImageExport:   "提交镜像导出",

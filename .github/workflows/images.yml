@@ -35,6 +35,22 @@ jobs:
         run: |
           go test ./... -count=1 -timeout=5m
           go vet ./...
+      - name: Guard SQLite driver registration and pure-Go build
+        if: matrix.module == 'hub'
+        working-directory: hub
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          # The GoFrame SQLite driver owns the SQL driver name "sqlite".
+          # Importing either top-level modernc driver or migrate/database/sqlite
+          # registers the same name again and panics before main can run.
+          go list -deps -test ./... > /tmp/arkade-hub-deps.txt
+          if grep -Ex 'modernc.org/sqlite|github.com/golang-migrate/migrate/v4/database/sqlite' /tmp/arkade-hub-deps.txt; then
+            echo '发现重复注册 SQLite 的驱动包；仅保留 GoFrame 官方驱动。' >&2
+            exit 1
+          fi
+          go test ./... -count=1 -timeout=5m
+          go build ./...
 
   web-tests:
     name: Web checks

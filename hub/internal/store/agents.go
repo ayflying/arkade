@@ -7,10 +7,15 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
+
+	"github.com/gogf/gf/v2/database/gdb"
+	"github.com/gogf/gf/v2/errors/gerror"
+
+	"arkade/hub/internal/dao"
+	"arkade/hub/internal/model/do"
+	"arkade/hub/internal/model/entity"
 )
 
 // AgentRecord 是 agents 表的一行。
@@ -33,7 +38,7 @@ type AgentRecord struct {
 	DisplayName string
 	// Note 是自由备注，给人读，不参与任何筛选或权限判断。
 	Note string
-	// DirectAddress是管理员指定的浏览器访问主机，不参与Agent连接和服务端网络请求。
+	// DirectAddress 是管理员指定的浏览器访问主机，不参与 Agent 连接和服务端网络请求。
 	DirectAddress string
 	// Disabled 为真时，该 Agent 的握手请求会被拒绝。
 	Disabled bool
@@ -48,73 +53,96 @@ type AgentRecord struct {
 	Preprovisioned bool
 }
 
-// 列清单常量：集中在一处，避免 List 与 Get 两处的列顺序不一致
-// 导致 Scan 参数错位（这类 bug 编译期发现不了，只在运行时把字段串到一起）。
-const agentColumns = `id, name, status, version, runtime, runtime_version, last_seen, labels,
-	created_at, updated_at, display_name, note, disabled, preprovisioned, direct_address`
-
-// scanAgent 把一行扫描进 AgentRecord。
+// agentFields 返回 agents 表要查询的列名，顺序与 agentFromRecord 的读取顺序一致。
 //
-// 抽出来是为了让 ListAgents 与 GetAgent 共用同一份列顺序，
-// 将来加字段只需改这一处。
-func scanAgent(sc interface {
-	Scan(dest ...any) error
-}) (AgentRecord, error) {
-	var rec AgentRecord
-	var labelsRaw string
-	var disabled int
-	var preprovisioned int
-	if err := sc.Scan(&rec.ID, &rec.Name, &rec.Status, &rec.Version, &rec.Runtime,
-		&rec.RuntimeVersion, &rec.LastSeen, &labelsRaw, &rec.CreatedAt, &rec.UpdatedAt,
-		&rec.DisplayName, &rec.Note, &disabled, &preprovisioned, &rec.DirectAddress); err != nil {
-		return AgentRecord{}, err
+// 集中在一处，避免 List 与 Get 两处列顺序不一致——这类错位只在运行时
+// 把字段串到一起，编译期发现不了。
+func agentFields() []string {
+	c := dao.Agents.Columns()
+	return []string{
+		c.Id, c.Name, c.Status, c.Version, c.Runtime, c.RuntimeVersion,
+		c.LastSeen, c.Labels, c.CreatedAt, c.UpdatedAt,
+		c.DisplayName, c.Note, c.Disabled, c.Preprovisioned, c.DirectAddress,
 	}
-	rec.Labels = parseLabels(labelsRaw)
-	rec.Disabled = disabled != 0
-	rec.Preprovisioned = preprovisioned != 0
-	return rec, nil
+}
+
+// agentFromEntity 把 entity 行转成 AgentRecord，是唯一的转换实现。
+//
+// 抽出来是为了让 ListAgents 与 GetAgent 共用同一份转换口径，
+// 将来加字段只需改这一处。时间列显式转 int64（entity 生成成 int）。
+func agentFromEntity(e entity.Agents) AgentRecord {
+	var out AgentRecord
+	out.ID = e.Id
+	out.Name = e.Name
+	out.Status = e.Status
+	out.Version = e.Version
+	out.Runtime = e.Runtime
+	out.RuntimeVersion = e.RuntimeVersion
+	out.LastSeen = int64(e.LastSeen)
+	out.Labels = parseLabels(e.Labels)
+	out.CreatedAt = int64(e.CreatedAt)
+	out.UpdatedAt = int64(e.UpdatedAt)
+	out.DisplayName = e.DisplayName
+	out.Note = e.Note
+	out.Disabled = e.Disabled != 0
+	out.Preprovisioned = e.Preprovisioned != 0
+	out.DirectAddress = e.DirectAddress
+	return out
 }
 
 // UpsertAgent 写入或更新 Agent 记录（握手与心跳时调用）。
 //
-// 使用「先查后改」而不是 INSERT OR REPLACE：
-// 后者是 SQLite 专有语法，且会重建整行（触发级联删除），不利于后续迁移数据库。
+// 使用「先查后改」而不是 INSERT OR REPLACE：后者会重建整行（触发级联删除），
+// 不利于后续迁移数据库。
 func (d *DB) UpsertAgent(ctx context.Context, rec AgentRecord) error {
 	labelsRaw, err := json.Marshal(rec.Labels)
 	if err != nil {
-		return fmt.Errorf("序列化 Agent 标签失败: %w", err)
+		return gerror.Wrap(err, "序列化 Agent 标签失败")
 	}
+	c := dao.Agents.Columns()
 
-	return d.Tx(ctx, func(tx *sqlTx) error {
-		var exists int
-		err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM agents WHERE id = ?`, rec.ID).Scan(&exists)
+	return d.TxModel(ctx, func(ctx context.Context, tx gdb.TX) error {
+		exist, err := tx.Model(dao.Agents.Table()).Ctx(ctx).
+			Where(c.Id, rec.ID).
+			Count()
 		if err != nil {
-			return fmt.Errorf("查询 Agent 是否存在失败: %w", err)
+			return gerror.Wrap(err, "查询 Agent 是否存在失败")
 		}
 
-		if exists == 0 {
-			_, err := tx.ExecContext(ctx,
-				`INSERT INTO agents(id, name, status, version, runtime, runtime_version, last_seen, labels, created_at, updated_at)
-				 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-				rec.ID, rec.Name, rec.Status, rec.Version, rec.Runtime, rec.RuntimeVersion,
-				rec.LastSeen, string(labelsRaw), rec.CreatedAt, rec.UpdatedAt,
-			)
+		if exist == 0 {
+			_, err := tx.Model(dao.Agents.Table()).Ctx(ctx).Data(do.Agents{
+				Id:             rec.ID,
+				Name:           rec.Name,
+				Status:         rec.Status,
+				Version:        rec.Version,
+				Runtime:        rec.Runtime,
+				RuntimeVersion: rec.RuntimeVersion,
+				LastSeen:       rec.LastSeen,
+				Labels:         string(labelsRaw),
+				CreatedAt:      rec.CreatedAt,
+				UpdatedAt:      rec.UpdatedAt,
+			}).Insert()
 			if err != nil {
-				return fmt.Errorf("写入 Agent 失败: %w", err)
+				return gerror.Wrap(err, "写入 Agent 失败")
 			}
 			return nil
 		}
 
 		// 握手仅刷新运行状态；标签与显示名/备注由管理员维护，重连不得清空。
-		_, err = tx.ExecContext(ctx,
-			`UPDATE agents SET name = ?, status = ?, version = ?, runtime = ?, runtime_version = ?,
-			        last_seen = ?, updated_at = ?
-			 WHERE id = ?`,
-			rec.Name, rec.Status, rec.Version, rec.Runtime, rec.RuntimeVersion,
-			rec.LastSeen, rec.UpdatedAt, rec.ID,
-		)
+		_, err = tx.Model(dao.Agents.Table()).Ctx(ctx).
+			Where(c.Id, rec.ID).
+			Data(do.Agents{
+				Name:           rec.Name,
+				Status:         rec.Status,
+				Version:        rec.Version,
+				Runtime:        rec.Runtime,
+				RuntimeVersion: rec.RuntimeVersion,
+				LastSeen:       rec.LastSeen,
+				UpdatedAt:      rec.UpdatedAt,
+			}).
+			Update()
 		if err != nil {
-			return fmt.Errorf("更新 Agent 失败: %w", err)
+			return gerror.Wrap(err, "更新 Agent 失败")
 		}
 		return nil
 	})
@@ -122,46 +150,46 @@ func (d *DB) UpsertAgent(ctx context.Context, rec AgentRecord) error {
 
 // ListAgents 返回全部 Agent，按创建时间升序，保证界面顺序稳定。
 func (d *DB) ListAgents(ctx context.Context) ([]AgentRecord, error) {
-	rows, err := d.db.QueryContext(ctx,
-		`SELECT `+agentColumns+` FROM agents ORDER BY created_at ASC, id ASC`)
-	if err != nil {
-		return nil, fmt.Errorf("查询 Agent 列表失败: %w", err)
+	c := dao.Agents.Columns()
+	var ents []entity.Agents
+	if err := scanAll(ctx, d.gdb.Model(dao.Agents.Table()).Fields(agentFields()).
+		Order(c.CreatedAt+" ASC").Order(c.Id+" ASC"), &ents); err != nil {
+		return nil, gerror.Wrap(err, "查询 Agent 列表失败")
 	}
-	defer rows.Close()
 
-	var out []AgentRecord
-	for rows.Next() {
-		rec, err := scanAgent(rows)
-		if err != nil {
-			return nil, fmt.Errorf("扫描 Agent 记录失败: %w", err)
-		}
-		out = append(out, rec)
+	out := make([]AgentRecord, 0, len(ents))
+	for _, e := range ents {
+		out = append(out, agentFromEntity(e))
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // GetAgent 按 ID 查单个 Agent。
 func (d *DB) GetAgent(ctx context.Context, id string) (AgentRecord, error) {
-	row := d.db.QueryRowContext(ctx,
-		`SELECT `+agentColumns+` FROM agents WHERE id = ?`, id)
-	rec, err := scanAgent(row)
-	if errors.Is(err, sql.ErrNoRows) {
-		return AgentRecord{}, ErrNotFound
-	}
+	var e entity.Agents
+	err := scanOne(ctx, d.gdb.Model(dao.Agents.Table()).Fields(agentFields()).
+		Where(dao.Agents.Columns().Id, id), &e)
 	if err != nil {
-		return AgentRecord{}, fmt.Errorf("查询 Agent 失败: %w", err)
+		if errors.Is(err, ErrNotFound) {
+			return AgentRecord{}, ErrNotFound
+		}
+		return AgentRecord{}, gerror.Wrap(err, "查询 Agent 失败")
 	}
-	return rec, nil
+	return agentFromEntity(e), nil
 }
 
 // UpdateAgentStatus 只更新在线状态与最后心跳时间，供心跳高频调用使用。
 // 单独拆出来是为了避免心跳每次都走完整 Upsert（会重写所有字段）。
 func (d *DB) UpdateAgentStatus(ctx context.Context, id, status string, lastSeen int64) error {
-	if _, err := d.db.ExecContext(ctx,
-		`UPDATE agents SET status = ?, last_seen = ?, updated_at = ? WHERE id = ?`,
-		status, lastSeen, lastSeen, id,
-	); err != nil {
-		return fmt.Errorf("更新 Agent 状态失败: %w", err)
+	if _, err := d.gdb.Model(dao.Agents.Table()).Ctx(ctx).
+		Where(dao.Agents.Columns().Id, id).
+		Data(do.Agents{
+			Status:    status,
+			LastSeen:  lastSeen,
+			UpdatedAt: lastSeen,
+		}).
+		Update(); err != nil {
+		return gerror.Wrap(err, "更新 Agent 状态失败")
 	}
 	return nil
 }

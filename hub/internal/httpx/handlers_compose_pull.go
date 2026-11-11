@@ -3,7 +3,6 @@ package httpx
 import (
 	"arkade/hub/internal/user"
 	"arkade/protocol/envelope"
-	"github.com/go-chi/chi/v5"
 	"net/http"
 	"strconv"
 	"strings"
@@ -13,7 +12,7 @@ import (
 // task命名绑定需在GET返回前检查，避免拿另一个项目的任务ID跨项目读取。
 func handleStartComposePull(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		agent, name := agentIDFromPath(r), chi.URLParam(r, "name")
+		agent, name := agentIDFromPath(r), pathParam(r, "name")
 		if !requirePermission(w, d, r, agent, user.PermOperate) || !requireComposeName(w, d, name) {
 			return
 		}
@@ -46,7 +45,7 @@ func handleStartComposePull(d Deps) http.HandlerFunc {
 }
 func handleGetComposePull(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		agent, name, id := agentIDFromPath(r), chi.URLParam(r, "name"), chi.URLParam(r, "taskID")
+		agent, name, id := agentIDFromPath(r), pathParam(r, "name"), pathParam(r, "taskID")
 		if !requirePermission(w, d, r, agent, user.PermOperate) || !requireComposeName(w, d, name) {
 			return
 		}

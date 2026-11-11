@@ -6,8 +6,8 @@ package httpx
 // 塞进任一组都会让另一组产生意外的依赖。
 
 import (
+	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -29,14 +29,24 @@ func (e *testEnv) loginAttempt(t *testing.T, username, password string) []*http.
 // loginRaw 发一次登录请求，返回状态码与响应体原文。
 //
 // 用于比较"用户不存在"与"密码错误"两种失败是否**完全无法区分**。
+// loginRaw 发起一次真实 HTTP 登录请求，返回状态码与响应体。
+//
+// 走真实网络而不是 httptest.ResponseRecorder：契约（Cookie、状态码、
+// 裸 JSON）都是传输层行为，Recorder 会把 writer 的替换、Flush、
+// 状态码回写这些环节跳过，测出来不代表线上表现。
 func (e *testEnv) loginRaw(t *testing.T, username, password string) (int, string) {
 	t.Helper()
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/auth/login",
-		strings.NewReader(`{"username":"`+username+`","password":"`+password+`"}`))
-	req.Header.Set("Content-Type", "application/json")
-	e.router.ServeHTTP(rec, req)
-	return rec.Code, rec.Body.String()
+	body := strings.NewReader(`{"username":"` + username + `","password":"` + password + `"}`)
+	resp, err := http.Post(e.wsURL+"/api/auth/login", "application/json", body)
+	if err != nil {
+		t.Fatalf("登录请求失败: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("读取登录响应失败: %v", err)
+	}
+	return resp.StatusCode, string(raw)
 }
 
 // storeAllAudit 返回"不加筛选、取足够多条"的查询参数。

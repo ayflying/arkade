@@ -13,7 +13,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/go-chi/chi/v5"
 
 	"arkade/hub/internal/agentlink"
 	"arkade/hub/internal/store"
@@ -140,7 +139,7 @@ func displayNameOf(rec store.AgentRecord) string {
 // handleListContainers 处理 GET /api/agents/{agentID}/containers。
 func handleListContainers(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		agentID := chi.URLParam(r, "agentID")
+		agentID := pathParam(r, "agentID")
 		if !requirePermission(w, d, r, agentID, user.PermView) {
 			return
 		}
@@ -160,12 +159,12 @@ func handleListContainers(d Deps) http.HandlerFunc {
 // handleContainerStart 处理 POST /api/agents/{agentID}/containers/{containerID}/start。
 func handleContainerStart(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		agentID := chi.URLParam(r, "agentID")
+		agentID := pathParam(r, "agentID")
 		// 启动容器属于常规操作，需要 operate 档位。
 		if !requirePermission(w, d, r, agentID, user.PermOperate) {
 			return
 		}
-		cid := chi.URLParam(r, "containerID")
+		cid := pathParam(r, "containerID")
 
 		res, cerr := d.Ops.StartContainer(r.Context(), agentID, cid)
 		if cerr != nil {
@@ -182,11 +181,11 @@ func handleContainerStart(d Deps) http.HandlerFunc {
 // handleContainerStop 处理停止容器。语义与启动对称。
 func handleContainerStop(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		agentID := chi.URLParam(r, "agentID")
+		agentID := pathParam(r, "agentID")
 		if !requirePermission(w, d, r, agentID, user.PermOperate) {
 			return
 		}
-		cid := chi.URLParam(r, "containerID")
+		cid := pathParam(r, "containerID")
 
 		res, cerr := d.Ops.StopContainer(r.Context(), agentID, cid)
 		if cerr != nil {
@@ -203,11 +202,11 @@ func handleContainerStop(d Deps) http.HandlerFunc {
 // handleContainerLogs 处理 GET .../logs?tail=N。
 func handleContainerLogs(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		agentID := chi.URLParam(r, "agentID")
+		agentID := pathParam(r, "agentID")
 		if !requirePermission(w, d, r, agentID, user.PermView) {
 			return
 		}
-		cid := chi.URLParam(r, "containerID")
+		cid := pathParam(r, "containerID")
 
 		tail, err := parseTail(r.URL.Query().Get("tail"))
 		if err != nil {

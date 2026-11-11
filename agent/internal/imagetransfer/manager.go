@@ -46,6 +46,14 @@ type Manager struct {
 	mu    sync.Mutex
 	tasks map[string]*Task
 
+	// exports 是**可复用归档**表：与 tasks 分开持有。
+	//
+	// 为什么分两张表：tasks 是一次性操作（有进度、会终态、进入 TTL 清理），
+	// exports 是持有物（只关心"还在不在、多大、校验和"）。
+	// 混在一张表里会让两套 TTL 互相影响——那类 bug 只在
+	// 两者 TTL 接近某个比例时才出现，极难复现。
+	exports *exportRegistry
+
 	// now 可被测试替换，用于验证 TTL 而不必真的等待。
 	now func() time.Time
 }
@@ -71,12 +79,23 @@ func NewManager(dataDir string, rt runtime.Runtime, limits Limits) (*Manager, er
 		tasks:  make(map[string]*Task),
 		now:    time.Now,
 	}
+	// exports 与 tasks 共用同一个时钟（测试里替换 now 时两者一起生效）。
+	m.exports = newExportRegistry(func() time.Time { return m.now() })
 	if tr, ok := rt.(runtime.ImageTransferRuntime); ok && tr != nil {
 		m.rt = tr
 		m.rtOK = true
 	}
 	// 启动即清理：进程被 kill 时 defer 不会执行，残留只能在这里收拾。
-	// 此时任务表为空，因此传入空的活动集。
+	//
+	// ============================ 可复用归档必须被保护 ============================
+	// 这里传入的活动集要**同时**包含任务与持有中的归档，两者都不会是空的
+	// （进程刚起，但磁盘上可能留着上次进程导出的、还没过期的归档）。
+	//
+	// 不过要注意：进程重启后 exportRegistry 是空的——磁盘上的归档
+	// **没有任何方式证明自己仍然有效**，因为持有登记只存在内存里。
+	// 因此这里刻意**不保留**它们：宁可让迁移重新导出一次，
+	// 也不能让调用方拿到一份"没有登记、无从校验"的归档。
+	// 这与"启动清理只删无人对应的目录"的既有原则一致。
 	m.store.cleanupOrphans(nil)
 	return m, nil
 }
@@ -305,6 +324,12 @@ func (m *Manager) Close() {
 	m.mu.Lock()
 	m.tasks = make(map[string]*Task)
 	m.mu.Unlock()
+	// 可复用归档也要一起清：Close 的语义是"本进程不再需要任何临时归档"，
+	// 保留它们会让优雅退出后磁盘上留下几百 MB 到 2 GiB 的垃圾，
+	// 而下一个进程启动时同样会清掉——等于白占一段时间。
+	m.exports.mu.Lock()
+	m.exports.entries = make(map[string]*exportEntry)
+	m.exports.mu.Unlock()
 	m.store.cleanupOrphans(nil)
 }
 

@@ -19,7 +19,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 
 	"arkade/hub/internal/store"
 	"arkade/hub/internal/user"
@@ -125,7 +124,7 @@ func handleUpdateGroup(d Deps) http.HandlerFunc {
 		if _, ok := requireAdmin(w, d, r); !ok {
 			return
 		}
-		groupID := chi.URLParam(r, "groupID")
+		groupID := pathParam(r, "groupID")
 
 		var req updateGroupRequest
 		if !decodeAndValidate(w, d, r, &req) {
@@ -197,7 +196,7 @@ func handleDeleteGroup(d Deps) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		groupID := chi.URLParam(r, "groupID")
+		groupID := pathParam(r, "groupID")
 
 		grp, err := d.DB.GetGroup(r.Context(), groupID)
 		if err != nil {
@@ -228,7 +227,7 @@ func handleListGroupMembers(d Deps) http.HandlerFunc {
 		if _, ok := requireAdmin(w, d, r); !ok {
 			return
 		}
-		groupID := chi.URLParam(r, "groupID")
+		groupID := pathParam(r, "groupID")
 
 		// 先确认组存在，否则「组不存在」会被误报成「组里没有成员」。
 		if _, err := d.DB.GetGroup(r.Context(), groupID); err != nil {
@@ -271,7 +270,7 @@ func handleSetGroupMembers(d Deps) http.HandlerFunc {
 		if _, ok := requireAdmin(w, d, r); !ok {
 			return
 		}
-		groupID := chi.URLParam(r, "groupID")
+		groupID := pathParam(r, "groupID")
 
 		var req setMembersRequest
 		if !decodeAndValidate(w, d, r, &req) {
@@ -336,7 +335,7 @@ func handleListGroupGrants(d Deps) http.HandlerFunc {
 		if _, ok := requireAdmin(w, d, r); !ok {
 			return
 		}
-		groupID := chi.URLParam(r, "groupID")
+		groupID := pathParam(r, "groupID")
 
 		if _, err := d.DB.GetGroup(r.Context(), groupID); err != nil {
 			respondStoreError(w, d, err, "用户组不存在")
@@ -382,7 +381,7 @@ func handleSetGroupGrants(d Deps) http.HandlerFunc {
 		if _, ok := requireAdmin(w, d, r); !ok {
 			return
 		}
-		groupID := chi.URLParam(r, "groupID")
+		groupID := pathParam(r, "groupID")
 
 		var req setGrantsRequest
 		if !decodeAndValidate(w, d, r, &req) {

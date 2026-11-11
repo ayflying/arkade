@@ -8,8 +8,9 @@ package store
 
 import (
 	"errors"
-	"fmt"
 	"strings"
+
+	"github.com/gogf/gf/v2/errors/gerror"
 )
 
 // ErrNotFound 是统一的「记录不存在」错误。
@@ -27,21 +28,16 @@ var ErrDuplicate = ErrConflict
 
 // normalizeExecError 把驱动返回的错误转换成仓储层哨兵错误。
 //
-// 判定依据：modernc.org/sqlite 的 *sqlite.Error 携带原始 SQLite 扩展错误码，
-// 其中 SQLITE_CONSTRAINT_UNIQUE = 2067、SQLITE_CONSTRAINT_PRIMARYKEY = 1555。
-// 但这里刻意**不直接断言类型**，而是同时匹配错误文本里的 "UNIQUE constraint failed"：
-//   - 驱动类型断言虽然精确，但对驱动版本敏感；
-//   - 文本匹配在不同版本间稳定（SQLite 自身的报错文案多年未变）。
-//
-// 两者取或，既能识别常见情况，又不会因为某一侧变化而整体失效。
+// 唯一约束用错误文本识别（"UNIQUE constraint failed"）：SQLite 这段文案
+// 多年未变，比断言驱动的错误码类型更稳定，也不绑定具体驱动版本。
 func normalizeExecError(err error, dueTo string) error {
 	if err == nil {
 		return nil
 	}
 	if isUniqueViolation(err) {
-		return fmt.Errorf("%w: %s", ErrConflict, dueTo)
+		return gerror.Wrap(ErrConflict, dueTo)
 	}
-	return fmt.Errorf("%s失败: %w", dueTo, err)
+	return gerror.Wrapf(err, "%s失败", dueTo)
 }
 
 // isUniqueViolation 判断错误是否由唯一约束触发。

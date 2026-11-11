@@ -75,6 +75,13 @@ var auditRoutes = map[string]auditRoute{
 		TargetParam: "name",
 		SubAction:   true,
 	},
+	// 跨服务器迁移：与其它编排动作同等对待，记为 stack.action，
+	// 具体是 migrate 由路由本身表达在审计的 path/method 里。
+	// target 取编排名，便于回答"谁把哪个编排迁走了"。
+	"/api/agents/{agentID}/stacks/{name}/migrate": {
+		Action:      audit.ActionStackAction,
+		TargetParam: "name",
+	},
 
 	// 异步拉取仅记录任务受理，不把202当作实际镜像更新成功；输出不入审计。
 	"/api/agents/{agentID}/stacks/{name}/pull-tasks":      {Action: audit.ActionStackAction, TargetParam: "name"},

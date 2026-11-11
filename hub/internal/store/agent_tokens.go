@@ -15,10 +15,14 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"errors"
-	"fmt"
 	"time"
+
+	"github.com/gogf/gf/v2/database/gdb"
+	"github.com/gogf/gf/v2/errors/gerror"
+
+	"arkade/hub/internal/dao"
+	"arkade/hub/internal/model/do"
 )
 
 // ErrAgentTokenNotFound 表示该摘要没有对应的凭据。
@@ -38,8 +42,8 @@ type AgentToken struct {
 // SaveAgentToken 写入或替换某个 Agent 的凭据摘要。
 //
 // 语义是"替换"而不是"新增"：一个 Agent 在同一时刻只能有一把有效密钥。
-// 实现上用 DELETE + INSERT 而不是 UPSERT，因为 agent_id 上的唯一索引
-// 决定了旧行必须先消失，否则插入会撞唯一约束。
+// 实现上用先删后插，因为 agent_id 上的唯一索引决定了旧行必须先消失，
+// 否则插入会撞唯一约束。
 //
 // 整个操作在一个事务里：先删后插若只成功一半，
 // 会留下"该 Agent 没有任何凭据"的状态——那样它就退化成可被
@@ -48,32 +52,32 @@ func (d *DB) SaveAgentToken(ctx context.Context, tokenHash, agentID string, at t
 	if tokenHash == "" || agentID == "" {
 		return errors.New("凭据摘要与 agent_id 均不能为空")
 	}
-	tx, err := d.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("开启事务失败: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
 
-	// 先删该 Agent 的旧凭据（重置语义）。
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM agent_tokens WHERE agent_id = $1`, agentID); err != nil {
-		return fmt.Errorf("删除旧凭据失败: %w", err)
-	}
-	// 再删可能存在的同摘要行（理论上不会，防御性处理：
-	// 若同一摘要因某种原因绑到了别的 Agent，留着会造成歧义）。
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM agent_tokens WHERE token_hash = $1`, tokenHash); err != nil {
-		return fmt.Errorf("清理冲突凭据失败: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO agent_tokens (token_hash, agent_id, created_at) VALUES ($1, $2, $3)`,
-		tokenHash, agentID, at.Unix()); err != nil {
-		return fmt.Errorf("写入凭据失败: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("提交事务失败: %w", err)
-	}
-	return nil
+	return d.TxModel(ctx, func(ctx context.Context, tx gdb.TX) error {
+		c := dao.AgentTokens.Columns()
+
+		// 先删该 Agent 的旧凭据（重置语义）。
+		if _, err := tx.Model(dao.AgentTokens.Table()).Ctx(ctx).
+			Where(c.AgentId, agentID).
+			Delete(); err != nil {
+			return gerror.Wrap(err, "删除旧凭据失败")
+		}
+		// 再删可能存在的同摘要行（防御性：若同一摘要因某种原因绑到了
+		// 别的 Agent，留着会造成歧义）。
+		if _, err := tx.Model(dao.AgentTokens.Table()).Ctx(ctx).
+			Where(c.TokenHash, tokenHash).
+			Delete(); err != nil {
+			return gerror.Wrap(err, "清理冲突凭据失败")
+		}
+		if _, err := tx.Model(dao.AgentTokens.Table()).Ctx(ctx).Data(do.AgentTokens{
+			TokenHash: tokenHash,
+			AgentId:   agentID,
+			CreatedAt: at.Unix(),
+		}).Insert(); err != nil {
+			return gerror.Wrap(err, "写入凭据失败")
+		}
+		return nil
+	})
 }
 
 // LookupAgentByTokenHash 按摘要解析出它绑定的 agent_id。
@@ -85,16 +89,18 @@ func (d *DB) LookupAgentByTokenHash(ctx context.Context, tokenHash string) (stri
 	if tokenHash == "" {
 		return "", ErrAgentTokenNotFound
 	}
-	var agentID string
-	err := d.db.QueryRowContext(ctx,
-		`SELECT agent_id FROM agent_tokens WHERE token_hash = $1`, tokenHash).Scan(&agentID)
-	if errors.Is(err, sql.ErrNoRows) {
+	c := dao.AgentTokens.Columns()
+	one, err := d.gdb.Model(dao.AgentTokens.Table()).Ctx(ctx).
+		Fields(c.AgentId).
+		Where(c.TokenHash, tokenHash).
+		One()
+	if err != nil {
+		return "", gerror.Wrap(err, "查询凭据失败")
+	}
+	if one.IsEmpty() {
 		return "", ErrAgentTokenNotFound
 	}
-	if err != nil {
-		return "", fmt.Errorf("查询凭据失败: %w", err)
-	}
-	return agentID, nil
+	return one[c.AgentId].String(), nil
 }
 
 // DeleteAgentToken 删除某个 Agent 的凭据（重置与删除记录时调用）。
@@ -106,9 +112,10 @@ func (d *DB) DeleteAgentToken(ctx context.Context, agentID string) error {
 	if agentID == "" {
 		return nil
 	}
-	if _, err := d.db.ExecContext(ctx,
-		`DELETE FROM agent_tokens WHERE agent_id = $1`, agentID); err != nil {
-		return fmt.Errorf("删除凭据失败: %w", err)
+	if _, err := d.gdb.Model(dao.AgentTokens.Table()).Ctx(ctx).
+		Where(dao.AgentTokens.Columns().AgentId, agentID).
+		Delete(); err != nil {
+		return gerror.Wrap(err, "删除凭据失败")
 	}
 	return nil
 }
@@ -122,14 +129,11 @@ func (d *DB) HasAgentToken(ctx context.Context, agentID string) (bool, error) {
 	if agentID == "" {
 		return false, nil
 	}
-	var one int
-	err := d.db.QueryRowContext(ctx,
-		`SELECT 1 FROM agent_tokens WHERE agent_id = $1`, agentID).Scan(&one)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
+	n, err := d.gdb.Model(dao.AgentTokens.Table()).Ctx(ctx).
+		Where(dao.AgentTokens.Columns().AgentId, agentID).
+		Count()
 	if err != nil {
-		return false, fmt.Errorf("查询凭据存在性失败: %w", err)
+		return false, gerror.Wrap(err, "查询凭据存在性失败")
 	}
-	return true, nil
+	return n > 0, nil
 }

@@ -298,3 +298,128 @@ type ImageTransferLimits struct {
 //     把校验和推迟到 commit，接收端才能边收边算。
 //
 // 首批不支持 digest / platform 的界面入口，但协议保留并严格校验，见 ImagePullPayload。
+
+// ============================ 可复用归档导出（编排迁移用） ============================
+//
+// 上面 ImageSave 的设计前提是"导出 → 立刻被同一个任务拉走 → 释放"。
+// 编排迁移不满足这个前提：必须**先确认源服务器上的镜像能导出**，
+// 再去目标服务器上做别的事，最后才回头把归档拉过来。
+//
+// 若复用 ImageSave，这段间隔里归档随时可能被 TTL 清理或任务释放，
+// 迁移就会在最不可控的时刻失败。因此需要一层"可复用导出"：
+//
+//	image.archive.export  → 导出并**持有**（拿到 ExportID）
+//	image.archive.open    → 再次确认它仍然可用（变更/越权检测）
+//	image.archive.chunk.get → 按 offset 分块读取
+//	image.archive.close   → 显式释放
+//
+// ============================ ExportID 的语义 ============================
+//
+// ExportID **不是** TaskID。两者刻意的区别：
+//
+//	TaskID   描述"一次导出操作"——有进度、可取消、终态后按 TTL 消失
+//	ExportID 描述"一份落盘的归档"——有大小与校验和，只在显式 close 或过期时消失
+//
+// 一次导出操作产出一个 ExportID；但持有期由 ExportID 自己的 TTL 决定，
+// 与任务的 TTL 解耦。这正是"可复用"的含义：任务结束后归档还在。
+//
+// ExportID 由 Agent 派生为 "<32 位小写 hex>"（任务 id 的形态），
+// 因此同样能复用现有的 validTaskID 路径校验——**不引入新的路径拼装规则**。
+// 任何不符合该形态的 ExportID 一律当作"不存在"，绝不进入文件系统路径。
+
+// ImageArchiveExportPayload 请求导出一个可复用的镜像归档。
+//
+// Hold 语义：
+//   - true  → 导出完成后**不自动释放**，归档保留到显式 close 或 TTL 过期；
+//   - false → 与旧的 ImageSave 等价（仅供内部兼容，迁移场景必须传 true）。
+//
+// 为什么用显式布尔而不是"默认持有"：默认持有意味着调用方忘了 close
+// 就会长期占着几百 MB 到 2 GiB 磁盘，而这个后果在界面上不可见。
+// 反过来"默认不持有"最多是调用方多传一个字段。
+type ImageArchiveExportPayload struct {
+	// Reference 要导出的镜像引用或镜像 ID。
+	Reference string `json:"reference"`
+	// Hold 为真表示导出后保留归档，等待显式释放。
+	Hold bool `json:"hold"`
+}
+
+// ImageArchiveExportResult 是一次可复用导出的结果。
+//
+// 返回**规范化后的引用**（ExportID）而不是复用 TaskID：
+// 调用方后续只靠 ExportID 操作归档，不需要记住内部任务的存在。
+type ImageArchiveExportResult struct {
+	// ExportID 是这份归档的稳定标识（32 位小写十六进制）。
+	ExportID string `json:"export_id"`
+	// Reference 回显规范化后的镜像引用，便于调用方确认导出的是哪个镜像。
+	Reference string `json:"reference"`
+	// SizeBytes 是归档字节数，必定 > 0。
+	SizeBytes int64 `json:"size_bytes"`
+	// SHA256 是归档的十六进制校验和，**必定非空**。
+	//
+	// 与 ImageLoadBeginPayload.SHA256 允许为空不同：这里的归档已经完整落盘，
+	// 校验和是"这份文件到底是什么"的唯一凭证，拿不到就不该宣布导出成功。
+	SHA256 string `json:"sha256"`
+	// ExpiresAt 是归档的过期时间（RFC3339 UTC）。
+	//
+	// 给出过期时间而不是只给 TTL：调用方可能跨进程/跨小时规划迁移，
+	// 让它自己减一次 TTL 只会引入时区与时钟偏差的误解。
+	ExpiresAt string `json:"expires_at"`
+}
+
+// ImageArchiveOpenPayload 打开（确认可用）一个已有的归档。
+//
+// 为什么在 chunk.get 之外还要一个 open：
+//
+//	chunk.get 只回答"这一块是什么"，无法回答"这份归档还是不是原来那份"。
+//	迁移流程在长时间等待后回头拉取时，需要先确认 ExportID 仍然存在、
+//	大小与校验和未变——否则可能把一个**已过期被别的导出复用**的
+//	identifer 当成原归档，悄悄传走错误的数据。
+type ImageArchiveOpenPayload struct {
+	ExportID string `json:"export_id"`
+}
+
+// ImageArchiveOpenResult 是 open 的应答。
+//
+// 字段与 ExportResult 保持同名同义：调用方可以用同一段代码处理
+// "刚导出"与"稍后再打开"两种结果，不必写两套解析。
+type ImageArchiveOpenResult struct {
+	ExportID  string `json:"export_id"`
+	Reference string `json:"reference"`
+	SizeBytes int64  `json:"size_bytes"`
+	SHA256    string `json:"sha256"`
+	ExpiresAt string `json:"expires_at"`
+}
+
+// ImageArchiveChunkGetPayload 读取可复用归档的一块字节。
+//
+// 与 ImageChunkGetPayload 的区别仅在"用 ExportID 而不是 TaskID 定位"：
+// 前者描述任务，后者描述归档。其余语义（offset 必须显式、max_bytes
+// 超上限按上限截断）完全一致，响应直接复用 ImageChunkGetResult，
+// 避免 Hub 侧出现两套几乎相同却细节不同的解析。
+type ImageArchiveChunkGetPayload struct {
+	ExportID string `json:"export_id"`
+	// Offset 是本块在归档中的起始字节偏移，必须 >= 0。
+	Offset int64 `json:"offset"`
+	// MaxBytes 期望读取的最大字节数；<=0 时按默认块大小处理，
+	// 超过上限按上限截断。
+	MaxBytes int64 `json:"max_bytes"`
+}
+
+// ImageArchiveClosePayload 释放一个可复用归档。
+type ImageArchiveClosePayload struct {
+	ExportID string `json:"export_id"`
+}
+
+// ImageArchiveCloseResult 是释放的应答。
+//
+// Released=false 表示"这次没有删除任何东西"，通常因为归档已经不存在
+// （已关闭或已过期）。这**不是错误**：
+// 关闭一个已经不存在的归档，调用方要的结果（它不再占盘）已经达成，
+// 报错只会让上层写一段"吞掉 not_found"的代码。
+// 但 Message 必须如实说明是哪种情况，不能让调用方以为刚删掉了一份大文件。
+type ImageArchiveCloseResult struct {
+	ExportID string `json:"export_id"`
+	Released bool   `json:"released"`
+	// Message 说明实际发生了什么（已释放 / 本就不存在）。
+	Message string `json:"message,omitempty"`
+}

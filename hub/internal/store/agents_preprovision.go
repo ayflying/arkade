@@ -11,13 +11,17 @@ package store
 import (
 	"context"
 	"crypto/rand"
-	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
+
+	"github.com/gogf/gf/v2/database/gdb"
+	"github.com/gogf/gf/v2/errors/gerror"
+
+	"arkade/hub/internal/dao"
+	"arkade/hub/internal/model/do"
 )
 
 // StatusPending 表示记录已创建但从未有 Agent 连上来过。
@@ -25,7 +29,7 @@ import (
 // 为什么不复用 offline：offline 的含义是"曾经连上、现在断开"，
 // 用户看到 offline 会去查为什么掉线（查网络、查进程）；
 // 而 pending 的正确处置是"还没部署 Agent"。
-// 把两者混成一个状态，会让全新未部署的服务器看起来像故障机器。
+// 把两者混成一个状态，用户会误判成故障机器。
 const StatusPending = "pending"
 
 // ErrAgentNameTaken 表示已存在同名（规范化后）的服务器记录。
@@ -39,7 +43,7 @@ var ErrAgentNameTaken = errors.New("同名服务器已存在")
 func NewAgentID() (string, error) {
 	b := make([]byte, 12)
 	if _, err := rand.Read(b); err != nil {
-		return "", fmt.Errorf("生成随机 ID 失败: %w", err)
+		return "", gerror.Wrap(err, "生成随机 ID 失败")
 	}
 	return "agent-" + hex.EncodeToString(b), nil
 }
@@ -59,9 +63,10 @@ func NewAgentID() (string, error) {
 func (d *DB) CreatePreprovisionedAgent(ctx context.Context, rec AgentRecord, tokenHash string, at time.Time) error {
 	labelsRaw, err := json.Marshal(rec.Labels)
 	if err != nil {
-		return fmt.Errorf("序列化 Agent 标签失败: %w", err)
+		return gerror.Wrap(err, "序列化 Agent 标签失败")
 	}
-	return d.Tx(ctx, func(tx *sqlTx) error {
+
+	return d.TxModel(ctx, func(ctx context.Context, tx gdb.TX) error {
 		// 事务内判重（规范化后比较，见 normalizAgentName）。
 		dup, err := agentNameExistsTx(ctx, tx, rec.Name, "")
 		if err != nil {
@@ -71,19 +76,31 @@ func (d *DB) CreatePreprovisionedAgent(ctx context.Context, rec AgentRecord, tok
 			return ErrAgentNameTaken
 		}
 
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO agents(id, name, display_name, note, status, version, runtime,
-			     runtime_version, last_seen, labels, created_at, updated_at, disabled, preprovisioned)
-			 VALUES(?, ?, ?, ?, ?, '', '', '', 0, ?, ?, ?, 0, 1)`,
-			rec.ID, rec.Name, rec.DisplayName, rec.Note, StatusPending,
-			labelsRaw, rec.CreatedAt, rec.UpdatedAt); err != nil {
-			return fmt.Errorf("写入预建服务器失败: %w", err)
+		if _, err := tx.Model(dao.Agents.Table()).Ctx(ctx).Data(do.Agents{
+			Id:             rec.ID,
+			Name:           rec.Name,
+			DisplayName:    rec.DisplayName,
+			Note:           rec.Note,
+			Status:         StatusPending,
+			Version:        "",
+			Runtime:        "",
+			RuntimeVersion: "",
+			LastSeen:       0,
+			Labels:         string(labelsRaw),
+			CreatedAt:      rec.CreatedAt,
+			UpdatedAt:      rec.UpdatedAt,
+			Disabled:       0,
+			Preprovisioned: 1,
+		}).Insert(); err != nil {
+			return gerror.Wrap(err, "写入预建服务器失败")
 		}
 
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO agent_tokens (token_hash, agent_id, created_at) VALUES ($1, $2, $3)`,
-			tokenHash, rec.ID, at.Unix()); err != nil {
-			return fmt.Errorf("写入接入凭据失败: %w", err)
+		if _, err := tx.Model(dao.AgentTokens.Table()).Ctx(ctx).Data(do.AgentTokens{
+			TokenHash: tokenHash,
+			AgentId:   rec.ID,
+			CreatedAt: at.Unix(),
+		}).Insert(); err != nil {
+			return gerror.Wrap(err, "写入接入凭据失败")
 		}
 		return nil
 	})
@@ -91,30 +108,35 @@ func (d *DB) CreatePreprovisionedAgent(ctx context.Context, rec AgentRecord, tok
 
 // ResetAgentTokenHash 替换某条记录的凭据摘要。
 //
-// 语义要求"旧的立即失效"：所以用 UPDATE 而不是追加新行，
-// 并依赖 agent_id 上的唯一索引保证同时只有一个摘要。
+// 语义要求"旧的立即失效"：所以先删后插，并依赖 agent_id 上的唯一索引
+// 保证同时只有一个摘要。
 // 记录不存在时返回 ErrNotFound（调用方据此 404）。
 func (d *DB) ResetAgentTokenHash(ctx context.Context, agentID, tokenHash string, at time.Time) error {
-	return d.Tx(ctx, func(tx *sqlTx) error {
-		var one int
-		err := tx.QueryRowContext(ctx, `SELECT 1 FROM agents WHERE id = ?`, agentID).Scan(&one)
-		if errors.Is(err, sql.ErrNoRows) {
+	return d.TxModel(ctx, func(ctx context.Context, tx gdb.TX) error {
+		exists, err := tx.Model(dao.Agents.Table()).Ctx(ctx).
+			Where(dao.Agents.Columns().Id, agentID).
+			Count()
+		if err != nil {
+			return gerror.Wrap(err, "查询服务器失败")
+		}
+		if exists == 0 {
 			return ErrNotFound
 		}
-		if err != nil {
-			return fmt.Errorf("查询服务器失败: %w", err)
-		}
+
 		// 先删该 Agent 的所有旧摘要，再插入新的。
 		// 不用 UPDATE 是因为也可能出现"该 Agent 还没有凭据行"的情况
-		// （例如预建时写凭据失败后人工补建），DELETE + INSERT 两种都覆盖。
-		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM agent_tokens WHERE agent_id = $1`, agentID); err != nil {
-			return fmt.Errorf("删除旧凭据失败: %w", err)
+		// （例如预建时写凭据失败后人工补建），先删后插两种都覆盖。
+		if _, err := tx.Model(dao.AgentTokens.Table()).Ctx(ctx).
+			Where(dao.AgentTokens.Columns().AgentId, agentID).
+			Delete(); err != nil {
+			return gerror.Wrap(err, "删除旧凭据失败")
 		}
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO agent_tokens (token_hash, agent_id, created_at) VALUES ($1, $2, $3)`,
-			tokenHash, agentID, at.Unix()); err != nil {
-			return fmt.Errorf("写入新凭据失败: %w", err)
+		if _, err := tx.Model(dao.AgentTokens.Table()).Ctx(ctx).Data(do.AgentTokens{
+			TokenHash: tokenHash,
+			AgentId:   agentID,
+			CreatedAt: at.Unix(),
+		}).Insert(); err != nil {
+			return gerror.Wrap(err, "写入新凭据失败")
 		}
 		return nil
 	})
@@ -127,30 +149,31 @@ func (d *DB) ResetAgentTokenHash(ctx context.Context, agentID, tokenHash string,
 // 比较用规范化后的结果：历史数据里可能有大小写差异或首尾空格，
 // 那条记录在界面上看起来就叫这个名字，用户再次输入同名时
 // 应该在 UI 层就被拦住，而不是等到两条几乎一样的记录并排出现才发现。
-func agentNameExistsTx(ctx context.Context, tx *sqlTx, name, excludeID string) (bool, error) {
+//
+// ============================ 为什么这里仍需全表比对 ============================
+// 归一化（去空白 + 折叠空白 + 小写）是在 Go 里做的，SQLite 的
+// LOWER/TRIM 不能完全复现"折叠连续空白"，所以不能把条件下推到 SQL。
+// 记录数是"服务器数量"级别（几十到几百），全表读一遍可接受。
+func agentNameExistsTx(ctx context.Context, tx gdb.TX, name, excludeID string) (bool, error) {
 	want := normalizAgentName(name)
 	if want == "" {
 		return false, nil
 	}
-	// SQLite 的 LOWER/TRIM 能覆盖大小写与空白差异，
-	// 避免把所有记录捞到 Go 里比较。
-	rows, err := tx.QueryContext(ctx,
-		`SELECT id, name FROM agents WHERE id <> ?`, excludeID)
-	if err != nil {
-		return false, fmt.Errorf("查询同名服务器失败: %w", err)
+
+	m := tx.Model(dao.Agents.Table()).Ctx(ctx).
+		Fields(dao.Agents.Columns().Id, dao.Agents.Columns().Name)
+	if excludeID != "" {
+		m = m.WhereNot(dao.Agents.Columns().Id, excludeID)
 	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		var id, existing string
-		if err := rows.Scan(&id, &existing); err != nil {
-			return false, fmt.Errorf("扫描服务器记录失败: %w", err)
-		}
-		if normalizAgentName(existing) == want {
+	recs, err := m.All()
+	if err != nil {
+		return false, gerror.Wrap(err, "查询同名服务器失败")
+	}
+
+	for _, rec := range recs {
+		if normalizAgentName(rec[dao.Agents.Columns().Name].String()) == want {
 			return true, nil
 		}
-	}
-	if err := rows.Err(); err != nil {
-		return false, fmt.Errorf("遍历服务器记录失败: %w", err)
 	}
 	return false, nil
 }

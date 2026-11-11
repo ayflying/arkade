@@ -42,6 +42,13 @@ const (
 	archiveMode os.FileMode = 0o600
 )
 
+// TransfersDirName 返回 data_dir 下传输临时区的目录名。
+//
+// 暴露它是因为**编排迁移的卷归档要落进同一个临时区**：
+// 两类归档共享 TTL、数量上限与"启动时清理无主残留"这套规则，
+// 各开一个目录就会出现两套清理逻辑，漏一套就永久占盘。
+func TransfersDirName() string { return transfersDirName }
+
 // storage 负责物理文件操作。
 type storage struct {
 	// root 是 transfers 目录的绝对路径。

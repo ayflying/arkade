@@ -71,19 +71,35 @@ func startComposeAgent(t *testing.T, e *testEnv, reply *envelope.ComposeListResu
 	reg := agentlink.NewRegistry()
 	log := discardLogger()
 	agentSrv := agentlink.NewServer(reg, composeTestAgentToken, "test", &agentSink{db: e.db, log: log}, log)
+
+	// ============================ 服务端 Handler 的完成信号 ============================
+	//
+	// WebSocket 升级后连接被 Hijack，http.Server.Shutdown 与 GF 的 Shutdown
+	// 都**不会等**它结束（标准库既有行为）。测试收尾时若只 Close 客户端
+	// socket 就返回，服务端 HandleConnect 可能还在跑，并在 DB 已关闭之后
+	// 调用 agentSink 的 OnDisconnect/MarkOffline —— 表现为 Windows 上
+	// test.db 仍被占用、TempDir RemoveAll 失败。
+	//
+	// 解决方式是**明确 join**：用 done channel 包一层 handler，
+	// cleanup 里先关 socket 再等 Handler 真正返回，不做 sleep/retry。
+	connDone := make(chan struct{})
+
 	handler := NewRouter(Deps{
-		Log:        log,
-		DB:         e.db,
-		Auth:       e.auth,
-		Registry:   reg,
-		Ops:        agentlink.NewOps(reg),
-		AgentConn:  http.HandlerFunc(agentSrv.HandleConnect),
+		Log:      log,
+		DB:       e.db,
+		Auth:     e.auth,
+		Registry: reg,
+		Ops:      agentlink.NewOps(reg),
+		AgentConn: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer close(connDone)
+			agentSrv.HandleConnect(w, r)
+		}),
 		HubVersion: "test",
 	})
 	srv := newTestServer(t, handler)
 
 	// 拨号并握手。
-	wsURL := "ws" + srv.URL[len("http"):] + envelope.AgentConnectPath
+	wsURL := "ws" + srv[len("http"):] + envelope.AgentConnectPath
 	header := http.Header{}
 	header.Set(envelope.HeaderAuthorization, envelope.BearerPrefix+composeTestAgentToken)
 	header.Set(envelope.HeaderProtoVersion, "1")
@@ -91,7 +107,17 @@ func startComposeAgent(t *testing.T, e *testEnv, reply *envelope.ComposeListResu
 	if err != nil {
 		t.Fatalf("假 Agent 建连失败: %v", err)
 	}
-	t.Cleanup(func() { _ = conn.Close() })
+	t.Cleanup(func() {
+		// ① 先断开客户端 socket，让服务端读循环读到 EOF 后返回。
+		_ = conn.Close()
+		// ② 再等 HandleConnect 真正退出（服务端 DB 之后才可能被关闭）。
+		//    超时视为失败而不是无声放过：join 没做到就是缺陷。
+		select {
+		case <-connDone:
+		case <-time.After(5 * time.Second):
+			t.Errorf("服务端 HandleConnect 未在 5s 内退出（数据库关闭前必须 join）")
+		}
+	})
 
 	hello, err := envelope.NewRequest("hello-1", envelope.MethodHello, "agent", envelope.HelloPayload{
 		AgentVersion: "0.1.0-test", ProtoVersion: 1, Hostname: "compose-host",
@@ -115,7 +141,12 @@ func startComposeAgent(t *testing.T, e *testEnv, reply *envelope.ComposeListResu
 	}
 
 	// 后台循环应答：只处理 compose.list，其余方法返回空结果。
+	//
+	// loopDone 让测试收尾时能等这个 goroutine 真正结束，
+	// 避免它在 conn 关闭后仍写数据、或在 DB 关闭后还在跑。
+	loopDone := make(chan struct{})
 	go func() {
+		defer close(loopDone)
 		for {
 			var req envelope.Envelope
 			if err := conn.ReadJSON(&req); err != nil {
@@ -145,11 +176,22 @@ func startComposeAgent(t *testing.T, e *testEnv, reply *envelope.ComposeListResu
 		}
 	}()
 
+	// 收尾时也等这个 goroutine 退出。
+	// 注册顺序：t.Cleanup 后注册的先执行，所以这条要在 conn 关闭之后跑——
+	// 这里用一个独立 cleanup 并显式等待关闭动作完成。
+	t.Cleanup(func() {
+		select {
+		case <-loopDone:
+		case <-time.After(5 * time.Second):
+			t.Errorf("假 Agent 读循环未在 5s 内退出")
+		}
+	})
+
 	// 等握手写入完成。
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
 		if reg.IsOnline(ackPayload.AgentID) {
-			return ackPayload.AgentID, srv.URL
+			return ackPayload.AgentID, srv
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

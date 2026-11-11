@@ -4,8 +4,15 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
+	"strings"
 	"time"
+
+	"github.com/gogf/gf/v2/database/gdb"
+	"github.com/gogf/gf/v2/errors/gerror"
+
+	"arkade/hub/internal/dao"
+	"arkade/hub/internal/model/do"
+	"arkade/hub/internal/model/entity"
 )
 
 // ComposeOperationRequest describes a request before any save or dispatch. Hashes
@@ -34,21 +41,66 @@ type ComposeOperation struct {
 	RecordRemoved                                 bool
 }
 
-const composeOperationColumns = `agent_id, request_id, name, action, fingerprint, task_id, stack_id, stack_version, config_hash, created_at, finalized, final_error, record_removed`
 const maxComposeOperations = 2048
 
-func scanComposeOperation(row interface{ Scan(...any) error }) (ComposeOperation, error) {
-	var op ComposeOperation
-	var at int64
-	err := row.Scan(&op.AgentID, &op.RequestID, &op.Name, &op.Action, &op.Fingerprint, &op.TaskID, &op.StackID, &op.StackVersion, &op.ConfigHash, &at, &op.Finalized, &op.FinalError, &op.RecordRemoved)
-	if errors.Is(err, sql.ErrNoRows) {
-		return op, ErrNotFound
+// composeOperationFields 返回查询列名。
+func composeOperationFields() []string {
+	c := dao.ComposeOperationRequests.Columns()
+	return []string{c.AgentId, c.RequestId, c.Name, c.Action, c.Fingerprint,
+		c.TaskId, c.StackId, c.StackVersion, c.ConfigHash, c.CreatedAt,
+		c.Finalized, c.FinalError, c.RecordRemoved}
+}
+
+// composeOperationFromEntity 把 entity 行转成 ComposeOperation。
+func composeOperationFromEntity(e entity.ComposeOperationRequests) ComposeOperation {
+	return ComposeOperation{
+		AgentID:       e.AgentId,
+		RequestID:     e.RequestId,
+		Name:          e.Name,
+		Action:        e.Action,
+		Fingerprint:   e.Fingerprint,
+		TaskID:        e.TaskId,
+		StackID:       e.StackId,
+		StackVersion:  int64(e.StackVersion),
+		ConfigHash:    e.ConfigHash,
+		CreatedAt:     unixToTime(int64(e.CreatedAt)),
+		Finalized:     e.Finalized != 0,
+		FinalError:    e.FinalError,
+		RecordRemoved: e.RecordRemoved != 0,
 	}
+}
+
+func mustComposeOperation(ctx context.Context, m *gdb.Model, agentID, requestID string) (ComposeOperation, error) {
+	c := dao.ComposeOperationRequests.Columns()
+	// 不调 Fields()：事务内会触发元数据查询并死锁，见 record.go 的说明。
+	var e entity.ComposeOperationRequests
+	err := scanOne(ctx, m.
+		Where(c.AgentId, agentID).
+		Where(c.RequestId, requestID), &e)
 	if err != nil {
-		return op, fmt.Errorf("查询编排操作失败: %w", err)
+		if errors.Is(err, ErrNotFound) {
+			return ComposeOperation{}, ErrNotFound
+		}
+		return ComposeOperation{}, gerror.Wrap(err, "查询编排操作失败")
 	}
-	op.CreatedAt = unixToTime(at)
-	return op, nil
+	return composeOperationFromEntity(e), nil
+}
+
+// mustComposeStack 在某个事务里按 (agent_id, name) 取编排，查不到返回 ErrNotFound。
+func mustComposeStack(ctx context.Context, tx gdb.TX, agentID, name string) (ComposeStack, error) {
+	c := dao.ComposeStacks.Columns()
+	// 不调 Fields()：事务内会触发元数据查询并死锁，见 record.go 的说明。
+	var e entity.ComposeStacks
+	err := scanOne(ctx, tx.Model(dao.ComposeStacks.Table()).
+		Where(c.AgentId, agentID).
+		Where(c.Name, name), &e)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return ComposeStack{}, ErrNotFound
+		}
+		return ComposeStack{}, gerror.Wrap(err, "查询编排失败")
+	}
+	return composeStackFromEntity(e), nil
 }
 
 // PrepareComposeOperation binds the idempotency key and saves configuration in
@@ -60,8 +112,10 @@ func (d *DB) PrepareComposeOperation(ctx context.Context, req ComposeOperationRe
 	if req.AgentID == "" || req.RequestID == "" || req.Name == "" || req.Fingerprint == "" || req.Action == "" {
 		return op, stack, false, ErrConflict
 	}
-	err = d.Tx(ctx, func(tx *sqlTx) error {
-		existing, e := scanComposeOperation(tx.QueryRowContext(ctx, `SELECT `+composeOperationColumns+` FROM compose_operation_requests WHERE agent_id = ? AND request_id = ?`, req.AgentID, req.RequestID))
+
+	err = d.TxModel(ctx, func(ctx context.Context, tx gdb.TX) error {
+		// --- 幂等键已存在：只校验一致性，绝不重复保存 ---
+		existing, e := mustComposeOperation(ctx, tx.Model(dao.ComposeOperationRequests.Table()), req.AgentID, req.RequestID)
 		if e == nil {
 			duplicate, op = true, existing
 			if op.Name != req.Name || op.Action != req.Action || op.Fingerprint != req.Fingerprint {
@@ -70,12 +124,9 @@ func (d *DB) PrepareComposeOperation(ctx context.Context, req ComposeOperationRe
 			if op.TaskID != "" || op.Finalized {
 				return nil
 			}
-			stack, e = scanComposeStack(tx.QueryRowContext(ctx, `SELECT `+composeStackColumns+` FROM compose_stacks WHERE agent_id = ? AND name = ?`, req.AgentID, req.Name))
-			if errors.Is(e, ErrNotFound) {
-				return ErrConflict
-			}
+			stack, e = mustComposeStack(ctx, tx, req.AgentID, req.Name)
 			if e != nil {
-				return e
+				return ErrConflict
 			}
 			if !operationMatchesStack(op, stack) {
 				stack = ComposeStack{}
@@ -86,18 +137,26 @@ func (d *DB) PrepareComposeOperation(ctx context.Context, req ComposeOperationRe
 		if !errors.Is(e, ErrNotFound) {
 			return e
 		}
+
+		// --- 新请求：先做有界清理，再判容量 ---
 		now := time.Now().UTC()
-		if _, e = tx.ExecContext(ctx, `DELETE FROM compose_operation_requests WHERE finalized = 1 AND created_at < ?`, now.Add(-24*time.Hour).Unix()); e != nil {
+		oc := dao.ComposeOperationRequests.Columns()
+		if _, e = tx.Model(dao.ComposeOperationRequests.Table()).Ctx(ctx).
+			Where(oc.Finalized, 1).
+			WhereLT(oc.CreatedAt, now.Add(-24*time.Hour).Unix()).
+			Delete(); e != nil {
 			return e
 		}
-		var count int
-		if e = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM compose_operation_requests`).Scan(&count); e != nil {
+		count, e := tx.Model(dao.ComposeOperationRequests.Table()).Ctx(ctx).Count()
+		if e != nil {
 			return e
 		}
 		if count >= maxComposeOperations {
-			return fmt.Errorf("%w: 编排操作记录已满", ErrConflict)
+			return gerror.Wrap(ErrConflict, "编排操作记录已满")
 		}
-		stack, e = scanComposeStack(tx.QueryRowContext(ctx, `SELECT `+composeStackColumns+` FROM compose_stacks WHERE agent_id = ? AND name = ?`, req.AgentID, req.Name))
+
+		stack, e = mustComposeStack(ctx, tx, req.AgentID, req.Name)
+
 		if req.Create {
 			if e == nil {
 				return ErrConflict
@@ -108,14 +167,30 @@ func (d *DB) PrepareComposeOperation(ctx context.Context, req ComposeOperationRe
 			if req.StackID == "" || req.SaveContent == nil || req.ConfigHash == "" {
 				return ErrConflict
 			}
-			stack = ComposeStack{ID: req.StackID, AgentID: req.AgentID, Name: req.Name, Content: *req.SaveContent, ConfigHash: req.ConfigHash, Version: 1, CreatedAt: now, UpdatedAt: now}
+			stack = ComposeStack{
+				ID: req.StackID, AgentID: req.AgentID, Name: req.Name,
+				Content: *req.SaveContent, ConfigHash: req.ConfigHash,
+				Version: 1, CreatedAt: now, UpdatedAt: now,
+			}
 			if req.SaveEnv != nil {
 				stack.EnvContent = *req.SaveEnv
 			}
-			_, e = tx.ExecContext(ctx, `INSERT INTO compose_stacks (`+composeStackColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, stack.ID, stack.AgentID, stack.Name, stack.Content, stack.EnvContent, stack.ConfigHash, stack.Version, timeToUnix(now), timeToUnix(now), 0)
-			if e != nil {
+			sc := dao.ComposeStacks.Columns()
+			if _, e = tx.Model(dao.ComposeStacks.Table()).Ctx(ctx).Data(do.ComposeStacks{
+				Id:         stack.ID,
+				AgentId:    stack.AgentID,
+				Name:       stack.Name,
+				Content:    stack.Content,
+				EnvContent: stack.EnvContent,
+				ConfigHash: stack.ConfigHash,
+				Version:    stack.Version,
+				CreatedAt:  timeToUnix(now),
+				UpdatedAt:  timeToUnix(now),
+				SyncedAt:   0,
+			}).Insert(); e != nil {
 				return normalizeExecError(e, "创建编排")
 			}
+			_ = sc
 		} else {
 			if e != nil {
 				return e
@@ -133,23 +208,69 @@ func (d *DB) PrepareComposeOperation(ctx context.Context, req ComposeOperationRe
 				if req.SaveEnv != nil {
 					stack.EnvContent = *req.SaveEnv
 				}
-				stack, e = scanComposeStack(tx.QueryRowContext(ctx, `UPDATE compose_stacks SET content = ?, env_content = ?, config_hash = ?, version = version + 1, updated_at = ? WHERE id = ? AND agent_id = ? AND name = ? AND version = ? RETURNING `+composeStackColumns, stack.Content, stack.EnvContent, req.ConfigHash, timeToUnix(now), stack.ID, req.AgentID, req.Name, req.ExpectedVersion))
-				if errors.Is(e, ErrNotFound) {
+				// RETURNING 与写入必须同一条语句，见 composeStackViaReturning 的说明。
+				// 事务内要用 tx 上的 GetOne，保证读到的是本事务未提交的写入。
+				updated, uerr := composeStackViaReturningTx(ctx, tx, stack, req.ConfigHash, now, req.ExpectedVersion)
+				if errors.Is(uerr, ErrNotFound) {
 					return ErrConflict
 				}
-				if e != nil {
-					return e
+				if uerr != nil {
+					return uerr
 				}
+				stack = updated
 			}
 		}
-		op = ComposeOperation{AgentID: req.AgentID, RequestID: req.RequestID, Name: req.Name, Action: req.Action, Fingerprint: req.Fingerprint, StackID: stack.ID, StackVersion: stack.Version, ConfigHash: stack.ConfigHash, CreatedAt: now}
-		_, e = tx.ExecContext(ctx, `INSERT INTO compose_operation_requests (`+composeOperationColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, op.AgentID, op.RequestID, op.Name, op.Action, op.Fingerprint, "", op.StackID, op.StackVersion, op.ConfigHash, timeToUnix(now), false, "", false)
+
+		op = ComposeOperation{
+			AgentID: req.AgentID, RequestID: req.RequestID, Name: req.Name,
+			Action: req.Action, Fingerprint: req.Fingerprint, TaskID: "",
+			StackID: stack.ID, StackVersion: stack.Version,
+			ConfigHash: stack.ConfigHash, CreatedAt: now,
+		}
+		_, e = tx.Model(dao.ComposeOperationRequests.Table()).Ctx(ctx).Data(do.ComposeOperationRequests{
+			AgentId:       op.AgentID,
+			RequestId:     op.RequestID,
+			Name:          op.Name,
+			Action:        op.Action,
+			Fingerprint:   op.Fingerprint,
+			TaskId:        "",
+			StackId:       op.StackID,
+			StackVersion:  op.StackVersion,
+			ConfigHash:    op.ConfigHash,
+			CreatedAt:     timeToUnix(now),
+			Finalized:     0,
+			FinalError:    "",
+			RecordRemoved: 0,
+		}).Insert()
 		return normalizeExecError(e, "保存编排操作")
 	})
 	if err != nil {
 		stack = ComposeStack{}
 	}
 	return
+}
+
+// composeStackViaReturningTx 在事务内执行带 RETURNING 的乐观锁 UPDATE。
+//
+// RETURNING 让"版本匹配 → 自增 → 读回新值"在一条语句里完成；
+// 拆成 Update + Select 会在两条语句之间插入并发更新，
+// 读回的 version 可能已失效。并发安全来自 WHERE version = ? 的原子匹配。
+func composeStackViaReturningTx(ctx context.Context, tx gdb.TX, s ComposeStack, configHash string, now time.Time, expectedVersion int64) (ComposeStack, error) {
+	c := dao.ComposeStacks.Columns()
+	q := `UPDATE ` + dao.ComposeStacks.Table() + `
+	      SET ` + c.Content + ` = ?, ` + c.EnvContent + ` = ?, ` + c.ConfigHash + ` = ?,
+	          ` + c.Version + ` = ` + c.Version + ` + 1, ` + c.UpdatedAt + ` = ?
+	      WHERE ` + c.Id + ` = ? AND ` + c.AgentId + ` = ? AND ` + c.Name + ` = ? AND ` + c.Version + ` = ?
+	      RETURNING ` + strings.Join(composeStackFields(), ", ")
+	one, err := tx.GetOne(q, s.Content, s.EnvContent, configHash, timeToUnix(now),
+		s.ID, s.AgentID, s.Name, expectedVersion)
+	if err != nil {
+		return ComposeStack{}, gerror.Wrap(err, "更新编排失败")
+	}
+	if len(one) == 0 {
+		return ComposeStack{}, ErrNotFound
+	}
+	return composeStackFromRecord(one)
 }
 
 func operationMatchesStack(op ComposeOperation, s ComposeStack) bool {
@@ -161,8 +282,8 @@ func (d *DB) AttachOperationTask(ctx context.Context, agentID, requestID, taskID
 	if taskID == "" {
 		return ErrConflict
 	}
-	return d.Tx(ctx, func(tx *sqlTx) error {
-		op, err := scanComposeOperation(tx.QueryRowContext(ctx, `SELECT `+composeOperationColumns+` FROM compose_operation_requests WHERE agent_id = ? AND request_id = ?`, agentID, requestID))
+	return d.TxModel(ctx, func(ctx context.Context, tx gdb.TX) error {
+		op, err := mustComposeOperation(ctx, tx.Model(dao.ComposeOperationRequests.Table()), agentID, requestID)
 		if err != nil {
 			return err
 		}
@@ -172,51 +293,95 @@ func (d *DB) AttachOperationTask(ctx context.Context, agentID, requestID, taskID
 		if op.TaskID != "" || op.Finalized {
 			return ErrConflict
 		}
+
 		// A task must identify only one operation, including across stack names.
-		var n int
-		if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM compose_operation_requests WHERE agent_id = ? AND task_id = ?`, agentID, taskID).Scan(&n); err != nil {
+		c := dao.ComposeOperationRequests.Columns()
+		n, err := tx.Model(dao.ComposeOperationRequests.Table()).Ctx(ctx).
+			Where(c.AgentId, agentID).
+			Where(c.TaskId, taskID).
+			Count()
+		if err != nil {
 			return err
 		}
 		if n != 0 {
 			return ErrConflict
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE compose_operation_requests SET task_id = ? WHERE agent_id = ? AND request_id = ?`, taskID, agentID, requestID)
+		_, err = tx.Model(dao.ComposeOperationRequests.Table()).Ctx(ctx).
+			Where(c.AgentId, agentID).
+			Where(c.RequestId, requestID).
+			Data(do.ComposeOperationRequests{TaskId: taskID}).
+			Update()
 		return err
 	})
 }
 
+// FindOperationByTask 按 (agent, 项目名, task) 找操作记录。
 func (d *DB) FindOperationByTask(ctx context.Context, agentID, name, taskID string) (ComposeOperation, error) {
 	if taskID == "" {
 		return ComposeOperation{}, ErrNotFound
 	}
-	return scanComposeOperation(d.db.QueryRowContext(ctx, `SELECT `+composeOperationColumns+` FROM compose_operation_requests WHERE agent_id = ? AND name = ? AND task_id = ?`, agentID, name, taskID))
+	c := dao.ComposeOperationRequests.Columns()
+	var e entity.ComposeOperationRequests
+	err := scanOne(ctx, d.gdb.Model(dao.ComposeOperationRequests.Table()).Fields(composeOperationFields()).
+		Where(c.AgentId, agentID).
+		Where(c.Name, name).
+		Where(c.TaskId, taskID), &e)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return ComposeOperation{}, ErrNotFound
+		}
+		return ComposeOperation{}, gerror.Wrap(err, "查询编排操作失败")
+	}
+	return composeOperationFromEntity(e), nil
 }
 
 // FinalizeComposeOperation reloads trusted metadata and applies a conditional
 // up/remove effect once. A stale successful task is finalized but never marks
 // a newer stack synced or deletes a replacement. Failures retain the stack.
 func (d *DB) FinalizeComposeOperation(ctx context.Context, metadata ComposeOperation, succeeded bool) (op ComposeOperation, err error) {
-	err = d.Tx(ctx, func(tx *sqlTx) error {
+	err = d.TxModel(ctx, func(ctx context.Context, tx gdb.TX) error {
 		var e error
-		op, e = scanComposeOperation(tx.QueryRowContext(ctx, `SELECT `+composeOperationColumns+` FROM compose_operation_requests WHERE agent_id = ? AND request_id = ?`, metadata.AgentID, metadata.RequestID))
+		op, e = mustComposeOperation(ctx, tx.Model(dao.ComposeOperationRequests.Table()), metadata.AgentID, metadata.RequestID)
 		if e != nil {
 			return e
 		}
-		if metadata.Name != op.Name || metadata.Action != op.Action || metadata.Fingerprint != op.Fingerprint || metadata.TaskID != op.TaskID || metadata.StackID != op.StackID || metadata.StackVersion != op.StackVersion || metadata.ConfigHash != op.ConfigHash {
+		if metadata.Name != op.Name || metadata.Action != op.Action ||
+			metadata.Fingerprint != op.Fingerprint || metadata.TaskID != op.TaskID ||
+			metadata.StackID != op.StackID || metadata.StackVersion != op.StackVersion ||
+			metadata.ConfigHash != op.ConfigHash {
 			return ErrConflict
 		}
 		if op.Finalized {
 			return nil
 		}
+
 		if !succeeded {
 			op.FinalError = "compose operation failed"
 		} else {
+			// 条件更新：只有 stack 仍停在被这次操作绑定的版本上才生效。
+			// 用 id + version + config_hash 三重条件挡住"期间被人改过"的情况。
+			sc := dao.ComposeStacks.Columns()
 			var result sql.Result
 			switch op.Action {
 			case "up":
-				result, e = tx.ExecContext(ctx, `UPDATE compose_stacks SET synced_at = ? WHERE agent_id = ? AND name = ? AND id = ? AND version = ? AND config_hash = ?`, time.Now().UTC().Unix(), op.AgentID, op.Name, op.StackID, op.StackVersion, op.ConfigHash)
+				r, uerr := tx.Model(dao.ComposeStacks.Table()).Ctx(ctx).
+					Where(sc.AgentId, op.AgentID).
+					Where(sc.Name, op.Name).
+					Where(sc.Id, op.StackID).
+					Where(sc.Version, op.StackVersion).
+					Where(sc.ConfigHash, op.ConfigHash).
+					Data(do.ComposeStacks{SyncedAt: time.Now().UTC().Unix()}).
+					Update()
+				result, e = r, uerr
 			case "remove":
-				result, e = tx.ExecContext(ctx, `DELETE FROM compose_stacks WHERE agent_id = ? AND name = ? AND id = ? AND version = ? AND config_hash = ?`, op.AgentID, op.Name, op.StackID, op.StackVersion, op.ConfigHash)
+				r, derr := tx.Model(dao.ComposeStacks.Table()).Ctx(ctx).
+					Where(sc.AgentId, op.AgentID).
+					Where(sc.Name, op.Name).
+					Where(sc.Id, op.StackID).
+					Where(sc.Version, op.StackVersion).
+					Where(sc.ConfigHash, op.ConfigHash).
+					Delete()
+				result, e = r, derr
 			}
 			if e != nil {
 				return e
@@ -233,8 +398,18 @@ func (d *DB) FinalizeComposeOperation(ctx context.Context, metadata ComposeOpera
 				}
 			}
 		}
+
 		op.Finalized = true
-		_, e = tx.ExecContext(ctx, `UPDATE compose_operation_requests SET finalized = 1, final_error = ?, record_removed = ? WHERE agent_id = ? AND request_id = ?`, op.FinalError, op.RecordRemoved, op.AgentID, op.RequestID)
+		c := dao.ComposeOperationRequests.Columns()
+		_, e = tx.Model(dao.ComposeOperationRequests.Table()).Ctx(ctx).
+			Where(c.AgentId, op.AgentID).
+			Where(c.RequestId, op.RequestID).
+			Data(do.ComposeOperationRequests{
+				Finalized:     1,
+				FinalError:    op.FinalError,
+				RecordRemoved: boolToInt(op.RecordRemoved),
+			}).
+			Update()
 		return e
 	})
 	return

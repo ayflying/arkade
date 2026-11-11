@@ -4,14 +4,29 @@ package store
 //
 // 与 grants.go 的分工：本文件管「谁属于哪个组」，grants.go 管「这个组能碰哪些服务器」。
 // 两者经常一起用，但变更原因不同（组织结构 vs 授权策略），因此分文件维护。
+//
+// ============================ 哪些查询保留原生 SQL ============================
+// 单表 CRUD 统一走 d.gdb.Model(dao.X.Table())，列名来自生成物。
+//
+// **跨表 JOIN 与聚合计数仍用原生 SQL**，这是有意的：
+//   - ListGroups 的 LEFT JOIN + COUNT(DISTINCT) 一次算两个计数，
+//     改成 Model 链式要拼大段 Where/LeftJoin 字符串，可读性反而更差，
+//     而且 COUNT(DISTINCT) 的「JOIN 放大行数」陷阱在链式写法里更不显眼；
+//   - ListGroupMembers / ListGroupsByUser / ListUserGroupIDs 是纯读的多表连接。
+//
+// 这些查询用 store 自己的 gdb 实例，与 Model 共享同一个连接池，事务语义一致。
 
 import (
 	"context"
-	"database/sql"
 	"errors"
-	"fmt"
 	"time"
 
+	"github.com/gogf/gf/v2/database/gdb"
+	"github.com/gogf/gf/v2/errors/gerror"
+
+	"arkade/hub/internal/dao"
+	"arkade/hub/internal/model/do"
+	"arkade/hub/internal/model/entity"
 	"arkade/hub/internal/user"
 )
 
@@ -28,30 +43,41 @@ type GroupRecord struct {
 	GrantCount  int
 }
 
-// groupColumns 是组表查询字段的唯一定义，与 scanGroup 一一对应。
-const groupColumns = `id, name, description, created_at`
+// groupFromEntity 把 entity 行转成 user.Group。
+func groupFromEntity(e entity.Groups) user.Group {
+	return user.Group{
+		ID:          e.Id,
+		Name:        e.Name,
+		Description: e.Description,
+		CreatedAt:   unixToTime(int64(e.CreatedAt)),
+	}
+}
 
 // CreateGroup 创建用户组。名称重复时返回 ErrConflict（上层映射 409）。
 func (d *DB) CreateGroup(ctx context.Context, grp user.Group) error {
-	const q = `INSERT INTO groups(id, name, description, created_at) VALUES(?, ?, ?, ?)`
-	_, err := d.db.ExecContext(ctx, q, grp.ID, grp.Name, grp.Description, timeToUnix(grp.CreatedAt))
+	_, err := d.gdb.Model(dao.Groups.Table()).Ctx(ctx).Data(do.Groups{
+		Id:          grp.ID,
+		Name:        grp.Name,
+		Description: grp.Description,
+		CreatedAt:   timeToUnix(grp.CreatedAt),
+	}).Insert()
 	return normalizeExecError(err, "创建用户组")
 }
 
 // GetGroup 按 ID 查组。
 func (d *DB) GetGroup(ctx context.Context, id string) (user.Group, error) {
-	const q = `SELECT ` + groupColumns + ` FROM groups WHERE id = ?`
-	var g user.Group
-	var createdAt int64
-	err := d.db.QueryRowContext(ctx, q, id).Scan(&g.ID, &g.Name, &g.Description, &createdAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return user.Group{}, ErrNotFound
-	}
+	var e entity.Groups
+	err := scanOne(ctx, d.gdb.Model(dao.Groups.Table()).Fields(
+		dao.Groups.Columns().Id, dao.Groups.Columns().Name,
+		dao.Groups.Columns().Description, dao.Groups.Columns().CreatedAt).
+		Where(dao.Groups.Columns().Id, id), &e)
 	if err != nil {
-		return user.Group{}, fmt.Errorf("查询用户组失败: %w", err)
+		if errors.Is(err, ErrNotFound) {
+			return user.Group{}, ErrNotFound
+		}
+		return user.Group{}, gerror.Wrap(err, "查询用户组失败")
 	}
-	g.CreatedAt = unixToTime(createdAt)
-	return g, nil
+	return groupFromEntity(e), nil
 }
 
 // ListGroups 列出全部用户组（含成员数与授权数），按创建时间升序。
@@ -59,6 +85,8 @@ func (d *DB) GetGroup(ctx context.Context, id string) (user.Group, error) {
 // 用 LEFT JOIN + COUNT(DISTINCT ...) 一次算出两个计数：
 // 若用两个子查询分别算，SQL 会写成两段相关子查询，可读性差且容易在
 // 「一组成员但零授权」或反之的情况下漏算（JOIN 会放大行数，必须 DISTINCT）。
+//
+// 保留原生 SQL 的理由见文件头注释。
 func (d *DB) ListGroups(ctx context.Context) ([]GroupRecord, error) {
 	const q = `SELECT g.id, g.name, g.description, g.created_at,
 	                  COUNT(DISTINCT ug.user_id) AS member_count,
@@ -68,24 +96,23 @@ func (d *DB) ListGroups(ctx context.Context) ([]GroupRecord, error) {
 	           LEFT JOIN group_agents ga ON ga.group_id = g.id
 	           GROUP BY g.id, g.name, g.description, g.created_at
 	           ORDER BY g.created_at ASC, g.id ASC`
-	rows, err := d.db.QueryContext(ctx, q)
+	recs, err := d.gdb.GetAll(ctx, q)
 	if err != nil {
-		return nil, fmt.Errorf("查询用户组列表失败: %w", err)
+		return nil, gerror.Wrap(err, "查询用户组列表失败")
 	}
-	defer rows.Close()
 
-	out := make([]GroupRecord, 0, 16)
-	for rows.Next() {
+	out := make([]GroupRecord, 0, len(recs))
+	for _, r := range recs {
 		var rec GroupRecord
-		var createdAt int64
-		if err := rows.Scan(&rec.ID, &rec.Name, &rec.Description, &createdAt,
-			&rec.MemberCount, &rec.GrantCount); err != nil {
-			return nil, fmt.Errorf("扫描用户组记录失败: %w", err)
-		}
-		rec.CreatedAt = unixToTime(createdAt)
+		rec.ID = r["id"].String()
+		rec.Name = r["name"].String()
+		rec.Description = r["description"].String()
+		rec.CreatedAt = unixToTime(r["created_at"].Int64())
+		rec.MemberCount = r["member_count"].Int()
+		rec.GrantCount = r["grant_count"].Int()
 		out = append(out, rec)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // GroupUpdate 是用户组的局部更新参数（指针语义见 UserUpdate 的说明）。
@@ -96,30 +123,28 @@ type GroupUpdate struct {
 
 // UpdateGroup 更新组名与描述。组名重复返回 ErrConflict。
 func (d *DB) UpdateGroup(ctx context.Context, id string, upd GroupUpdate) error {
-	sets := make([]string, 0, 3)
-	args := make([]any, 0, 3)
+	data := do.Groups{}
+	changed := false
 	if upd.Name != nil {
-		sets = append(sets, "name = ?")
-		args = append(args, *upd.Name)
+		data.Name = *upd.Name
+		changed = true
 	}
 	if upd.Description != nil {
-		sets = append(sets, "description = ?")
-		args = append(args, *upd.Description)
+		data.Description = *upd.Description
+		changed = true
 	}
-	if len(sets) == 0 {
+	if !changed {
 		return nil
 	}
-	args = append(args, id)
 
-	q := `UPDATE groups SET ` + joinSet(sets) + ` WHERE id = ?`
-	res, err := d.db.ExecContext(ctx, q, args...)
+	res, err := d.gdb.Model(dao.Groups.Table()).Ctx(ctx).
+		Where(dao.Groups.Columns().Id, id).
+		Data(data).
+		Update()
 	if err != nil {
 		return normalizeExecError(err, "更新用户组")
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return requireAffected(res, "更新用户组")
 }
 
 // DeleteGroup 删除用户组。
@@ -128,21 +153,24 @@ func (d *DB) UpdateGroup(ctx context.Context, id string, upd GroupUpdate) error 
 // 不依赖连接级 PRAGMA 一定生效。删除组不会删除其成员用户——
 // 组只是授权载体，用户是独立实体。
 func (d *DB) DeleteGroup(ctx context.Context, id string) error {
-	return d.Tx(ctx, func(tx *sqlTx) error {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM user_groups WHERE group_id = ?`, id); err != nil {
-			return fmt.Errorf("清理组成员关系失败: %w", err)
+	return d.TxModel(ctx, func(ctx context.Context, tx gdb.TX) error {
+		if _, err := tx.Model(dao.UserGroups.Table()).Ctx(ctx).
+			Where(dao.UserGroups.Columns().GroupId, id).
+			Delete(); err != nil {
+			return gerror.Wrap(err, "清理组成员关系失败")
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM group_agents WHERE group_id = ?`, id); err != nil {
-			return fmt.Errorf("清理组授权失败: %w", err)
+		if _, err := tx.Model(dao.GroupAgents.Table()).Ctx(ctx).
+			Where(dao.GroupAgents.Columns().GroupId, id).
+			Delete(); err != nil {
+			return gerror.Wrap(err, "清理组授权失败")
 		}
-		res, err := tx.ExecContext(ctx, `DELETE FROM groups WHERE id = ?`, id)
+		res, err := tx.Model(dao.Groups.Table()).Ctx(ctx).
+			Where(dao.Groups.Columns().Id, id).
+			Delete()
 		if err != nil {
-			return fmt.Errorf("删除用户组失败: %w", err)
+			return gerror.Wrap(err, "删除用户组失败")
 		}
-		if n, _ := res.RowsAffected(); n == 0 {
-			return ErrNotFound
-		}
-		return nil
+		return requireAffected(res, "删除用户组")
 	})
 }
 
@@ -151,19 +179,39 @@ func (d *DB) DeleteGroup(ctx context.Context, id string) error {
 // 为什么幂等：整体设置成员的接口会反复下发同一份成员列表，
 // 把「已存在」当错误会让前端的重试逻辑变得极其啰嗦。
 func (d *DB) AddUserToGroup(ctx context.Context, userID, groupID string) error {
-	const q = `INSERT INTO user_groups(user_id, group_id) SELECT ?, ? WHERE NOT EXISTS (
-	               SELECT 1 FROM user_groups WHERE user_id = ? AND group_id = ?)`
-	if _, err := d.db.ExecContext(ctx, q, userID, groupID, userID, groupID); err != nil {
-		return fmt.Errorf("加入用户组失败: %w", err)
+	c := dao.UserGroups.Columns()
+
+	// 先查再插，而不是 INSERT OR IGNORE：
+	// 后者会把「主键冲突」和「外键失败」一起吞掉，
+	// 给不存在的用户/组加成员时会静默成功，留下一堆无处可查的意图。
+	exist, err := d.gdb.Model(dao.UserGroups.Table()).Ctx(ctx).
+		Where(c.UserId, userID).
+		Where(c.GroupId, groupID).
+		Count()
+	if err != nil {
+		return gerror.Wrap(err, "查询组成员关系失败")
+	}
+	if exist > 0 {
+		return nil
+	}
+
+	if _, err := d.gdb.Model(dao.UserGroups.Table()).Ctx(ctx).Data(do.UserGroups{
+		UserId:  userID,
+		GroupId: groupID,
+	}).Insert(); err != nil {
+		return normalizeExecError(err, "加入用户组")
 	}
 	return nil
 }
 
 // RemoveUserFromGroup 把用户移出组。用户本就不在组里时视为成功。
 func (d *DB) RemoveUserFromGroup(ctx context.Context, userID, groupID string) error {
-	if _, err := d.db.ExecContext(ctx,
-		`DELETE FROM user_groups WHERE user_id = ? AND group_id = ?`, userID, groupID); err != nil {
-		return fmt.Errorf("移出用户组失败: %w", err)
+	c := dao.UserGroups.Columns()
+	if _, err := d.gdb.Model(dao.UserGroups.Table()).Ctx(ctx).
+		Where(c.UserId, userID).
+		Where(c.GroupId, groupID).
+		Delete(); err != nil {
+		return gerror.Wrap(err, "移出用户组失败")
 	}
 	return nil
 }
@@ -177,19 +225,25 @@ func (d *DB) RemoveUserFromGroup(ctx context.Context, userID, groupID string) er
 // 注意：调用方必须保证 userIDs 里的用户真实存在（httpx 层会先做存在性校验），
 // 这里不做校验是为了避免在事务里再跑一轮查询。
 func (d *DB) SetGroupMembers(ctx context.Context, groupID string, userIDs []string) error {
-	return d.Tx(ctx, func(tx *sqlTx) error {
+	return d.TxModel(ctx, func(ctx context.Context, tx gdb.TX) error {
 		// 先确认组存在，避免给不存在的组「塞」成员后返回成功。
-		var exists int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM groups WHERE id = ?`, groupID).Scan(&exists); err != nil {
-			return fmt.Errorf("查询用户组失败: %w", err)
+		exist, err := tx.Model(dao.Groups.Table()).Ctx(ctx).
+			Where(dao.Groups.Columns().Id, groupID).
+			Count()
+		if err != nil {
+			return gerror.Wrap(err, "查询用户组失败")
 		}
-		if exists == 0 {
+		if exist == 0 {
 			return ErrNotFound
 		}
 
-		if _, err := tx.ExecContext(ctx, `DELETE FROM user_groups WHERE group_id = ?`, groupID); err != nil {
-			return fmt.Errorf("清空组成员失败: %w", err)
+		ugCols := dao.UserGroups.Columns()
+		if _, err := tx.Model(dao.UserGroups.Table()).Ctx(ctx).
+			Where(ugCols.GroupId, groupID).
+			Delete(); err != nil {
+			return gerror.Wrap(err, "清空组成员失败")
 		}
+
 		// 去重：同一用户在一个组里只能有一条关系（主键约束），
 		// 提前去重可以避免把「调用方传了重复 ID」变成 500。
 		seen := make(map[string]struct{}, len(userIDs))
@@ -198,8 +252,10 @@ func (d *DB) SetGroupMembers(ctx context.Context, groupID string, userIDs []stri
 				continue
 			}
 			seen[uid] = struct{}{}
-			if _, err := tx.ExecContext(ctx,
-				`INSERT INTO user_groups(user_id, group_id) VALUES(?, ?)`, uid, groupID); err != nil {
+			if _, err := tx.Model(dao.UserGroups.Table()).Ctx(ctx).Data(do.UserGroups{
+				UserId:  uid,
+				GroupId: groupID,
+			}).Insert(); err != nil {
 				return normalizeExecError(err, "设置组成员")
 			}
 		}
@@ -223,25 +279,22 @@ func (d *DB) ListGroupMembers(ctx context.Context, groupID string) ([]GroupMembe
 	           JOIN users u ON u.id = ug.user_id
 	           WHERE ug.group_id = ?
 	           ORDER BY u.username ASC`
-	rows, err := d.db.QueryContext(ctx, q, groupID)
+	recs, err := d.gdb.GetAll(ctx, q, groupID)
 	if err != nil {
-		return nil, fmt.Errorf("查询组成员失败: %w", err)
+		return nil, gerror.Wrap(err, "查询组成员失败")
 	}
-	defer rows.Close()
 
-	out := make([]GroupMember, 0, 16)
-	for rows.Next() {
-		var m GroupMember
-		var disabled int
-		var role string
-		if err := rows.Scan(&m.ID, &m.Username, &m.DisplayName, &role, &disabled); err != nil {
-			return nil, fmt.Errorf("扫描组成员失败: %w", err)
-		}
-		m.Role = user.Role(role)
-		m.Disabled = disabled != 0
-		out = append(out, m)
+	out := make([]GroupMember, 0, len(recs))
+	for _, r := range recs {
+		out = append(out, GroupMember{
+			ID:          r["id"].String(),
+			Username:    r["username"].String(),
+			DisplayName: r["display_name"].String(),
+			Role:        user.Role(r["role"].String()),
+			Disabled:    r["disabled"].Int() != 0,
+		})
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // ListGroupsByUser 列出某用户所属的组（按组名排序）。
@@ -254,23 +307,21 @@ func (d *DB) ListGroupsByUser(ctx context.Context, userID string) ([]user.Group,
 	           JOIN groups g ON g.id = ug.group_id
 	           WHERE ug.user_id = ?
 	           ORDER BY g.name ASC`
-	rows, err := d.db.QueryContext(ctx, q, userID)
+	recs, err := d.gdb.GetAll(ctx, q, userID)
 	if err != nil {
-		return nil, fmt.Errorf("查询用户所属组失败: %w", err)
+		return nil, gerror.Wrap(err, "查询用户所属组失败")
 	}
-	defer rows.Close()
 
-	out := make([]user.Group, 0, 8)
-	for rows.Next() {
-		var g user.Group
-		var createdAt int64
-		if err := rows.Scan(&g.ID, &g.Name, &g.Description, &createdAt); err != nil {
-			return nil, fmt.Errorf("扫描用户所属组失败: %w", err)
-		}
-		g.CreatedAt = unixToTime(createdAt)
-		out = append(out, g)
+	out := make([]user.Group, 0, len(recs))
+	for _, r := range recs {
+		out = append(out, user.Group{
+			ID:          r["id"].String(),
+			Name:        r["name"].String(),
+			Description: r["description"].String(),
+			CreatedAt:   unixToTime(r["created_at"].Int64()),
+		})
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // ListUserGroupIDs 一次性查出「用户 → 组 ID 列表」的映射，供用户列表接口避免 N+1。
@@ -281,28 +332,26 @@ func (d *DB) ListUserGroupIDs(ctx context.Context) (map[string][]string, error) 
 	           FROM user_groups ug
 	           JOIN groups g ON g.id = ug.group_id
 	           ORDER BY ug.user_id ASC, g.name ASC`
-	rows, err := d.db.QueryContext(ctx, q)
+	recs, err := d.gdb.GetAll(ctx, q)
 	if err != nil {
-		return nil, fmt.Errorf("查询用户组关系失败: %w", err)
+		return nil, gerror.Wrap(err, "查询用户组关系失败")
 	}
-	defer rows.Close()
 
-	out := make(map[string][]string, 32)
-	for rows.Next() {
-		var uid, gid string
-		if err := rows.Scan(&uid, &gid); err != nil {
-			return nil, fmt.Errorf("扫描用户组关系失败: %w", err)
-		}
-		out[uid] = append(out[uid], gid)
+	out := make(map[string][]string, len(recs))
+	for _, r := range recs {
+		uid := r["user_id"].String()
+		out[uid] = append(out[uid], r["group_id"].String())
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // GroupExists 判断组是否存在，供整体设置接口做前置校验（返回 404 而非 400）。
 func (d *DB) GroupExists(ctx context.Context, id string) (bool, error) {
-	var n int
-	if err := d.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM groups WHERE id = ?`, id).Scan(&n); err != nil {
-		return false, fmt.Errorf("查询用户组是否存在失败: %w", err)
+	n, err := d.gdb.Model(dao.Groups.Table()).Ctx(ctx).
+		Where(dao.Groups.Columns().Id, id).
+		Count()
+	if err != nil {
+		return false, gerror.Wrap(err, "查询用户组是否存在失败")
 	}
 	return n > 0, nil
 }
@@ -320,9 +369,11 @@ func (d *DB) UsersMissing(ctx context.Context, ids []string) ([]string, error) {
 			continue
 		}
 		seen[id] = struct{}{}
-		var n int
-		if err := d.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE id = ?`, id).Scan(&n); err != nil {
-			return nil, fmt.Errorf("查询用户是否存在失败: %w", err)
+		n, err := d.gdb.Model(dao.Users.Table()).Ctx(ctx).
+			Where(dao.Users.Columns().Id, id).
+			Count()
+		if err != nil {
+			return nil, gerror.Wrap(err, "查询用户是否存在失败")
 		}
 		if n == 0 {
 			missing = append(missing, id)

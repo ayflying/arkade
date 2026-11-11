@@ -9,13 +9,16 @@ package store
 
 import (
 	"context"
-	"database/sql"
-	"fmt"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/gogf/gf/v2/database/gdb"
+	"github.com/gogf/gf/v2/errors/gerror"
+
 	"arkade/hub/internal/audit"
+	"arkade/hub/internal/dao"
+	"arkade/hub/internal/model/do"
 )
 
 // 审计保留与清理相关常量集中在此，便于统一调整。
@@ -80,25 +83,29 @@ func (d *DB) WriteAudit(rec audit.Record) error {
 		created = time.Now().UTC()
 	}
 
-	err := d.Tx(ctx, func(tx *sqlTx) error {
-		_, err := tx.ExecContext(ctx,
-			`INSERT INTO audit_logs
-			(id, user_id, username, agent_id, agent_name, action, target, detail,
-			 result, error, duration_ms, created_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-			id, rec.UserID, rec.Username, rec.AgentID, rec.AgentName, rec.Action,
-			rec.Target, rec.Detail, rec.Result, rec.Error, rec.DurationMs,
-			created.Unix(),
-		)
-		if err != nil {
+	err := d.TxModel(ctx, func(ctx context.Context, tx gdb.TX) error {
+		if _, err := tx.Model(dao.AuditLogs.Table()).Ctx(ctx).Data(do.AuditLogs{
+			Id:         id,
+			UserId:     rec.UserID,
+			Username:   rec.Username,
+			AgentId:    rec.AgentID,
+			AgentName:  rec.AgentName,
+			Action:     rec.Action,
+			Target:     rec.Target,
+			Detail:     rec.Detail,
+			Result:     rec.Result,
+			Error:      rec.Error,
+			DurationMs: rec.DurationMs,
+			CreatedAt:  created.Unix(),
+		}).Insert(); err != nil {
 			return err
 		}
 		// 与插入同事务：并发写入及同秒记录也不能短暂突破已提交的条数上限。
-		_, err = tx.ExecContext(ctx, auditCountPruneSQL, AuditMaxRecords)
+		_, err := tx.ExecContext(ctx, auditCountPruneSQL, AuditMaxRecords)
 		return err
 	})
 	if err != nil {
-		return fmt.Errorf("写入审计记录: %w", err)
+		return gerror.Wrap(err, "写入审计记录")
 	}
 
 	// 顺手清理过期记录（按时间间隔节流，见常量注释）。
@@ -123,13 +130,15 @@ func (d *DB) maybePruneAudit() {
 	d.auditPrune.lastPrune = now
 	d.auditPrune.mu.Unlock()
 
-	go func() {
+	// 交给生命周期闸门：Close 会等它结束再关连接。
+	// 不受闸门管理的话，Close 之后这个 goroutine 仍会通过 d.gdb 重新建连接，
+	// 表现为"库已关闭但文件句柄又被打开"（Windows 上删不掉文件）。
+	//
+	// 清理失败只在下次写入时再试，不向任何人报错：调用方对此无能为力。
+	d.goBackground(context.Background(), func(ctx context.Context) {
 		cutoff := now.AddDate(0, 0, -AuditRetentionDays).Unix()
-		// 清理失败只在下次写入时再试，不向任何人报错：
-		// 业务方对审计清理的失败无能为力，弹错误只会制造噪音。
-		_, _ = d.db.ExecContext(context.Background(),
-			`DELETE FROM audit_logs WHERE created_at < $1`, cutoff)
-	}()
+		_, _ = d.gdb.Exec(ctx, `DELETE FROM audit_logs WHERE created_at < ?`, cutoff)
+	})
 }
 
 // ListAuditLogs 按筛选条件分页查询审计，返回记录与总数。
@@ -141,11 +150,11 @@ func (d *DB) ListAuditLogs(ctx context.Context, f AuditFilters) ([]audit.Record,
 	where, args := buildAuditWhere(f)
 
 	// 先查总数。
-	var total int
-	if err := d.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM audit_logs`+where, args...).Scan(&total); err != nil {
-		return nil, 0, fmt.Errorf("统计审计记录: %w", err)
+	one, err := d.gdb.GetOne(ctx, `SELECT COUNT(*) AS n FROM audit_logs`+where, args...)
+	if err != nil {
+		return nil, 0, gerror.Wrap(err, "统计审计记录")
 	}
+	total := one["n"].Int()
 
 	limit := f.Limit
 	if limit <= 0 {
@@ -168,25 +177,27 @@ func (d *DB) ListAuditLogs(ctx context.Context, f AuditFilters) ([]audit.Record,
 		` ORDER BY created_at DESC, id DESC LIMIT $` + itoa(len(args)+1) +
 		` OFFSET $` + itoa(len(args)+2)
 
-	rows, err := d.db.QueryContext(ctx, query, append(args, limit, offset)...)
+	recs, err := d.gdb.GetAll(ctx, query, append(args, limit, offset)...)
 	if err != nil {
-		return nil, 0, fmt.Errorf("查询审计记录: %w", err)
+		return nil, 0, gerror.Wrap(err, "查询审计记录")
 	}
-	defer rows.Close()
 
-	out := make([]audit.Record, 0, limit)
-	for rows.Next() {
-		var r audit.Record
-		var created int64
-		if err := rows.Scan(&r.ID, &r.UserID, &r.Username, &r.AgentID, &r.AgentName,
-			&r.Action, &r.Target, &r.Detail, &r.Result, &r.Error, &r.DurationMs, &created); err != nil {
-			return nil, 0, fmt.Errorf("扫描审计记录: %w", err)
-		}
-		r.CreatedAt = time.Unix(created, 0).UTC()
-		out = append(out, r)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, 0, fmt.Errorf("遍历审计记录: %w", err)
+	out := make([]audit.Record, 0, len(recs))
+	for _, r := range recs {
+		var rec audit.Record
+		rec.ID = r["id"].String()
+		rec.UserID = r["user_id"].String()
+		rec.Username = r["username"].String()
+		rec.AgentID = r["agent_id"].String()
+		rec.AgentName = r["agent_name"].String()
+		rec.Action = r["action"].String()
+		rec.Target = r["target"].String()
+		rec.Detail = r["detail"].String()
+		rec.Result = r["result"].String()
+		rec.Error = r["error"].String()
+		rec.DurationMs = r["duration_ms"].Int64()
+		rec.CreatedAt = time.Unix(r["created_at"].Int64(), 0).UTC()
+		out = append(out, rec)
 	}
 	return out, total, nil
 }
@@ -232,21 +243,23 @@ func buildAuditWhere(f AuditFilters) (string, []any) {
 // 节流清理，测试没法等一小时。
 func (d *DB) PruneAuditLogs(ctx context.Context) (int64, error) {
 	cutoff := time.Now().UTC().AddDate(0, 0, -AuditRetentionDays).Unix()
-	res, err := d.db.ExecContext(ctx,
-		`DELETE FROM audit_logs WHERE created_at < $1`, cutoff)
+	res, err := d.gdb.Exec(ctx,
+		`DELETE FROM audit_logs WHERE created_at < ?`, cutoff)
 	if err != nil {
-		return 0, fmt.Errorf("清理过期审计: %w", err)
+		return 0, gerror.Wrap(err, "清理过期审计")
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, gerror.Wrap(err, "清理过期审计（读取影响行数）")
+	}
 	return n, nil
 }
 
 // CountAuditLogs 返回审计总条数（不过滤）。
 func (d *DB) CountAuditLogs(ctx context.Context) (int, error) {
-	var n int
-	err := d.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_logs`).Scan(&n)
-	if err != nil && err != sql.ErrNoRows {
-		return 0, err
+	n, err := d.gdb.Model(dao.AuditLogs.Table()).Ctx(ctx).Count()
+	if err != nil {
+		return 0, gerror.Wrap(err, "统计审计总数失败")
 	}
 	return n, nil
 }

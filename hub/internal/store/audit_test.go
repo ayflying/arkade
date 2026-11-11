@@ -278,7 +278,7 @@ func TestPruneAuditLogs(t *testing.T) {
 
 	insertRaw := func(id string, at time.Time) {
 		t.Helper()
-		if _, err := db.db.ExecContext(ctx,
+		if _, err := rawDBOf(t, db).ExecContext(ctx,
 			`INSERT INTO audit_logs (id, user_id, username, action, result, created_at)
 			 VALUES ($1, $2, $3, $4, $5, $6)`,
 			id, "u1", "admin", audit.ActionUserCreate, audit.ResultSuccess, at.Unix()); err != nil {
@@ -329,7 +329,7 @@ func TestWriteAuditTriggersPrune(t *testing.T) {
 	now := time.Now().UTC()
 
 	// 直接插入一条过期记录，避免走 WriteAudit 的顺带清理。
-	if _, err := db.db.ExecContext(ctx,
+	if _, err := rawDBOf(t, db).ExecContext(ctx,
 		`INSERT INTO audit_logs (id, user_id, username, action, result, created_at)
 		 VALUES ($1, $2, $3, $4, $5, $6)`,
 		"stale", "u1", "admin", audit.ActionUserCreate, audit.ResultSuccess,

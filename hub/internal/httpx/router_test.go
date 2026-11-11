@@ -19,6 +19,7 @@ import (
 
 	"arkade/hub/internal/agentlink"
 	"arkade/hub/internal/auth"
+	"arkade/hub/internal/stackmigrate"
 	"arkade/hub/internal/store"
 	"arkade/hub/internal/user"
 )
@@ -44,23 +45,40 @@ type testEnv struct {
 	// gate 是握手闸门：竞态测试用它把握手停在"已认证、未注册"位置。
 	gate *gatedHello
 
-	// wsURL 是同一个 httptest 服务的地址，Agent 与 API 打在同一台服务上，
+	// wsURL 是同一个服务的地址，Agent 与 API 打在同一台服务上，
 	// 与生产一致（生产也是同一个端口）。
 	wsURL string
 
-	// closeSrv 关闭 httptest 服务。
-	closeSrv func()
+	// migrateBackend 是迁移编排器的后端替身。
+	//
+	// 暴露出来是为了让测试能调整"目标上有没有同名编排""有没有权限"
+	// 这些前置条件——它们决定了接口该返回 202 还是 409/403。
+	migrateBackend *httpMigrateBackend
+	// migrateMgr 是同一个迁移编排器实例。
+	//
+	// 必须共用同一个：若每个测试服务各建一个，
+	// 通过 HTTP 发起的任务会写进 A 实例，而进度查询去 B 实例里找，
+	// 结果永远是 404——一个只在测试装配里出现的假故障。
+	migrateMgr *stackmigrate.Manager
 }
 
 // newTestEnv 搭建一套真实依赖（真实 SQLite 临时文件），只有地址是虚拟的。
 // 不 mock store 的原因：迁移脚本、单写连接、WAL 这些恰恰是最容易出错的地方。
 func newTestEnv(t *testing.T) *testEnv {
 	t.Helper()
+	log := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
+	return newTestEnvWithLogger(t, log)
+}
+
+// newTestEnvWithLogger 用指定的 logger 构造测试环境。
+//
+// 需要断言访问日志的测试（例如守卫提前拒绝时状态码是否记对）
+// 传一个可捕获的 handler 进来；其余测试用默认丢弃日志的版本。
+func newTestEnvWithLogger(t *testing.T, log *slog.Logger) *testEnv {
+	t.Helper()
 
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
-
-	log := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	db, err := store.Open(newTestContext(), dbPath)
 	if err != nil {
@@ -102,39 +120,96 @@ func newTestEnv(t *testing.T) *testEnv {
 	agentSrv.SetCredentialStore(NewCredentialStore(db))
 	agentSrv.SetEnrollmentGuard(guard)
 
+	// ============================ 迁移编排器 ============================
+	// 用**真实的** stackmigrate.Manager（不是替身），只把它的依赖后端
+	// 换成一个可控假后端。
+	//
+	// 为什么不用替身整个替掉 Manager：本文件要验的是"路由挂上了没有、
+	// 鉴权生效了没有、JSON 字段绑对了没有"——这些恰好在 Manager 与
+	// 路由之间的接缝上。若把 Manager 也换成假的对象，测试就只覆盖到了
+	// handler 的一层壳，接缝断在哪都不知道。
+	migrateBackend := newHTTPMigrateBackend()
+	stackMigrateMgr := stackmigrate.New(migrateBackend)
+
+	// Agent 连接要**包一层 tracker**：WebSocket 是 hijack 的连接，
+	// http.Server.Shutdown **不会**等它结束。不显式 join 的话，
+	// 测试结束时 handler 可能仍在跑并持有 DB，Windows 上表现为
+	// TempDir 的 test.db 删不掉。
+	//
+	// 不用 registry 代替：握手完成前连接还没登记进 registry，
+	// 只关 registry 会漏掉那些连接。
+	tracker := &connectionTracker{}
 	router := NewRouter(Deps{
-		Log:        log,
-		DB:         db,
-		Auth:       authSvc,
-		Registry:   reg,
-		Ops:        ops,
-		AgentConn:  http.HandlerFunc(agentSrv.HandleConnect),
-		WebDist:    "",
-		HubVersion: "test",
+		Log:          log,
+		DB:           db,
+		Auth:         authSvc,
+		Registry:     reg,
+		Ops:          ops,
+		AgentConn:    tracker.wrap(http.HandlerFunc(agentSrv.HandleConnect)),
+		WebDist:      "",
+		HubVersion:   "test",
+		StackMigrate: stackMigrateMgr,
 		// 与生产一致：handler 需要共享 token 才能"避开同值"生成专属密钥。
 		AgentSharedToken: composeTestAgentToken,
 		Guard:            guard,
 	})
 
-	// 同一个端口同时服务 API 与 Agent 连接（生产也是这样）。
-	srv := httptest.NewServer(router)
-	t.Cleanup(srv.Close)
+	// ============================ 启动服务 ============================
+	//
+	// 迁移后必须**真实启动 GoFrame 服务器**，不能再用 httptest.NewServer 包一层：
+	//
+	//   * ghttp 的完整生命周期由 Start() 建立（sessionManager 在其中初始化），
+	//     未 Start 直接 ServeHTTP 会在请求收尾时 nil panic；
+	//   * 只有真实监听才能暴露"重复 WriteHeader""状态码被框架改判"这类
+	//     传输层问题——ResponseRecorder 看不出这些。
+	base := startRouterForTest(t, router)
+
+	// 连接收尾。t.Cleanup 是 LIFO，实际执行顺序为：
+	//
+	//	tracker.close  →  s.Shutdown  →  db.Close
+	//
+	// （db.Close 最早注册，最后执行；Shutdown 由 startRouterForTest
+	// 在上一步注册，晚于 db.Close 注册。）
+	//
+	// 先关掉 hijack 连接再走 server Shutdown 是合理的：这些连接
+	// 本来就不归 net/http 管，Shutdown 不会等它们。若反过来在
+	// Shutdown 前什么都不做，仍在跑的 handler 会持有 DB，
+	// Windows 上表现为 TempDir 的 test.db 删不掉。
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := tracker.close(ctx, reg); err != nil {
+			// 超时说明有 handler 没退出（多半卡在等 Agent 消息）。
+			// 明确报错而不是静默放过，避免下次定位困难。
+			t.Errorf("等待 Agent 连接退出超时（仍有 handler 未结束）: %v", err)
+		}
+	})
 
 	return &testEnv{
-		router:       router,
-		db:           db,
-		auth:         authSvc,
-		log:          log,
-		registry:     reg,
-		guard:        guard,
-		agentHandler: agentSrv,
-		gate:         gate,
-		wsURL:        srv.URL,
-		closeSrv:     srv.Close,
+		router:         router,
+		db:             db,
+		auth:           authSvc,
+		log:            log,
+		registry:       reg,
+		guard:          guard,
+		agentHandler:   agentSrv,
+		gate:           gate,
+		wsURL:          base,
+		migrateBackend: migrateBackend,
+		migrateMgr:     stackMigrateMgr,
 	}
 }
 
-// do 执行一次请求并返回响应与解析后的错误体。
+// do 执行一次真实 HTTP 请求并返回响应与解析后的错误体。
+//
+// 迁移说明：从 `e.router.ServeHTTP(rec, req)` 改成发真实请求。
+//
+// 为什么不能再用 ResponseRecorder：ghttp 的服务端生命周期（Start 建立的
+// session 管理、handleResponse 的收尾、重复 WriteHeader 的检测）只有在
+// 真实 http.Server 之后才完整。用 Recorder 会绕过这些，让问题漏到生产。
+//
+// 返回值仍是 *httptest.ResponseRecorder，这样**所有既有断言一行不用改**：
+// 把真实响应读回来重新灌进 Recorder 即可。
 func (e *testEnv) do(t *testing.T, method, path string, body string, cookies []*http.Cookie) (*httptest.ResponseRecorder, errorResponse) {
 	t.Helper()
 
@@ -142,14 +217,35 @@ func (e *testEnv) do(t *testing.T, method, path string, body string, cookies []*
 	if body != "" {
 		r = strings.NewReader(body)
 	}
-	req := httptest.NewRequest(method, path, r)
+	req, err := http.NewRequest(method, e.wsURL+path, r)
+	if err != nil {
+		t.Fatalf("构造请求失败: %v", err)
+	}
 	req.Header.Set("Content-Type", "application/json")
 	for _, c := range cookies {
 		req.AddCookie(c)
 	}
 
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("请求 %s %s 失败: %v", method, path, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("读取响应体失败: %v", err)
+	}
+
+	// 把真实响应还原成 Recorder，供既有断言使用。
 	rec := httptest.NewRecorder()
-	e.router.ServeHTTP(rec, req)
+	for k, vs := range resp.Header {
+		for _, v := range vs {
+			rec.Header().Add(k, v)
+		}
+	}
+	rec.Code = resp.StatusCode
+	rec.Body.Write(raw)
 
 	var parsed errorResponse
 	if rec.Body.Len() > 0 {

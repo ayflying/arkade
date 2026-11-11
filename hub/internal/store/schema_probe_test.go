@@ -9,9 +9,20 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+
+	"arkade/hub/internal/dbmigrate"
 )
 
-// TestMigrationV2Applied 验证全新库上 v1 与 v2 都被应用。
+// TestMigrationV2Applied 验证全新库上的迁移记录正确。
+//
+// ============================ 注意表名变了 ============================
+// 迁移体系从自建 schema_migrations 换成 golang-migrate 的
+// arkade_migrate_versions 后，全新库**不再有** schema_migrations 表
+// （它是旧体系的记录表，只在被接管的老库里保留）。
+//
+// 新表是"单行游标"结构（version + dirty），不是"每版本一行"，
+// 所以这里断言的是"游标已推进到最新版本且不脏"，
+// 而不是旧测试那样的"版本列表是 [1 2 3 ...]"。
 func TestMigrationV2Applied(t *testing.T) {
 	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "m.db"))
 	if err != nil {
@@ -19,26 +30,28 @@ func TestMigrationV2Applied(t *testing.T) {
 	}
 	defer func() { _ = db.Close() }()
 
-	rows, err := db.db.QueryContext(context.Background(),
-		`SELECT version FROM schema_migrations ORDER BY version`)
-	if err != nil {
-		t.Fatalf("查询迁移记录失败: %v", err)
+	var version int
+	var dirty int
+	if err := rawDBOf(t, db).QueryRowContext(context.Background(),
+		`SELECT version, dirty FROM `+dbmigrate.MigrationsTable).Scan(&version, &dirty); err != nil {
+		t.Fatalf("查询迁移游标失败: %v", err)
 	}
-	defer rows.Close()
+	if dirty != 0 {
+		t.Fatalf("全新库迁移后不应处于 dirty 状态")
+	}
+	// 期望已推进到最新版本（当前共 10 个）。
+	if version != 10 {
+		t.Errorf("迁移游标应推进到 v10，实际 v%d", version)
+	}
 
-	var versions []int
-	for rows.Next() {
-		var v int
-		if err := rows.Scan(&v); err != nil {
-			t.Fatal(err)
-		}
-		versions = append(versions, v)
+	// 全新库不应存在旧体系记录表。
+	var n int
+	if err := rawDBOf(t, db).QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='schema_migrations'`).Scan(&n); err != nil {
+		t.Fatalf("检查旧表失败: %v", err)
 	}
-	if len(versions) < 2 {
-		t.Fatalf("应至少有 v1 与 v2，实际 %v", versions)
-	}
-	if versions[0] != 1 || versions[1] != 2 {
-		t.Errorf("迁移版本应为 [1 2 ...]，实际 %v", versions)
+	if n != 0 {
+		t.Error("全新库不应创建旧体系的 schema_migrations 表")
 	}
 }
 
@@ -55,7 +68,7 @@ func TestComposeStacksSchema(t *testing.T) {
 		"id": true, "agent_id": true, "name": true, "content": true,
 		"config_hash": true, "version": true, "created_at": true, "updated_at": true,
 	}
-	rows, err := db.db.QueryContext(context.Background(), `PRAGMA table_info(compose_stacks)`)
+	rows, err := rawDBOf(t, db).QueryContext(context.Background(), `PRAGMA table_info(compose_stacks)`)
 	if err != nil {
 		t.Fatalf("读取表结构失败: %v", err)
 	}
@@ -97,7 +110,7 @@ func TestComposeStacksSchema(t *testing.T) {
 	}
 
 	// 唯一索引必须存在：同 Agent 下项目名唯一是本表的核心约束。
-	irows, err := db.db.QueryContext(context.Background(), `PRAGMA index_list(compose_stacks)`)
+	irows, err := rawDBOf(t, db).QueryContext(context.Background(), `PRAGMA index_list(compose_stacks)`)
 	if err != nil {
 		t.Fatalf("读取索引失败: %v", err)
 	}

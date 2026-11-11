@@ -85,11 +85,15 @@ func cmdRun(args []string, stderr io.Writer) int {
 
 	// 注册表在服务模式与本地模式里都是同一份构造方式，见 localSetup。
 	reg := handler.NewRegistry()
-	imageMgr := buildImageTransferManager(cfg, rt)
 	composeMgr := buildComposeManager(cfg, rt)
 	// 把 Agent 生命周期交给 compose：镜像更新任务据此随退出一起取消。
 	composeMgr.RootCtx = ctx
-	handler.RegisterDefaultsWithTransfer(reg, rt, composeMgr, imageMgr, log)
+	// 镜像传输管理器与迁移临时区必须来自同一次 data_dir 判断，
+	// 因此在这里一起取得，避免"镜像能传但卷不能迁"这种半可用状态。
+	// 迁移的卷归档必须传临时区，否则注册表只会注册 compose.import，
+	// 界面上能点迁移、跑到卷那一步才报"方法不存在"——那种失败很难归因。
+	imageMgr, transferRoot := buildTransferManagers(cfg, rt)
+	handler.RegisterDefaultsFull(reg, rt, composeMgr, imageMgr, transferRoot, log)
 	// 取消全部进行中的镜像更新任务（含其 compose 子进程）。
 	// 注册在 Registry 上而不是单独 defer：这样任何持有 Registry 的
 	// 部署路径（服务模式 / 本地模式）都会经过它，不会漏接线。

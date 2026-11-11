@@ -27,7 +27,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-chi/chi/v5"
+	"github.com/gogf/gf/v2/frame/g"
+	"github.com/gogf/gf/v2/net/ghttp"
 
 	"arkade/hub/internal/audit"
 	"arkade/hub/internal/user"
@@ -68,7 +69,11 @@ func discardLogger() *slog.Logger {
 type auditTestEnv struct {
 	// handler 是挂好中间件的路由。
 	handler http.Handler
-	writer  *fakeAuditWriter
+	// base 是真实监听的服务地址（迁移后测试走真实 HTTP）。
+	base   string
+	// start 关闭上一次启动的实例（build 可能重复调用）。
+	start  func() error
+	writer *fakeAuditWriter
 	// user 是模拟已登录用户，nil 表示未登录。
 	user *user.User
 	// status 让测试 handler 返回指定状态码。
@@ -96,14 +101,27 @@ func newAuditTestEnv(t *testing.T, loggedIn bool) *auditTestEnv {
 		env.user = &u
 	}
 	env.build()
+	// 测试结束时关闭最后一次启动的实例，避免端口泄漏。
+	t.Cleanup(func() {
+		if env.start != nil {
+			_ = env.start()
+		}
+	})
 	return env
 }
 
 // build 重建路由（writer 可能被中途替换）。
+//
+// 迁移说明：原来是 chi.NewRouter() + r.Get/Post/...，
+// 现在用与生产完全相同的 GoFrame 装配路径（ghttp + wrapToGF），
+// 这样测试验证的是真实注册方式，而不是一个平行实现。
+// 中间件顺序（authenticator 效果 → auditMiddleware）保持不变。
 func (env *auditTestEnv) build() {
-	r := chi.NewRouter()
+	s := g.Server("audit-test-" + itoa(nextServerSeq()))
+	s.SetDumpRouterMap(false)
+
 	// 模拟 authenticator 的效果：把用户放进 context。
-	r.Use(func(next http.Handler) http.Handler {
+	authMW := func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			if env.user != nil {
 				ctx := context.WithValue(req.Context(), ctxKeyUser, *env.user)
@@ -111,8 +129,8 @@ func (env *auditTestEnv) build() {
 			}
 			next.ServeHTTP(w, req)
 		})
-	})
-	r.Use(auditMiddleware(env.writer, discardLogger()))
+	}
+	auditMW := auditMiddleware(env.writer, discardLogger())
 
 	// 一个万能 handler：按查询参数决定返回什么状态码。
 	responder := func(w http.ResponseWriter, req *http.Request) {
@@ -151,51 +169,115 @@ func (env *auditTestEnv) build() {
 	}
 
 	// 注册与生产一致的路由模式。
-	r.Get("/api/users", responder)
-	r.Post("/api/users", responder)
-	r.Patch("/api/users/{userID}", responder)
-	r.Delete("/api/users/{userID}", responder)
+	var chain http.Handler = http.HandlerFunc(responder)
+	chain = auditMW(chain)
+	chain = authMW(chain)
 
-	r.Get("/api/groups", responder)
-	r.Post("/api/groups", responder)
-	r.Patch("/api/groups/{groupID}", responder)
-	r.Delete("/api/groups/{groupID}", responder)
+	add := func(method, pattern string) {
+		s.BindHandler(method+":"+pattern, wrapToGF(pattern, chain))
+	}
 
-	r.Get("/api/agents", responder)
-	r.Patch("/api/agents/{agentID}", responder)
-	r.Delete("/api/agents/{agentID}", responder)
-	r.Post("/api/agents/{agentID}/disable", responder)
-	r.Post("/api/agents/{agentID}/enable", responder)
+	add(http.MethodGet, "/api/users")
+	add(http.MethodPost, "/api/users")
+	add(http.MethodPatch, "/api/users/{userID}")
+	add(http.MethodDelete, "/api/users/{userID}")
 
-	r.Post("/api/agents/{agentID}/containers/{containerID}/start", responder)
-	r.Post("/api/agents/{agentID}/containers/{containerID}/stop", responder)
-	r.Post("/api/agents/{agentID}/containers/{containerID}/restart", responder)
-	r.Delete("/api/agents/{agentID}/containers/{containerID}", responder)
+	add(http.MethodGet, "/api/groups")
+	add(http.MethodPost, "/api/groups")
+	add(http.MethodPatch, "/api/groups/{groupID}")
+	add(http.MethodDelete, "/api/groups/{groupID}")
 
-	r.Post("/api/agents/{agentID}/stacks/{name}/actions", responder)
-	r.Post("/api/agents/{agentID}/stacks", responder)
-	r.Patch("/api/agents/{agentID}/stacks/{name}", responder)
+	add(http.MethodGet, "/api/agents")
+	add(http.MethodPatch, "/api/agents/{agentID}")
+	add(http.MethodDelete, "/api/agents/{agentID}")
+	add(http.MethodPost, "/api/agents/{agentID}/disable")
+	add(http.MethodPost, "/api/agents/{agentID}/enable")
 
-	env.handler = r
+	add(http.MethodPost, "/api/agents/{agentID}/containers/{containerID}/start")
+	add(http.MethodPost, "/api/agents/{agentID}/containers/{containerID}/stop")
+	add(http.MethodPost, "/api/agents/{agentID}/containers/{containerID}/restart")
+	add(http.MethodDelete, "/api/agents/{agentID}/containers/{containerID}")
+
+	add(http.MethodPost, "/api/agents/{agentID}/stacks/{name}/actions")
+	add(http.MethodPost, "/api/agents/{agentID}/stacks")
+	add(http.MethodPatch, "/api/agents/{agentID}/stacks/{name}")
+
+	// 兜底：未匹配的 /api 请求也要经过认证与审计链
+	// （与 chi 的 Group 语义一致），否则漏登记的接口不会被记成 unknown.POST，
+	// TestAuditUnknownRoute 会失去意义。
+	s.BindHandler("/*", func(r *ghttp.Request) {
+		if !isAPIPath(r.Request.URL.Path) {
+			http.NotFound(r.Response.Writer, r.Request)
+			return
+		}
+		req := r.Request.WithContext(withRouteInfo(r.Request.Context(), &routeInfo{Pattern: ""}))
+		chain.ServeHTTP(r.Response.Writer, req)
+	})
+
+	env.handler = s
+
+	// 真实启动：ghttp 的生命周期由 Start 建立，不启动则请求收尾时 nil panic。
+	// build 可能被多次调用（writer 被中途替换），旧实例必须显式关闭，
+	// 否则会泄漏监听端口。
+	if env.start != nil {
+		_ = env.start()
+	}
+	s.SetAddr("127.0.0.1:0")
+	if err := s.Start(); err != nil {
+		panic("启动测试服务器失败: " + err.Error())
+	}
+	env.base = "http://" + s.GetListenedAddress()
+	env.start = func() error { return s.Shutdown() }
 }
 
 // doWithBody 发一次带 JSON 请求体的请求。
+//
+// 迁移说明：必须走真实 HTTP 请求。ghttp 的服务端收尾（session 管理、
+// handleResponse）只有真实监听后才完整，直接 ServeHTTP 会 nil panic
+// （见 router_start.go 文件头）。
 func (env *auditTestEnv) doWithBody(t *testing.T, method, target, body string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(method, target, strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	env.handler.ServeHTTP(w, req)
-	return w
+	return env.send(t, method, target, strings.NewReader(body))
 }
 
 // do 发一次请求。
 func (env *auditTestEnv) do(t *testing.T, method, target string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(method, target, http.NoBody)
-	w := httptest.NewRecorder()
-	env.handler.ServeHTTP(w, req)
-	return w
+	return env.send(t, method, target, nil)
+}
+
+// send 发真实请求并把响应还原成 Recorder，供既有断言使用。
+func (env *auditTestEnv) send(t *testing.T, method, target string, body io.Reader) *httptest.ResponseRecorder {
+	t.Helper()
+
+	req, err := http.NewRequest(method, env.base+target, body)
+	if err != nil {
+		t.Fatalf("构造请求失败: %v", err)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("请求 %s %s 失败: %v", method, target, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("读取响应体失败: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	for k, vs := range resp.Header {
+		for _, v := range vs {
+			rec.Header().Add(k, v)
+		}
+	}
+	rec.Code = resp.StatusCode
+	rec.Body.Write(raw)
+	return rec
 }
 
 // mapStatusToCode 把状态码映射回错误码（测试 handler 用）。

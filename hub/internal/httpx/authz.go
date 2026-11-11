@@ -11,7 +11,6 @@ package httpx
 import (
 	"net/http"
 
-	"github.com/go-chi/chi/v5"
 
 	"arkade/hub/internal/user"
 	"arkade/protocol/envelope"
@@ -74,5 +73,5 @@ func requirePermission(w http.ResponseWriter, d Deps, r *http.Request, agentID s
 
 // agentIDFromPath 提取路径中的 Agent ID，供需要独立处理的场景复用。
 func agentIDFromPath(r *http.Request) string {
-	return chi.URLParam(r, "agentID")
+	return pathParam(r, "agentID")
 }

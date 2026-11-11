@@ -20,7 +20,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 
 	"arkade/hub/internal/store"
 	"arkade/hub/internal/user"
@@ -184,7 +183,7 @@ func handleUpdateUser(d Deps) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		targetID := chi.URLParam(r, "userID")
+		targetID := pathParam(r, "userID")
 
 		var req updateUserRequest
 		if !decodeAndValidate(w, d, r, &req) {
@@ -325,7 +324,7 @@ func handleResetPassword(d Deps) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		targetID := chi.URLParam(r, "userID")
+		targetID := pathParam(r, "userID")
 
 		var req resetPasswordRequest
 		if !decodeAndValidate(w, d, r, &req) {
@@ -358,7 +357,7 @@ func handleDeleteUser(d Deps) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		targetID := chi.URLParam(r, "userID")
+		targetID := pathParam(r, "userID")
 
 		// 安全规则 1：不能删除自己。
 		// 理由不只是「防手滑」：管理员删除自己会让当前会话立刻失效，

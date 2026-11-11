@@ -5,12 +5,13 @@ package httpx
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
+	"sync"
 	"time"
+
+	"github.com/gogf/gf/v2/net/ghttp"
 
 	"arkade/hub/internal/agentlink"
 	"arkade/hub/internal/auth"
@@ -22,15 +23,18 @@ import (
 
 // App 是组装完成的 Hub 运行体。
 type App struct {
-	cfg        config.Config
-	log        *slog.Logger
-	db         *store.DB
-	registry   *agentlink.Registry
-	server     *http.Server
-	agentSrv   *agentlink.Server
-	authSvc    *auth.Service
-	imageTasks *imagetask.Manager
-	autoAdopt  *autoAdopter
+	cfg         config.Config
+	log         *slog.Logger
+	db          *store.DB
+	registry    *agentlink.Registry
+	connections *connectionTracker
+	server      *ghttp.Server
+	stopped     chan struct{}
+	stopOnce    sync.Once
+	agentSrv    *agentlink.Server
+	authSvc     *auth.Service
+	imageTasks  *imagetask.Manager
+	autoAdopt   *autoAdopter
 }
 
 // NewApp 构造 Hub。所有依赖在此一次性创建，失败时返回明确原因。
@@ -63,6 +67,7 @@ func NewApp(ctx context.Context, cfg config.Config, log *slog.Logger, version st
 
 	imageTasks := imagetask.New(agentlink.NewImageBackend(ops))
 	autoAdopt := newAutoAdopter(db, ops, reg.OnlineIDs)
+	connections := &connectionTracker{}
 	router := NewRouter(Deps{
 		AutoAdopt:  autoAdopt,
 		ImageTasks: imageTasks,
@@ -71,7 +76,7 @@ func NewApp(ctx context.Context, cfg config.Config, log *slog.Logger, version st
 		Auth:       authSvc,
 		Registry:   reg,
 		Ops:        ops,
-		AgentConn:  http.HandlerFunc(agentSrv.HandleConnect),
+		AgentConn:  connections.wrap(http.HandlerFunc(agentSrv.HandleConnect)),
 		WebDist:    cfg.Web.Dist,
 		HubVersion: version,
 		// 传给 handler 只为"生成密钥时避开与共享 token 同值"。
@@ -80,54 +85,76 @@ func NewApp(ctx context.Context, cfg config.Config, log *slog.Logger, version st
 		Guard:            guard,
 	})
 
-	httpSrv := &http.Server{
-		Addr:              cfg.Server.Addr,
-		Handler:           router,
-		ReadHeaderTimeout: 10 * time.Second,
-		// 不设置全局 WriteTimeout：WebSocket 长连接会被它强行切断。
-		// 连接存活由 agentlink 的心跳机制负责。
-		IdleTimeout: 120 * time.Second,
-	}
+	// GoFrame 的 session/request 清理依赖 Start 初始化，不能只把未启动
+	// 的 Server 塞进另一个 http.Server；生产监听与关闭都使用框架生命周期。
+	httpSrv := router
+	httpSrv.SetAddr(cfg.Server.Addr)
+	httpSrv.SetReadTimeout(0)
+	httpSrv.SetWriteTimeout(0) // WebSocket/日志流不设置全局写超时。
+	httpSrv.SetIdleTimeout(120 * time.Second)
+	httpSrv.SetGraceful(false) // 信号仍由 cmd/hub 统一管理，不启用热重载。
+	httpSrv.SetGracefulShutdownTimeout(15)
+	httpSrv.SetSessionCookieOutput(false) // 登录仅使用现有数据库会话 Cookie。
 
 	return &App{
-		cfg:        cfg,
-		log:        log,
-		db:         db,
-		registry:   reg,
-		server:     httpSrv,
-		agentSrv:   agentSrv,
-		authSvc:    authSvc,
-		imageTasks: imageTasks,
-		autoAdopt:  autoAdopt,
+		cfg:         cfg,
+		log:         log,
+		db:          db,
+		registry:    reg,
+		connections: connections,
+		server:      httpSrv,
+		stopped:     make(chan struct{}),
+		agentSrv:    agentSrv,
+		authSvc:     authSvc,
+		imageTasks:  imageTasks,
+		autoAdopt:   autoAdopt,
 	}, nil
 }
 
 // ListenAndServe 启动 HTTP 服务并阻塞。
 func (a *App) ListenAndServe() error {
-	ln, err := net.Listen("tcp", a.cfg.Server.Addr)
-	if err != nil {
+	if err := a.server.Start(); err != nil {
 		return fmt.Errorf("监听 %s 失败: %w", a.cfg.Server.Addr, err)
 	}
 	a.autoAdopt.start(context.Background())
-	a.log.Info("Hub 已启动", "addr", ln.Addr().String(), "web_dist", a.cfg.Web.Dist)
-	if err := a.server.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return err
-	}
+	a.log.Info("Hub 已启动", "addr", a.server.GetListenedAddress(), "web_dist", a.cfg.Web.Dist)
+	<-a.stopped
 	return nil
 }
 
 // Shutdown 优雅关闭：先停止接收新请求，再关闭数据库。
 func (a *App) Shutdown(ctx context.Context) error {
+	if deadline, ok := ctx.Deadline(); ok {
+		seconds := int(time.Until(deadline).Seconds())
+		if seconds < 1 {
+			seconds = 1
+		}
+		a.server.SetGracefulShutdownTimeout(seconds)
+	}
+	// 框架 Shutdown 使用配置的优雅退出期限，不接受 context 参数。
+	// 先停止监听并等待框架的请求排空期限，再关闭后台任务和业务池。
+	// 避免退出期间仍接受请求、却已经销毁请求依赖的任务管理器。
+	err := a.server.Shutdown()
+	if a.connections != nil {
+		joinCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		if cerr := a.connections.close(joinCtx, a.registry); cerr != nil {
+			// A live handler can still access storage: do not close its database.
+			return cerr
+		}
+	}
 	if a.autoAdopt != nil {
 		a.autoAdopt.close()
 	}
 	if a.imageTasks != nil {
-		_ = a.imageTasks.Close()
+		if cerr := a.imageTasks.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
 	}
-	err := a.server.Shutdown(ctx)
 	if cerr := a.db.Close(); cerr != nil && err == nil {
 		err = cerr
 	}
+	a.stopOnce.Do(func() { close(a.stopped) })
 	return err
 }
 

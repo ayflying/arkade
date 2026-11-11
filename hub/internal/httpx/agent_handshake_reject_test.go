@@ -16,7 +16,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -29,24 +28,36 @@ import (
 	"arkade/protocol/envelope"
 )
 
-// newRealSinkRouter 构造使用真实 agentSink（接真实数据库）的测试路由。
+// startRealSinkRouter 用真实 Start() 启动一条接真实 agentSink（真数据库）的路由。
 //
-// 与 newConnectRouter 的区别：那个用 fakeSink 只记录回调，
+// 与 startConnectRouter 的区别：那个用 fakeSink 只记录回调，
 // 这个要走真实的禁用检查逻辑，因此必须接真库。
-func newRealSinkRouter(t *testing.T, db *store.DB, reg *agentlink.Registry, token string) http.Handler {
+//
+// 必须原生 Start 而非 httptest.NewServer：ghttp 的 sessionManager
+// 在 Start() 里初始化，未 Start 直接 ServeHTTP 会在请求收尾时
+// 因 gsession 为 nil 而 panic（Linux 上可能被吞掉但日志仍在）。
+//
+// Agent 连接同样要 tracker：WebSocket 被 hijack，Shutdown 不等它，
+// 且握手失败路径的 OnDisconnected 写库也要 join 完才能关库。
+func startRealSinkRouter(t *testing.T, db *store.DB, reg *agentlink.Registry, token string) *agentTestSrv {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
 	sink := &agentSink{db: db, log: log}
-	srv := agentlink.NewServer(reg, token, "test", sink, log)
-	return NewRouter(Deps{
+	agentSrv := agentlink.NewServer(reg, token, "test", sink, log)
+	tracker := &connectionTracker{}
+	router := NewRouter(Deps{
 		Log:        log,
 		DB:         db,
 		Registry:   reg,
 		Ops:        agentlink.NewOps(reg),
 		Auth:       auth.NewService(nil, time.Hour),
-		AgentConn:  http.HandlerFunc(srv.HandleConnect),
+		AgentConn:  tracker.wrap(http.HandlerFunc(agentSrv.HandleConnect)),
 		HubVersion: "test",
 	})
+	h := &agentTestSrv{reg: reg, tracker: tracker}
+	h.url = startRouterForTest(t, router)
+	t.Cleanup(func() { h.close(t) })
+	return h
 }
 
 // dialExpectReject 以 Agent 身份拨号并期待握手被拒，返回收到的错误文案。
@@ -107,10 +118,9 @@ func TestDisabledAgentRejectedAtHandshake(t *testing.T) {
 	}
 
 	reg := agentlink.NewRegistry()
-	srv := httptest.NewServer(newRealSinkRouter(t, env.db, reg, agentToken))
-	defer srv.Close()
+	srv := startRealSinkRouter(t, env.db, reg, agentToken)
 
-	msg := dialExpectReject(t, srv.URL, agentToken, agentID)
+	msg := dialExpectReject(t, srv.url, agentToken, agentID)
 
 	// 关键断言 1：文案必须能让人看懂该怎么办。
 	if !strings.Contains(msg, "禁用") {
@@ -153,10 +163,9 @@ func TestDisabledAgentRejectDoesNotTouchLastSeen(t *testing.T) {
 	}
 
 	reg := agentlink.NewRegistry()
-	srv := httptest.NewServer(newRealSinkRouter(t, env.db, reg, agentToken))
-	defer srv.Close()
+	srv := startRealSinkRouter(t, env.db, reg, agentToken)
 
-	_ = dialExpectReject(t, srv.URL, agentToken, agentID)
+	_ = dialExpectReject(t, srv.url, agentToken, agentID)
 
 	after, err := env.db.GetAgent(t.Context(), agentID)
 	if err != nil {
@@ -190,18 +199,17 @@ func TestEnabledAgentHandshakeSucceeds(t *testing.T) {
 	}
 
 	reg := agentlink.NewRegistry()
-	srv := httptest.NewServer(newRealSinkRouter(t, env.db, reg, agentToken))
-	defer srv.Close()
+	srv := startRealSinkRouter(t, env.db, reg, agentToken)
 
 	// 禁用时被拒。
-	_ = dialExpectReject(t, srv.URL, agentToken, agentID)
+	_ = dialExpectReject(t, srv.url, agentToken, agentID)
 
 	// 启用后应能正常握手。
 	if err := env.db.SetAgentDisabled(t.Context(), agentID, false, time.Now().Unix()); err != nil {
 		t.Fatal(err)
 	}
 
-	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + envelope.AgentConnectPath
+	wsURL := "ws" + strings.TrimPrefix(srv.url, "http") + envelope.AgentConnectPath
 	header := http.Header{}
 	header.Set(envelope.HeaderAuthorization, envelope.BearerPrefix+agentToken)
 	header.Set(envelope.HeaderProtoVersion, "1")
@@ -240,10 +248,9 @@ func TestNewAgentHandshakeAllowed(t *testing.T) {
 
 	env := newTestEnv(t)
 	reg := agentlink.NewRegistry()
-	srv := httptest.NewServer(newRealSinkRouter(t, env.db, reg, agentToken))
-	defer srv.Close()
+	srv := startRealSinkRouter(t, env.db, reg, agentToken)
 
-	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + envelope.AgentConnectPath
+	wsURL := "ws" + strings.TrimPrefix(srv.url, "http") + envelope.AgentConnectPath
 	header := http.Header{}
 	header.Set(envelope.HeaderAuthorization, envelope.BearerPrefix+agentToken)
 	header.Set(envelope.HeaderProtoVersion, "1")
@@ -291,10 +298,9 @@ func TestHandshakeKeepsCustomDisplayName(t *testing.T) {
 	}
 
 	reg := agentlink.NewRegistry()
-	srv := httptest.NewServer(newRealSinkRouter(t, env.db, reg, agentToken))
-	defer srv.Close()
+	srv := startRealSinkRouter(t, env.db, reg, agentToken)
 
-	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + envelope.AgentConnectPath
+	wsURL := "ws" + strings.TrimPrefix(srv.url, "http") + envelope.AgentConnectPath
 	header := http.Header{}
 	header.Set(envelope.HeaderAuthorization, envelope.BearerPrefix+agentToken)
 	header.Set(envelope.HeaderProtoVersion, "1")

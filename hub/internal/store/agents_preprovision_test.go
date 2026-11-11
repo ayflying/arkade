@@ -12,6 +12,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"arkade/hub/internal/dbmigrate"
 )
 
 // hashOf 计算密钥摘要。
@@ -106,10 +108,10 @@ func TestCreatePreprovisionedAgentDuplicateName(t *testing.T) {
 	// 重名失败不能留下半截数据（事务性）：
 	// 若只插入 agents 而没插 token，就会产生一条"有记录但无法接入"的孤儿。
 	var agents, tokens int
-	if err := db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM agents`).Scan(&agents); err != nil {
+	if err := rawDBOf(t, db).QueryRowContext(ctx, `SELECT COUNT(*) FROM agents`).Scan(&agents); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_tokens`).Scan(&tokens); err != nil {
+	if err := rawDBOf(t, db).QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_tokens`).Scan(&tokens); err != nil {
 		t.Fatal(err)
 	}
 	if agents != 1 {
@@ -185,7 +187,7 @@ func TestResetAgentTokenHashReplaces(t *testing.T) {
 	// 一条记录只能有一把有效密钥（唯一索引保证），
 	// 否则重置后新旧两把都能用，撤销就是假的。
 	var n int
-	if err := db.db.QueryRowContext(ctx,
+	if err := rawDBOf(t, db).QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM agent_tokens WHERE agent_id = ?`, rec.ID).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +251,7 @@ func TestHasAgentToken(t *testing.T) {
 	// 共享 token 接入的旧记录没有凭据行。
 	plain := newPreprovRecord("无凭据机")
 	now := time.Now().Unix()
-	if _, err := db.db.ExecContext(ctx,
+	if _, err := rawDBOf(t, db).ExecContext(ctx,
 		`INSERT INTO agents (id, name, status, version, runtime, runtime_version, last_seen,
 		 labels, created_at, updated_at, display_name, note, disabled)
 		 VALUES (?, ?, 'offline', '', '', '', 0, '{}', ?, ?, ?, '', 0)`,
@@ -298,7 +300,7 @@ func TestPlaintextTokenNotStoredAnywhere(t *testing.T) {
 	}
 
 	var tables []string
-	rows, err := db.db.QueryContext(ctx,
+	rows, err := rawDBOf(t, db).QueryContext(ctx,
 		`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`)
 	if err != nil {
 		t.Fatal(err)
@@ -320,7 +322,7 @@ func TestPlaintextTokenNotStoredAnywhere(t *testing.T) {
 		// 也不会漏掉"密钥被塞进某个非文本列"的情况。
 		q := `SELECT group_concat(CAST(t AS TEXT), '|') FROM (SELECT * FROM "` + tbl + `") AS x`
 		_ = q
-		colRows, err := db.db.QueryContext(ctx, `SELECT * FROM "`+tbl+`" LIMIT 50`)
+		colRows, err := rawDBOf(t, db).QueryContext(ctx, `SELECT * FROM "`+tbl+`" LIMIT 50`)
 		if err != nil {
 			t.Fatalf("扫描 %s 失败: %v", tbl, err)
 		}
@@ -369,13 +371,17 @@ func contains(s, sub string) bool {
 	return false
 }
 
-// TestMigrationVersionCurrent 验证迁移包含编排操作元数据版本。
+// TestMigrationVersionCurrent 验证迁移游标停在最新版本。
 //
 // 版本号写错会导致新库与旧库结构不一致，而两边测试都可能"各自通过"。
+//
+// 注意：迁移体系已换成 golang-migrate，版本记录表是单行游标的
+// arkade_migrate_versions（不是旧的每版本一行 schema_migrations）。
 func TestMigrationVersionCurrent(t *testing.T) {
 	db := newTestDB(t)
 	var v int
-	err := db.db.QueryRowContext(context.Background(), `SELECT MAX(version) FROM schema_migrations`).Scan(&v)
+	err := rawDBOf(t, db).QueryRowContext(context.Background(),
+		`SELECT version FROM `+dbmigrate.MigrationsTable).Scan(&v)
 	if err != nil {
 		t.Fatal(err)
 	}

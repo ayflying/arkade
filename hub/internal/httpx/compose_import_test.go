@@ -3,6 +3,7 @@ package httpx
 // Import tests use a real HTTP server, SQLite and WebSocket Agent. In particular,
 // observing every RPC guards against accidentally starting/stopping production services.
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -31,12 +32,39 @@ func startImportAgent(t *testing.T, e *testEnv, reply func(envelope.Envelope, in
 	reg := agentlink.NewRegistry()
 	log := discardLogger()
 	server := agentlink.NewServer(reg, composeTestAgentToken, "test", &agentSink{db: e.db, log: log}, log)
-	srv := newTestServer(t, NewRouter(Deps{Log: log, DB: e.db, Auth: e.auth, Registry: reg, Ops: agentlink.NewOps(reg), AgentConn: http.HandlerFunc(server.HandleConnect), HubVersion: "test"}))
-	client, ack := dialAsAgent(t, srv.URL, composeTestAgentToken)
+	// Agent 连接必须包 tracker：WebSocket 是 hijack 的连接，
+	// http.Server.Shutdown 不会等它，handler 可能仍在跑并持有 DB。
+	//
+	// 不靠 registry：握手完成前连接还没登记进 registry。
+	// 也不靠下面的 done channel：那只 join 了**客户端**的读循环，
+	// 不等于服务端 HandleConnect 整体（含 OnDisconnected 写库）已结束。
+	tracker := &connectionTracker{}
+	router := NewRouter(Deps{
+		Log: log, DB: e.db, Auth: e.auth, Registry: reg,
+		Ops:           agentlink.NewOps(reg),
+		AgentConn:     tracker.wrap(http.HandlerFunc(server.HandleConnect)),
+		HubVersion:    "test",
+		StackMigrate:  e.migrateMgr,
+	})
+	srv := newTestServer(t, router)
+	client, ack := dialAsAgent(t, srv, composeTestAgentToken)
 	_ = client.conn.SetReadDeadline(time.Time{})
-	a := &importAgent{url: srv.URL, id: ack.AgentID}
+	a := &importAgent{url: srv, id: ack.AgentID}
 	done := make(chan struct{})
-	t.Cleanup(func() { _ = client.conn.Close(); <-done })
+	// 收尾顺序（LIFO）：
+	//   tracker.close → newTestServer 的 Shutdown → e.db 的 Close
+	// 先关客户端读循环（done），再让 tracker 关掉服务端 socket 并
+	// join 服务端 handler，避免 handler 仍在写库时库被关闭。
+	t.Cleanup(func() {
+		_ = client.conn.Close()
+		<-done
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := tracker.close(ctx, reg); err != nil {
+			t.Errorf("等待 Agent handler 退出超时（服务端 handler 未结束，DB 仍被持有）: %v", err)
+		}
+	})
+	_ = client.conn.SetReadDeadline(time.Time{})
 	go func() {
 		defer close(done)
 		counts := map[string]int{}

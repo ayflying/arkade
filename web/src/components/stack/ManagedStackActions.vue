@@ -28,9 +28,12 @@ import { computed, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { NButton } from 'naive-ui'
 import StackOperationModal from './StackOperationModal.vue'
+import StackMigrateModal from './StackMigrateModal.vue'
 import type { StackOperationAction } from '@/types/stackOperationTask'
 import { STACK_OPERATION_ACTIONS, STACK_OPERATION_META } from '@/types/stackOperationTask'
+import type { StackMigrateTarget } from '@/types/stackMigrate'
 import { confirmAction, confirmWithOption } from '@/utils/confirm'
+import { useAgentsStore } from '@/stores/agents'
 
 const props = defineProps<{
   agentId: string
@@ -81,6 +84,8 @@ function disabledFor(action: StackOperationAction): boolean {
   if (!props.online || props.busy || running.value) return true
   if (props.unsynced && UNSYNCED_BLOCKED.includes(action)) return true
   if (anyBusy.value && !busyActions.has(action) && activeAction.value !== action) return true
+  // 迁移占着编排时，其它动作一律锁住：两个重操作会争抢同一份编排
+  if (migrateBusy.value) return true
   return false
 }
 
@@ -176,6 +181,76 @@ function handleBusy(action: StackOperationAction, busy: boolean): void {
 function handleModalShow(value: boolean): void {
   modalShow.value = value
 }
+
+/* ───────── 迁移 ───────── */
+
+/**
+ * 迁移是重操作，与其它动作**互斥**。
+ *
+ * 判据和普通动作同源：只要有任何动作或迁移在跑，就不允许再发起迁移；
+ * 反过来 `disabledFor` 也会因为 `migrateBusy` 把其它动作锁住。
+ */
+const migrateShow = ref(false)
+const migrateBusy = ref(false)
+const migrateAutoStart = ref(false)
+
+/**
+ * 目标服务器候选。
+ *
+ * 直接用全局 agents store 的缓存，不额外发请求：详情页已经加载过列表，
+ * 为打开一个弹窗再拉一遍没有必要，且可能让下拉在打开瞬间闪一下。
+ * 只挑出弹窗真正需要的三个字段。
+ */
+const agentsStore = useAgentsStore()
+const migrateTargets = computed<StackMigrateTarget[]>(() =>
+  agentsStore.agents.map((a) => ({
+    id: a.id,
+    name: a.name,
+    online: a.status === 'online'
+  }))
+)
+
+const migrateDisabled = computed(() => {
+  if (!props.online || props.busy || running.value) return true
+  if (anyBusy.value) return true
+  return migrateBusy.value
+})
+
+function migrateHint(): string {
+  if (anyBusy.value || migrateBusy.value) return '已有操作正在执行，请等它结束'
+  return ''
+}
+
+/**
+ * 迁移按钮。
+ *
+ * 只做二次确认，不在这里判断目标服务器——那是弹窗里才有的选择。
+ * 确认后打开弹窗并让它自动开始，避免用户确认完还要再点一次。
+ */
+async function handleMigrate(): Promise<void> {
+  if (migrateDisabled.value) return
+  running.value = true
+  try {
+    const ok = await confirmAction({
+      title: `确认迁移编排？`,
+      content:
+        `将把「${props.stackName}」的配置与镜像复制到另一台服务器。\n\n` +
+        '迁移是复制不是移动：源服务器上的容器不会停止，也不会被删除。\n' +
+        '目标服务器上如果已有同名编排会被拒绝。',
+      positiveText: '选择目标服务器',
+      danger: true
+    })
+    if (!ok || !alive) return
+    migrateAutoStart.value = false
+    migrateShow.value = true
+  } finally {
+    if (alive) running.value = false
+  }
+}
+
+function handleMigrateShow(value: boolean): void {
+  migrateShow.value = value
+}
 </script>
 
 <template>
@@ -189,6 +264,16 @@ function handleModalShow(value: boolean): void {
       @click="handleAction(action)"
     >
       {{ STACK_OPERATION_META[action].label }}
+    </n-button>
+
+    <!-- 迁移独立成按钮：它作用于「源编排 → 另一台服务器」，不是编辑本编排 -->
+    <n-button
+      size="small"
+      :disabled="migrateDisabled"
+      :title="migrateHint()"
+      @click="handleMigrate"
+    >
+      迁移
     </n-button>
 
     <n-button
@@ -221,6 +306,22 @@ function handleModalShow(value: boolean): void {
     @removed="handleRemoved"
     @busy="(v: boolean) => handleBusy(action, v)"
     @update:show="handleModalShow"
+  />
+
+  <!--
+    迁移弹窗同样常驻（不 v-if）：关闭只隐藏，任务与 request_id 保留。
+    key 绑定 agent/编排：换服务器或换编排才是新上下文。
+  -->
+  <stack-migrate-modal
+    :key="`${agentId}/${stackName}/migrate`"
+    :show="migrateShow"
+    :agent-id="agentId"
+    :stack-name="stackName"
+    :online="online"
+    :agents="migrateTargets"
+    @finished="handleFinished"
+    @busy="migrateBusy = $event"
+    @update:show="handleMigrateShow"
   />
 </template>
 

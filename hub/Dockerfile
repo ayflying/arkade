@@ -41,7 +41,9 @@ ARG VERSION=0.1.0
 RUN CGO_ENABLED=0 GOOS=linux go build \
         -trimpath \
         -ldflags "-s -w -X main.version=${VERSION}" \
-        -o /out/arkade-hub ./cmd/hub
+        -o /out/arkade-hub ./cmd/hub \
+    && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags "-s -w" \
+        -o /out/arkade-dbtool ./cmd/dbtool
 
 # ---------- 阶段三：运行 ----------
 FROM alpine:3.20
@@ -55,6 +57,7 @@ RUN apk add --no-cache ca-certificates tzdata \
 WORKDIR /app
 
 COPY --from=gopkg /out/arkade-hub /app/arkade-hub
+COPY --from=gopkg /out/arkade-dbtool /app/arkade-dbtool
 COPY --from=webbuild /src/web/dist /app/web/dist
 
 # 数据库与配置目录，挂卷持久化

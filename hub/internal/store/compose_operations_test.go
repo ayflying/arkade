@@ -2,7 +2,10 @@ package store
 
 import (
 	"context"
+
 	"errors"
+	"github.com/gogf/gf/v2/database/gdb"
+	"strings"
 	"testing"
 	"time"
 )
@@ -103,7 +106,7 @@ func TestComposeOperationCreateAtomicRollback(t *testing.T) {
 	req.SaveContent = strptr("secret compose")
 	req.ConfigHash = "digest"
 	// Inject an operation insert failure after the stack insert. Both must roll back.
-	_, err := db.db.ExecContext(ctx, `CREATE TRIGGER reject_operation BEFORE INSERT ON compose_operation_requests BEGIN SELECT RAISE(ABORT, 'injected failure'); END`)
+	_, err := rawDBOf(t, db).ExecContext(ctx, `CREATE TRIGGER reject_operation BEFORE INSERT ON compose_operation_requests BEGIN SELECT RAISE(ABORT, 'injected failure'); END`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +116,7 @@ func TestComposeOperationCreateAtomicRollback(t *testing.T) {
 	if _, err = db.GetComposeStack(ctx, "a", "web"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("orphan stack: %v", err)
 	}
-	_, err = db.db.ExecContext(ctx, `DROP TRIGGER reject_operation`)
+	_, err = rawDBOf(t, db).ExecContext(ctx, `DROP TRIGGER reject_operation`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,11 +141,11 @@ func TestComposeOperationFinalizeConditions(t *testing.T) {
 				op, _ := prepareTestOperation(t, db, req)
 				switch mutation {
 				case "id":
-					_, _ = db.db.ExecContext(ctx, `UPDATE compose_stacks SET id = 'replacement' WHERE agent_id = 'a'`)
+					_, _ = rawDBOf(t, db).ExecContext(ctx, `UPDATE compose_stacks SET id = 'replacement' WHERE agent_id = 'a'`)
 				case "version":
-					_, _ = db.db.ExecContext(ctx, `UPDATE compose_stacks SET version = 2 WHERE agent_id = 'a'`)
+					_, _ = rawDBOf(t, db).ExecContext(ctx, `UPDATE compose_stacks SET version = 2 WHERE agent_id = 'a'`)
 				case "hash":
-					_, _ = db.db.ExecContext(ctx, `UPDATE compose_stacks SET config_hash = 'other' WHERE agent_id = 'a'`)
+					_, _ = rawDBOf(t, db).ExecContext(ctx, `UPDATE compose_stacks SET config_hash = 'other' WHERE agent_id = 'a'`)
 				}
 				final, err := db.FinalizeComposeOperation(ctx, op, mutation != "failure")
 				if err != nil || !final.Finalized {
@@ -186,11 +189,11 @@ func TestComposeOperationRetentionAndCap(t *testing.T) {
 	req := operationRequest()
 	op, _ := prepareTestOperation(t, db, req)
 	old := time.Now().Add(-25 * time.Hour).Unix()
-	_, _ = db.db.ExecContext(ctx, `UPDATE compose_operation_requests SET created_at = ?`, old)
+	_, _ = rawDBOf(t, db).ExecContext(ctx, `UPDATE compose_operation_requests SET created_at = ?`, old)
 	req.RequestID = "second"
 	prepareTestOperation(t, db, req)
 	var count int
-	_ = db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM compose_operation_requests`).Scan(&count)
+	_ = rawDBOf(t, db).QueryRowContext(ctx, `SELECT COUNT(*) FROM compose_operation_requests`).Scan(&count)
 	if count != 2 {
 		t.Fatal("pruned nonfinalized operation")
 	}
@@ -199,13 +202,13 @@ func TestComposeOperationRetentionAndCap(t *testing.T) {
 	}
 	req.RequestID = "third"
 	prepareTestOperation(t, db, req)
-	_ = db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM compose_operation_requests`).Scan(&count)
+	_ = rawDBOf(t, db).QueryRowContext(ctx, `SELECT COUNT(*) FROM compose_operation_requests`).Scan(&count)
 	if count != 2 {
 		t.Fatalf("finalized TTL not pruned: %d", count)
 	}
-	err := db.Tx(ctx, func(tx *sqlTx) error {
+	err := db.TxModel(ctx, func(ctx context.Context, tx gdb.TX) error {
 		for i := count; i < maxComposeOperations; i++ {
-			_, err := tx.ExecContext(ctx, `INSERT INTO compose_operation_requests (`+composeOperationColumns+`) VALUES ('a', ?, 'web', 'up', 'fingerprint', '', 'stack', 1, 'hash', ?, 0, '', 0)`, "cap-"+time.Unix(int64(i), 0).Format(time.RFC3339), old)
+			_, err := tx.Exec(`INSERT INTO compose_operation_requests (`+strings.Join(composeOperationFields(), ", ")+`) VALUES ('a', ?, 'web', 'up', 'fingerprint', '', 'stack', 1, 'hash', ?, 0, '', 0)`, "cap-"+time.Unix(int64(i), 0).Format(time.RFC3339), old)
 			if err != nil {
 				return err
 			}

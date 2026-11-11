@@ -13,10 +13,15 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"errors"
-	"fmt"
 	"time"
+
+	"github.com/gogf/gf/v2/database/gdb"
+	"github.com/gogf/gf/v2/errors/gerror"
+
+	"arkade/hub/internal/dao"
+	"arkade/hub/internal/model/do"
+	"arkade/hub/internal/model/entity"
 )
 
 // ComposeStack 是 compose_stacks 表的一行。
@@ -50,31 +55,44 @@ const composeStackColumns = `id, agent_id, name, content, env_content, config_ha
 func (d *DB) CreateComposeStack(ctx context.Context, s ComposeStack) error {
 	const q = `INSERT INTO compose_stacks(id, agent_id, name, content, env_content, config_hash, version, created_at, updated_at, synced_at)
 	           VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-	_, err := d.db.ExecContext(ctx, q,
+	_, err := d.gdb.Exec(ctx, q,
 		s.ID, s.AgentID, s.Name, s.Content, s.EnvContent, s.ConfigHash, s.Version,
 		timeToUnix(s.CreatedAt), timeToUnix(s.UpdatedAt), timeToUnix(s.SyncedAt),
 	)
 	return normalizeExecError(err, "创建编排")
 }
 
-// scanComposeStack 是单行扫描的唯一实现，所有单行查询共用。
-func scanComposeStack(row interface {
-	Scan(dest ...any) error
-}) (ComposeStack, error) {
-	var s ComposeStack
-	var createdAt, updatedAt, syncedAt int64
-	err := row.Scan(&s.ID, &s.AgentID, &s.Name, &s.Content, &s.EnvContent, &s.ConfigHash, &s.Version,
-		&createdAt, &updatedAt, &syncedAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return ComposeStack{}, ErrNotFound
+// composeStackFields 返回查询列名。
+func composeStackFields() []string {
+	c := dao.ComposeStacks.Columns()
+	return []string{c.Id, c.AgentId, c.Name, c.Content, c.EnvContent,
+		c.ConfigHash, c.Version, c.CreatedAt, c.UpdatedAt, c.SyncedAt}
+}
+
+// composeStackFromEntity 把 entity 行转成 ComposeStack（常规查询路径）。
+func composeStackFromEntity(e entity.ComposeStacks) ComposeStack {
+	return ComposeStack{
+		ID:         e.Id,
+		AgentID:    e.AgentId,
+		Name:       e.Name,
+		Content:    e.Content,
+		EnvContent: e.EnvContent,
+		ConfigHash: e.ConfigHash,
+		Version:    int64(e.Version),
+		CreatedAt:  unixToTime(int64(e.CreatedAt)),
+		UpdatedAt:  unixToTime(int64(e.UpdatedAt)),
+		SyncedAt:   unixToTime(int64(e.SyncedAt)),
 	}
-	if err != nil {
-		return ComposeStack{}, fmt.Errorf("查询编排失败: %w", err)
+}
+
+// composeStackFromRecord 用于 RETURNING 路径：gdb.GetOne 返回 Record，
+// 用它的 Struct 转到 entity 再走同一套转换，避免第二份手写映射。
+func composeStackFromRecord(rec gdb.Record) (ComposeStack, error) {
+	var e entity.ComposeStacks
+	if err := rec.Struct(&e); err != nil {
+		return ComposeStack{}, gerror.Wrap(err, "解析编排记录失败")
 	}
-	s.CreatedAt = unixToTime(createdAt)
-	s.UpdatedAt = unixToTime(updatedAt)
-	s.SyncedAt = unixToTime(syncedAt)
-	return s, nil
+	return composeStackFromEntity(e), nil
 }
 
 // GetComposeStack 按 (agentID, name) 查编排。
@@ -82,8 +100,18 @@ func scanComposeStack(row interface {
 // 用「Agent + 项目名」而不是主键 id 作为查询条件：对外所有接口的路径都是
 // /agents/{agentID}/stacks/{name}，项目名才是用户视角的标识；id 只在内部用。
 func (d *DB) GetComposeStack(ctx context.Context, agentID, name string) (ComposeStack, error) {
-	q := `SELECT ` + composeStackColumns + ` FROM compose_stacks WHERE agent_id = ? AND name = ?`
-	return scanComposeStack(d.db.QueryRowContext(ctx, q, agentID, name))
+	c := dao.ComposeStacks.Columns()
+	var e entity.ComposeStacks
+	err := scanOne(ctx, d.gdb.Model(dao.ComposeStacks.Table()).Fields(composeStackFields()).
+		Where(c.AgentId, agentID).
+		Where(c.Name, name), &e)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return ComposeStack{}, ErrNotFound
+		}
+		return ComposeStack{}, gerror.Wrap(err, "查询编排失败")
+	}
+	return composeStackFromEntity(e), nil
 }
 
 // ListComposeStacks 列出某台 Agent 的全部编排，按项目名升序（界面顺序稳定）。
@@ -91,23 +119,19 @@ func (d *DB) GetComposeStack(ctx context.Context, agentID, name string) (Compose
 // agentID 为空时返回空列表而不是报错：调用方只会在已知 Agent 的上下文里调用，
 // 空值属于编程错误，但没必要为此让接口 500。
 func (d *DB) ListComposeStacks(ctx context.Context, agentID string) ([]ComposeStack, error) {
-	q := `SELECT ` + composeStackColumns + ` FROM compose_stacks WHERE agent_id = ? ORDER BY name ASC`
-	rows, err := d.db.QueryContext(ctx, q, agentID)
-	if err != nil {
-		return nil, fmt.Errorf("查询编排列表失败: %w", err)
+	c := dao.ComposeStacks.Columns()
+	var ents []entity.ComposeStacks
+	if err := scanAll(ctx, d.gdb.Model(dao.ComposeStacks.Table()).Fields(composeStackFields()).
+		Where(c.AgentId, agentID).
+		Order(c.Name+" ASC"), &ents); err != nil {
+		return nil, gerror.Wrap(err, "查询编排列表失败")
 	}
-	defer rows.Close()
 
-	out := make([]ComposeStack, 0, 16)
-	for rows.Next() {
-		s, serr := scanComposeStack(rows)
-		if serr != nil {
-			// rows 的 Scan 不会返回 sql.ErrNoRows，这里只需包装错误。
-			return nil, fmt.Errorf("扫描编排记录失败: %w", serr)
-		}
-		out = append(out, s)
+	out := make([]ComposeStack, 0, len(ents))
+	for _, e := range ents {
+		out = append(out, composeStackFromEntity(e))
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // UpdateComposeStack 以乐观锁方式更新编排内容。
@@ -127,8 +151,8 @@ func (d *DB) UpdateComposeStack(ctx context.Context, agentID, name string, expec
 	           SET content = ?, config_hash = ?, version = version + 1, updated_at = ?
 	           WHERE agent_id = ? AND name = ? AND version = ?
 	           RETURNING ` + composeStackColumns
-	updated, err := scanComposeStack(d.db.QueryRowContext(ctx, q,
-		content, configHash, time.Now().UTC().Unix(), agentID, name, expectedVersion))
+	updated, err := d.composeStackViaReturning(ctx, q,
+		content, configHash, time.Now().UTC().Unix(), agentID, name, expectedVersion)
 	if errors.Is(err, ErrNotFound) {
 		// 没命中分两种情况，必须区分：
 		//   - 记录不存在 → ErrNotFound（404）
@@ -140,7 +164,7 @@ func (d *DB) UpdateComposeStack(ctx context.Context, agentID, name string, expec
 		return ComposeStack{}, false, nil
 	}
 	if err != nil {
-		return ComposeStack{}, false, fmt.Errorf("更新编排失败: %w", err)
+		return ComposeStack{}, false, gerror.Wrap(err, "更新编排失败")
 	}
 	return updated, true, nil
 }
@@ -153,8 +177,8 @@ func (d *DB) UpdateComposeProject(ctx context.Context, agentID, name, content, e
 		SET content = ?, env_content = ?, config_hash = ?, version = version + 1, updated_at = ?
 		WHERE agent_id = ? AND name = ? AND version = ?
 		RETURNING ` + composeStackColumns
-	updated, err := scanComposeStack(d.db.QueryRowContext(ctx, q,
-		content, envContent, configHash, timeToUnix(at), agentID, name, expectedVersion))
+	updated, err := d.composeStackViaReturning(ctx, q,
+		content, envContent, configHash, timeToUnix(at), agentID, name, expectedVersion)
 	if errors.Is(err, ErrNotFound) {
 		// 保留旧更新接口的语义：不存在是 404，版本过期是冲突。
 		if _, gerr := d.GetComposeStack(ctx, agentID, name); gerr != nil {
@@ -163,30 +187,31 @@ func (d *DB) UpdateComposeProject(ctx context.Context, agentID, name, content, e
 		return ComposeStack{}, false, nil
 	}
 	if err != nil {
-		return ComposeStack{}, false, fmt.Errorf("更新编排项目失败: %w", err)
+		return ComposeStack{}, false, gerror.Wrap(err, "更新编排项目失败")
 	}
 	return updated, true, nil
 }
 
 // DeleteComposeStack 删除编排记录。记录不存在返回 ErrNotFound。
 func (d *DB) DeleteComposeStack(ctx context.Context, agentID, name string) error {
-	res, err := d.db.ExecContext(ctx,
-		`DELETE FROM compose_stacks WHERE agent_id = ? AND name = ?`, agentID, name)
+	c := dao.ComposeStacks.Columns()
+	res, err := d.gdb.Model(dao.ComposeStacks.Table()).Ctx(ctx).
+		Where(c.AgentId, agentID).
+		Where(c.Name, name).
+		Delete()
 	if err != nil {
-		return fmt.Errorf("删除编排失败: %w", err)
+		return gerror.Wrap(err, "删除编排失败")
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return requireAffected(res, "删除编排")
 }
 
 // CountComposeStacks 统计某台 Agent 上的编排数量（Agent 删除前的提示用）。
 func (d *DB) CountComposeStacks(ctx context.Context, agentID string) (int, error) {
-	var n int
-	if err := d.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM compose_stacks WHERE agent_id = ?`, agentID).Scan(&n); err != nil {
-		return 0, fmt.Errorf("统计编排数量失败: %w", err)
+	n, err := d.gdb.Model(dao.ComposeStacks.Table()).Ctx(ctx).
+		Where(dao.ComposeStacks.Columns().AgentId, agentID).
+		Count()
+	if err != nil {
+		return 0, gerror.Wrap(err, "统计编排数量失败")
 	}
 	return n, nil
 }
@@ -201,14 +226,36 @@ func (d *DB) CountComposeStacks(ctx context.Context, agentID string) (int, error
 // 故意不动 version、content、updated_at：同步只是投递成功，
 // 不代表内容发生变化，改动这些字段会让乐观锁误判。
 func (d *DB) MarkComposeStackSynced(ctx context.Context, agentID, name string) error {
-	res, err := d.db.ExecContext(ctx,
-		`UPDATE compose_stacks SET synced_at = ? WHERE agent_id = ? AND name = ?`,
-		time.Now().UTC().Unix(), agentID, name)
+	c := dao.ComposeStacks.Columns()
+	res, err := d.gdb.Model(dao.ComposeStacks.Table()).Ctx(ctx).
+		Where(c.AgentId, agentID).
+		Where(c.Name, name).
+		Data(do.ComposeStacks{SyncedAt: time.Now().UTC().Unix()}).
+		Update()
 	if err != nil {
-		return fmt.Errorf("记录编排同步时间失败: %w", err)
+		return gerror.Wrap(err, "记录编排同步时间失败")
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return ErrNotFound
+	return requireAffected(res, "记录编排同步时间")
+}
+
+// composeStackViaReturning 执行带 RETURNING 的乐观锁 UPDATE 并解析返回行。
+//
+// 为什么这里保留原生 SQL：UPDATE ... SET version = version + 1 ...
+// WHERE version = ? RETURNING <列> 是**一条**语句——版本匹配、自增、读回
+// 三者原子完成。用 Model 链式 API 无法表达 RETURNING，拆成
+// "先 Update 再 Select" 就会在两条语句之间插进并发更新，
+// 返回的记录可能已被别人改过，前端拿到的 version 随即失效。
+//
+// 并发安全来自 WHERE version = ? 与 RowsAffected 的原子匹配，
+// 不在 RETURNING 本身；没有返回行即表示版本不匹配或记录不存在。
+// 调用方据 ErrNotFound 区分这两种情况。
+func (d *DB) composeStackViaReturning(ctx context.Context, query string, args ...any) (ComposeStack, error) {
+	one, err := d.gdb.GetOne(ctx, query, args...)
+	if err != nil {
+		return ComposeStack{}, gerror.Wrap(err, "查询编排失败")
 	}
-	return nil
+	if len(one) == 0 {
+		return ComposeStack{}, ErrNotFound
+	}
+	return composeStackFromRecord(one)
 }

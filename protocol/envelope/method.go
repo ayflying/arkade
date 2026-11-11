@@ -110,6 +110,38 @@ const (
 	MethodImageTaskStatus  = "image.task.status"  // 查询任务进度
 	MethodImageTaskCancel  = "image.task.cancel"  // 取消任务
 	MethodImageTaskRelease = "image.task.release" // 释放任务占用的临时归档
+
+	// 可复用归档导出（编排迁移用）。
+	//
+	// 与上面 image.save 的分工：
+	//   - image.save 产出的是**任务内**归档，任务结束即按 TTL 消失；
+	//   - image.archive.* 产出的归档由 ExportID 独立持有，
+	//     能在任务结束后继续被读取，直到显式 close 或过期。
+	//
+	// 迁移流程因此可以"先导出、再规划、最后拉取"，不必把整段
+	// 迁移塞进一个任务的生存期内。
+	MethodImageArchiveExport   = "image.archive.export"    // 导出并持有归档，返回 ExportID
+	MethodImageArchiveOpen     = "image.archive.open"      // 确认 ExportID 仍可用
+	MethodImageArchiveChunkGet = "image.archive.chunk.get" // 按 offset 读取持有中的归档
+	MethodImageArchiveClose    = "image.archive.close"     // 释放归档
+
+	// 编排迁移（跨服务器）所需的数据卷与配置导入原语。
+	//
+	// 为什么卷不与镜像共用一套方法：镜像归档要"持有到显式关闭"
+	// （迁移先导出、再规划、最后拉取），卷归档是"导出即可读、读完即释放"。
+	// 两者生命周期不同，硬合并会逼其中一方接受不需要的复杂度。
+	//
+	// 但两者**结构同构**（export/open/chunk.get/close ↔ begin/chunk.put/commit），
+	// 因此 Hub 侧可以只换方法名就复用同一套完整性校验。
+	MethodVolumeArchiveExport   = "volume.archive.export"
+	MethodVolumeArchiveOpen     = "volume.archive.open"
+	MethodVolumeArchiveChunkGet = "volume.archive.chunk.get"
+	MethodVolumeArchiveClose    = "volume.archive.close"
+	MethodVolumeImportBegin     = "volume.import.begin"
+	MethodVolumeImportChunkPut  = "volume.import.chunk.put"
+	MethodVolumeImportCommit    = "volume.import.commit"
+	MethodVolumeImportStatus    = "volume.import.status"
+	MethodComposeImport         = "compose.import"
 )
 
 // Hub → Agent 的本地通道方法名（Agent 内部 CLI 复用同一套处理器）。
@@ -157,4 +189,21 @@ const (
 	LocalMethodImageTaskStatus  = MethodImageTaskStatus
 	LocalMethodImageTaskCancel  = MethodImageTaskCancel
 	LocalMethodImageTaskRelease = MethodImageTaskRelease
+
+	// 可复用归档：本地 CLI 同样可用（离线迁移时尤其有用）。
+	LocalMethodImageArchiveExport   = MethodImageArchiveExport
+	LocalMethodImageArchiveOpen     = MethodImageArchiveOpen
+	LocalMethodImageArchiveChunkGet = MethodImageArchiveChunkGet
+	LocalMethodImageArchiveClose    = MethodImageArchiveClose
+
+	// 编排迁移原语：本地 CLI 同样可用（离线迁移时尤其有用）。
+	LocalMethodVolumeArchiveExport   = MethodVolumeArchiveExport
+	LocalMethodVolumeArchiveOpen     = MethodVolumeArchiveOpen
+	LocalMethodVolumeArchiveChunkGet = MethodVolumeArchiveChunkGet
+	LocalMethodVolumeArchiveClose    = MethodVolumeArchiveClose
+	LocalMethodVolumeImportBegin     = MethodVolumeImportBegin
+	LocalMethodVolumeImportChunkPut  = MethodVolumeImportChunkPut
+	LocalMethodVolumeImportCommit    = MethodVolumeImportCommit
+	LocalMethodVolumeImportStatus    = MethodVolumeImportStatus
+	LocalMethodComposeImport         = MethodComposeImport
 )

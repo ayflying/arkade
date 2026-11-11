@@ -76,7 +76,7 @@ func TestCreateGroupConflict(t *testing.T) {
 func TestForeignKeysEnabled(t *testing.T) {
 	db := newTestDB(t)
 	var on int
-	if err := db.db.QueryRowContext(context.Background(), `PRAGMA foreign_keys`).Scan(&on); err != nil {
+	if err := rawDBOf(t, db).QueryRowContext(context.Background(), `PRAGMA foreign_keys`).Scan(&on); err != nil {
 		t.Fatalf("读取 PRAGMA 失败: %v", err)
 	}
 	if on != 1 {

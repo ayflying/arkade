@@ -27,7 +27,14 @@
  */
 export type StackOperationAction = 'up' | 'stop' | 'restart' | 'pull' | 'rebuild' | 'remove' | 'backup'
 
-/** 所有动作的固定顺序，用于按钮渲染与测试断言 */
+/**
+ * 所有动作的固定顺序，用于按钮渲染与测试断言
+ *
+ * **注意不含 `migrate`**：迁移是「源编排 → 另一台服务器」，
+ * 身份维度与入参都不同（目标服务器 / 是否含卷 / 是否自动启动），
+ * 它有独立端点与独立弹窗。把它放进这个枚举会让所有编辑动作的按钮
+ * 循环、禁用判断、动作校验都被迫处理一个它不认识的动​作。
+ */
 export const STACK_OPERATION_ACTIONS: readonly StackOperationAction[] = [
   'up',
   'stop',
@@ -36,6 +43,21 @@ export const STACK_OPERATION_ACTIONS: readonly StackOperationAction[] = [
   'rebuild',
   'backup',
   'remove'
+]
+
+/**
+ * 任务里可能出现的全部动作。
+ *
+ * 比 `StackOperationAction` 多一个 `migrate`：迁移任务复用同一套任务模型
+ * 与同一个增量读取接口，但它不是「编辑本编排」的动作。
+ * 读取任务时按这个集合归一化，否则迁移任务的 action 会被归成 `unknown`，
+ * 进而被 `expectedAction` 校验误拒。
+ */
+export type StackTaskAction = StackOperationAction | 'migrate'
+
+export const STACK_TASK_ACTIONS: readonly StackTaskAction[] = [
+  ...STACK_OPERATION_ACTIONS,
+  'migrate'
 ]
 
 /**
@@ -94,8 +116,13 @@ export interface StackOperationTask {
   task_id: string
   /** 编排名 */
   name: string
-  /** 本次执行的动作 */
-  action: StackOperationAction | 'unknown'
+  /**
+   * 本次执行的动作。
+   *
+   * 迁移任务是 `migrate`——此时 `name` 仍然是**源编排**名（后端约定不变），
+   * 目标服务器不在任务体里体现，由前端自己记着发起时的选择。
+   */
+  action: StackTaskAction | 'unknown'
   /** 当前正在执行（或最后执行）的命令，argv 拼接，只读展示 */
   command: string
   /** 命令的实际工作目录（Agent 上报；旧版可能为空） */
@@ -183,12 +210,53 @@ export interface StartStackOperationRequest {
   create?: boolean
 }
 
-function normalizeAction(raw: unknown): StackOperationAction | 'unknown' {
+/**
+ * 迁移编排到另一台服务器（全量迁移，不做排除项）。
+ *
+ * 端点是独立的：`POST /agents/:id/stacks/:name/migrate`。
+ * 返回的任务体与操作任务完全一致，进度用同一个增量读取接口。
+ *
+ * `confirmation: true` 是**硬性确认位**——后端要求它为 true 才执行，
+ * 对应界面上的二次确认，不是随便加的字段。
+ */
+export interface StackMigrateRequest {
+  /** 目标服务器 id（不能与源相同） */
+  target_agent_id: string
+  /**
+   * 是否连同数据卷一起迁移。**默认 false**。
+   *
+   * 不勾时目标上只有编排配置和用到的镜像，数据卷是空的——
+   * 这必须明确写在界面上，否则用户会以为数据也跟着过去了。
+   */
+  include_volumes: boolean
+  /**
+   * 迁移完成后是否自动启动目标上的编排。**默认 false**。
+   *
+   * 自动启动会在目标服务器上创建并运行容器，属于有副作用的动作，
+   * 所以默认不勾，由用户显式选择。
+   */
+  start_after: boolean
+  /** 硬性确认位：后端要求必须为 true */
+  confirmation: true
+}
+
+/**
+ * 迁移弹窗里必须讲清的四件事。
+ *
+ * 抽成常量而不是写在模板里，是为了能被测试逐条钉住：
+ * 这四条都是**用户会误解成相反结论**的点，少写一条就会出事。
+ */
+export const STACK_MIGRATE_NOTES: readonly string[] = [
+  '默认只迁移编排配置和用到的镜像，不含数据卷。勾选「同时迁移数据卷」才会带上数据卷。',
+  '用宿主机目录绑定的挂载（bind mount）不会迁移——目标服务器上需要自己准备对应目录。',
+  '目标服务器已有同名编排会被拒绝，请先在目标上改名或删除后再迁移。',
+  '迁移是复制不是移动：源服务器的容器不会停止，也不会被删除。'
+]
+
+function normalizeAction(raw: unknown): StackTaskAction | 'unknown' {
   if (typeof raw !== 'string') return 'unknown'
   const s = raw.trim().toLowerCase()
-  return STACK_OPERATION_ACTIONS.includes(s as StackOperationAction)
-    ? (s as StackOperationAction)
-    : 'unknown'
+  return STACK_TASK_ACTIONS.includes(s as StackTaskAction) ? (s as StackTaskAction) : 'unknown'
 }
 
 function normalizeStream(raw: unknown): StackOperationEvent['stream'] {

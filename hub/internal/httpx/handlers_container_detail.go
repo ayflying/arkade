@@ -2,7 +2,6 @@ package httpx
 
 import (
 	"arkade/hub/internal/user"
-	"github.com/go-chi/chi/v5"
 	"net/http"
 	"strings"
 )
@@ -14,7 +13,7 @@ func handleContainerDetail(d Deps) http.HandlerFunc {
 		if !requirePermission(w, d, r, agentID, user.PermManage) {
 			return
 		}
-		id := chi.URLParam(r, "containerID")
+		id := pathParam(r, "containerID")
 		if strings.TrimSpace(id) == "" || len(id) > 256 {
 			badRequest(w, d, "容器标识无效")
 			return

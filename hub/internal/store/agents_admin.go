@@ -10,10 +10,13 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"errors"
-	"fmt"
+
+	"github.com/gogf/gf/v2/database/gdb"
+	"github.com/gogf/gf/v2/errors/gerror"
+
+	"arkade/hub/internal/dao"
+	"arkade/hub/internal/model/do"
 )
 
 // AgentAdminFields 是管理员可编辑的字段。
@@ -42,41 +45,44 @@ func (d *DB) UpdateAgentAdmin(ctx context.Context, id string, fields AgentAdminF
 		return AgentRecord{}, ErrNotFound
 	}
 
-	var sets []string
-	var args []any
+	// DO 的字段是 any，未赋值的保持 nil、被 ORM 忽略，
+	// 所以"本次改哪些字段"直接由赋值与否表达。
+	data := do.Agents{}
+	changed := false
 
 	if fields.DirectAddress != nil {
-		sets = append(sets, "direct_address = ?")
-		args = append(args, *fields.DirectAddress)
+		data.DirectAddress = *fields.DirectAddress
+		changed = true
 	}
 	if fields.DisplayName != nil {
-		sets = append(sets, "display_name = ?")
-		args = append(args, *fields.DisplayName)
+		data.DisplayName = *fields.DisplayName
+		changed = true
 	}
 	if fields.Note != nil {
-		sets = append(sets, "note = ?")
-		args = append(args, *fields.Note)
+		data.Note = *fields.Note
+		changed = true
 	}
 	if fields.Labels != nil {
-		raw, err := json.Marshal(*fields.Labels)
-		if err != nil {
-			return AgentRecord{}, fmt.Errorf("序列化 Agent 标签失败: %w", err)
+		raw, mErr := json.Marshal(*fields.Labels)
+		if mErr != nil {
+			return AgentRecord{}, gerror.Wrap(mErr, "序列化 Agent 标签失败")
 		}
-		sets = append(sets, "labels = ?")
-		args = append(args, string(raw))
+		data.Labels = string(raw)
+		changed = true
 	}
 
 	// 没有任何字段要改时直接返回当前记录，不发 UPDATE。
 	// 避免产生一条"什么都没变"的写操作去推动 updated_at。
-	if len(sets) == 0 {
+	if !changed {
 		return d.GetAgent(ctx, id)
 	}
+	data.UpdatedAt = now
 
-	sets = append(sets, "updated_at = ?")
-	args = append(args, now, id)
-	q := "UPDATE agents SET " + joinComma(sets) + " WHERE id = ?"
-	if _, err := d.db.ExecContext(ctx, q, args...); err != nil {
-		return AgentRecord{}, fmt.Errorf("更新 Agent 信息失败: %w", err)
+	if _, err := d.gdb.Model(dao.Agents.Table()).Ctx(ctx).
+		Where(dao.Agents.Columns().Id, id).
+		Data(data).
+		Update(); err != nil {
+		return AgentRecord{}, gerror.Wrap(err, "更新 Agent 信息失败")
 	}
 	return d.GetAgent(ctx, id)
 }
@@ -93,14 +99,16 @@ func (d *DB) SetAgentDisabled(ctx context.Context, id string, disabled bool, now
 	if !exists {
 		return ErrNotFound
 	}
+
 	v := 0
 	if disabled {
 		v = 1
 	}
-	if _, err := d.db.ExecContext(ctx,
-		`UPDATE agents SET disabled = ?, updated_at = ? WHERE id = ?`, v, now, id,
-	); err != nil {
-		return fmt.Errorf("更新 Agent 禁用状态失败: %w", err)
+	if _, err := d.gdb.Model(dao.Agents.Table()).Ctx(ctx).
+		Where(dao.Agents.Columns().Id, id).
+		Data(do.Agents{Disabled: v, UpdatedAt: now}).
+		Update(); err != nil {
+		return gerror.Wrap(err, "更新 Agent 禁用状态失败")
 	}
 	return nil
 }
@@ -111,15 +119,18 @@ func (d *DB) SetAgentDisabled(ctx context.Context, id string, disabled bool, now
 // Agent 不存在时返回 (false, ErrNotFound)，由调用方决定如何处理
 // （当前策略是允许首次注册）。
 func (d *DB) IsAgentDisabled(ctx context.Context, id string) (bool, error) {
-	var disabled int
-	err := d.db.QueryRowContext(ctx, `SELECT disabled FROM agents WHERE id = ?`, id).Scan(&disabled)
-	if errors.Is(err, sql.ErrNoRows) {
+	c := dao.Agents.Columns()
+	one, err := d.gdb.Model(dao.Agents.Table()).Ctx(ctx).
+		Fields(c.Disabled).
+		Where(c.Id, id).
+		One()
+	if err != nil {
+		return false, gerror.Wrap(err, "查询 Agent 禁用状态失败")
+	}
+	if one.IsEmpty() {
 		return false, ErrNotFound
 	}
-	if err != nil {
-		return false, fmt.Errorf("查询 Agent 禁用状态失败: %w", err)
-	}
-	return disabled != 0, nil
+	return one[c.Disabled].Int() != 0, nil
 }
 
 // DeleteAgent 删除 Agent 记录。
@@ -138,16 +149,21 @@ func (d *DB) IsAgentDisabled(ctx context.Context, id string) (bool, error) {
 // 用事务包起来是为了保证"检查存在 → 删除"不被并发插入穿插，
 // 也让将来若真的要连带清理关联数据时有明确的落点。
 func (d *DB) DeleteAgent(ctx context.Context, id string) error {
-	return d.Tx(ctx, func(tx *sqlTx) error {
-		var exists int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM agents WHERE id = ?`, id).Scan(&exists); err != nil {
-			return fmt.Errorf("查询 Agent 是否存在失败: %w", err)
+	return d.TxModel(ctx, func(ctx context.Context, tx gdb.TX) error {
+		c := dao.Agents.Columns()
+		exists, err := tx.Model(dao.Agents.Table()).Ctx(ctx).
+			Where(c.Id, id).
+			Count()
+		if err != nil {
+			return gerror.Wrap(err, "查询 Agent 是否存在失败")
 		}
 		if exists == 0 {
 			return ErrNotFound
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM agents WHERE id = ?`, id); err != nil {
-			return fmt.Errorf("删除 Agent 失败: %w", err)
+		if _, err := tx.Model(dao.Agents.Table()).Ctx(ctx).
+			Where(c.Id, id).
+			Delete(); err != nil {
+			return gerror.Wrap(err, "删除 Agent 失败")
 		}
 		return nil
 	})
@@ -159,34 +175,23 @@ func (d *DB) DeleteAgent(ctx context.Context, id string) error {
 // 用 LEFT JOIN 而不是先查所有 agent_id 再比对：后者在编排多时
 // 会产生大量往返，而这个查询在数据库里一次算完。
 func (d *DB) CountOrphanComposeStacks(ctx context.Context) (int, error) {
-	var n int
-	err := d.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM compose_stacks cs
-		 LEFT JOIN agents a ON a.id = cs.agent_id
-		 WHERE a.id IS NULL`).Scan(&n)
+	n, err := d.gdb.Model(dao.ComposeStacks.Table()+" cs").Ctx(ctx).
+		LeftJoin(dao.Agents.Table()+" a", "a.id = cs.agent_id").
+		WhereNull("a.id").
+		Count()
 	if err != nil {
-		return 0, fmt.Errorf("统计孤儿编排失败: %w", err)
+		return 0, gerror.Wrap(err, "统计孤儿编排失败")
 	}
 	return n, nil
 }
 
 // agentExists 判断 Agent 是否存在。
 func (d *DB) agentExists(ctx context.Context, id string) (bool, error) {
-	var n int
-	if err := d.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM agents WHERE id = ?`, id).Scan(&n); err != nil {
-		return false, fmt.Errorf("查询 Agent 是否存在失败: %w", err)
+	n, err := d.gdb.Model(dao.Agents.Table()).Ctx(ctx).
+		Where(dao.Agents.Columns().Id, id).
+		Count()
+	if err != nil {
+		return false, gerror.Wrap(err, "查询 Agent 是否存在失败")
 	}
 	return n > 0, nil
-}
-
-// joinComma 用逗号拼接 SQL 片段。
-func joinComma(parts []string) string {
-	out := ""
-	for i, p := range parts {
-		if i > 0 {
-			out += ", "
-		}
-		out += p
-	}
-	return out
 }

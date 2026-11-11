@@ -331,9 +331,6 @@ export function useStackOperationTask(options: StackOperationRunnerOptions) {
         errorText.value = '没有权限执行该操作。该操作需要服务器的操作权限。'
         permanentError.value = true
       } else if (httpStatus(err) === 409) {
-        errorText.value = '配置已被他人修改，请刷新后重试。'
-        permanentError.value = true
-      } else if (httpStatus(err) === 409) {
         /*
          * 乐观锁冲突：服务器上的配置已被别人改过。
          *

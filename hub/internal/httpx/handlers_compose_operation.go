@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"github.com/go-chi/chi/v5"
 	"net/http"
 	"sort"
 	"strconv"
@@ -51,7 +50,7 @@ func operationFingerprint(p operationRequest) string {
 func handleStartComposeOperation(d Deps) http.HandlerFunc {
 	watchers := &operationWatchers{}
 	return func(w http.ResponseWriter, r *http.Request) {
-		agent, name := agentIDFromPath(r), chi.URLParam(r, "name")
+		agent, name := agentIDFromPath(r), pathParam(r, "name")
 		if !requirePermission(w, d, r, agent, user.PermOperate) || !requireComposeName(w, d, name) {
 			return
 		}
@@ -196,7 +195,7 @@ func handleStartComposeOperation(d Deps) http.HandlerFunc {
 
 func handleGetComposeOperation(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		agent, name, id := agentIDFromPath(r), chi.URLParam(r, "name"), chi.URLParam(r, "taskID")
+		agent, name, id := agentIDFromPath(r), pathParam(r, "name"), pathParam(r, "taskID")
 		if !requirePermission(w, d, r, agent, user.PermOperate) || !requireComposeName(w, d, name) {
 			return
 		}
@@ -215,6 +214,19 @@ func handleGetComposeOperation(d Deps) http.HandlerFunc {
 		}
 		op, err := d.DB.FindOperationByTask(r.Context(), agent, name, id)
 		if err != nil {
+			// ============================ 迁移任务回落 ============================
+			// 跨服务器迁移的任务**不写** operation_tasks 表（由 stackmigrate.Manager
+			// 在内存里维护），因此这里查不到是正常的。若直接 404，前端会把
+			// 「查看迁移日志」显示成「后端尚未部署」。
+			//
+			// **只在"确实没有这条记录"时回落**：数据库真故障必须原样报错，
+			// 不能借回落把一个 DB 错误变成看似正常的迁移响应——
+			// 那会把故障藏起来，也会让真实的存储问题无从发现。
+			if errors.Is(err, store.ErrNotFound) {
+				if handleGetMigrateTask(d, w, r, agent, name, id) {
+					return
+				}
+			}
 			respondStoreError(w, d, err, "编排任务不存在")
 			return
 		}

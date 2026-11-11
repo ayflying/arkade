@@ -10,7 +10,6 @@ import (
 	"arkade/hub/internal/store"
 	"arkade/hub/internal/user"
 	"arkade/protocol/envelope"
-	"github.com/go-chi/chi/v5"
 )
 
 func externalProject(ctx context.Context, d Deps, agent, name string) (*envelope.ComposeProjectSummary, error) {
@@ -27,7 +26,7 @@ func externalProject(ctx context.Context, d Deps, agent, name string) (*envelope
 	return nil, store.ErrNotFound
 }
 func requireExternal(w http.ResponseWriter, r *http.Request, d Deps, perm user.Permission) (string, string, *envelope.ComposeProjectSummary) {
-	agent, name := agentIDFromPath(r), chi.URLParam(r, "name")
+	agent, name := agentIDFromPath(r), pathParam(r, "name")
 	if !requirePermission(w, d, r, agent, perm) || !requireComposeName(w, d, name) {
 		return "", "", nil
 	}

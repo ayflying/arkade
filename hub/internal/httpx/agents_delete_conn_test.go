@@ -20,11 +20,11 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/gogf/gf/v2/net/ghttp"
 	"github.com/gorilla/websocket"
 
 	"arkade/hub/internal/agentlink"
@@ -45,7 +45,7 @@ func TestDeleteAgentClosesLiveConnection(t *testing.T) {
 	_ = srv
 
 	// 1. 让一个 Agent 真正连上来。
-	agentID := connectRealAgent(t, srv.URL, agentToken)
+	agentID := connectRealAgent(t, srv, agentToken)
 	if !reg.IsOnline(agentID) {
 		t.Fatal("Agent 连上后应出现在在线表中")
 	}
@@ -55,8 +55,8 @@ func TestDeleteAgentClosesLiveConnection(t *testing.T) {
 	// 关键：必须把请求发到**同一条** handler（也就是同一个 Registry），
 	// 否则删的是另一个路由里的 Registry，Close 找不到连接，
 	// 测试会以一种误导性的方式失败（看起来像功能没做）。
-	cookies := e.loginAsFor(t, srv.URL, "admin", testPassword)
-	resp, body := doHTTP(t, http.MethodDelete, srv.URL+"/api/agents/"+agentID, "", cookies)
+	cookies := e.loginAsFor(t, srv, "admin", testPassword)
+	resp, body := doHTTP(t, http.MethodDelete, srv+"/api/agents/"+agentID, "", cookies)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("删除应成功，实际 %d，响应 %s", resp.StatusCode, body)
 	}
@@ -87,16 +87,16 @@ func TestDeletedAgentCanReRegister(t *testing.T) {
 	reg := agentlink.NewRegistry()
 	srv := newTestServer(t, e.routerWithRegistry(t, reg))
 
-	agentID := connectRealAgent(t, srv.URL, agentToken)
+	agentID := connectRealAgent(t, srv, agentToken)
 
-	cookies := e.loginAsFor(t, srv.URL, "admin", testPassword)
-	if resp, _ := doHTTP(t, http.MethodDelete, srv.URL+"/api/agents/"+agentID, "", cookies); resp.StatusCode != http.StatusOK {
+	cookies := e.loginAsFor(t, srv, "admin", testPassword)
+	if resp, _ := doHTTP(t, http.MethodDelete, srv+"/api/agents/"+agentID, "", cookies); resp.StatusCode != http.StatusOK {
 		t.Fatalf("删除应成功，实际 %d", resp.StatusCode)
 	}
 	waitUntil(t, 3*time.Second, func() bool { return !reg.IsOnline(agentID) }, "连接应被关闭")
 
 	// 重连：应能正常握手并重新出现在列表里。
-	agentID2 := connectRealAgent(t, srv.URL, agentToken)
+	agentID2 := connectRealAgent(t, srv, agentToken)
 	if !reg.IsOnline(agentID2) {
 		t.Fatal("重连后应重新出现在在线表中")
 	}
@@ -173,7 +173,10 @@ func TestDeleteAgentMessageHasNoOrphanDirectionClaim(t *testing.T) {
 // 为什么需要它：newTestEnv 内部自己建了一个 Registry，而测试要拿到
 // 同一个 Registry 的引用来断言在线状态，因此这里用外部传入的实例重建路由。
 // 其余依赖（真库、真 auth）沿用 newTestEnv 的，保证行为与生产一致。
-func (e *testEnv) routerWithRegistry(t *testing.T, reg *agentlink.Registry) http.Handler {
+//
+// 返回 *ghttp.Server：迁移后必须真实 Start 才有完整生命周期
+// （见 router_start.go 的说明），因此不再退化成 http.Handler。
+func (e *testEnv) routerWithRegistry(t *testing.T, reg *agentlink.Registry) *ghttp.Server {
 	t.Helper()
 	log := discardLogger()
 	agentSrv := agentlink.NewServer(reg, testAgentToken, "test", &agentSink{db: e.db, log: log}, log)
@@ -191,12 +194,20 @@ func (e *testEnv) routerWithRegistry(t *testing.T, reg *agentlink.Registry) http
 // testAgentToken 是测试用的 Agent 连接令牌。
 const testAgentToken = "test-agent-token-0123456789"
 
-// newTestServer 起一个 httptest 服务器并注册清理。
-func newTestServer(t *testing.T, h http.Handler) *httptest.Server {
+// newTestServer 起一个真实监听的服务并注册清理。
+//
+// 迁移说明：原来用 httptest.NewServer(h) 包住未启动的 ghttp.Server。
+// 那样不可用——ghttp 的 session 生命周期只在 Start() 里建立，
+// 未启动时请求收尾会 nil panic（表现为客户端收到 EOF）。
+// 现在改为真实 Start + ephemeral 端口。
+func newTestServer(t *testing.T, h *ghttp.Server) string {
 	t.Helper()
-	srv := httptest.NewServer(h)
-	t.Cleanup(srv.Close)
-	return srv
+	h.SetAddr("127.0.0.1:0")
+	if err := h.Start(); err != nil {
+		t.Fatalf("启动测试服务器失败: %v", err)
+	}
+	t.Cleanup(func() { _ = h.Shutdown() })
+	return "http://" + h.GetListenedAddress()
 }
 
 // doHTTP 向真实 httptest 服务器发一次请求。
