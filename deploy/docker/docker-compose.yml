@@ -101,6 +101,26 @@ services:
       # 挂载宿主机 Docker 套接字：Agent 必须通过它操作本机容器。
       # 这是调试专用的「同机自管」形态，生产环境不会这样部署。
       - ${ARKADE_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
+      # 只读挂载外部编排根目录（宝塔、手写的 compose 项目都在这里）。
+      #
+      # 为什么需要：Agent 是容器，看不到宿主机路径；而已有项目的配置路径来自
+      #   容器标签 com.docker.compose.project.config_files（例如宝塔的
+      #   /www/server/panel/data/compose/<项目>/docker-compose.yaml）。
+      #   不挂进来就只能在 Arkade 里看到容器、看不到原始配置，
+      #   也就无法「宝塔照旧管、Arkade 也能读」。
+      #
+      # 为什么用目录变量而不是直接写 /: 只挂根目录会让**整台宿主机文件系统**
+      #   进入 Agent 容器。默认不通配，按需指定一个目录；挂载始终只读。
+      # 为什么套一层 bind：容器里的同路径挂载点会遮住这份挂载，
+      #   因此再 bind 一次到固定的 /arkade/external，运行时按该前缀映射路径。
+      # 空值 = 不挂（默认，行为与以前完全一致）。
+      - type: bind
+        source: ${ARKADE_COMPOSE_SOURCE_ROOT:-/var/empty/arkade-no-compose-root}
+        target: /arkade/external
+        read_only: true
+        bind:
+          propagation: rslave
+      - /arkade/external:/arkade/external
     networks:
       - arkade
 

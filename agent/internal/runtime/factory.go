@@ -18,6 +18,20 @@ type Config struct {
 	// PreferPodman 在自动发现时优先尝试 Podman 套接字。
 	// 注意它只影响"先试谁"，最终引擎类型以探测结果为准。
 	PreferPodman bool
+	// HostRoot 是"容器内的宿主机根目录"，留空表示没有挂进来。
+	//
+	// ============================ 为什么需要它 ============================
+	// Agent 自己是容器，看到的文件系统不是宿主机的。外部编排（宝塔等）的
+	// 配置路径来自容器标签，是**宿主机**绝对路径；不换算成容器内路径，
+	// 只能读到不存在的目录，表现为"读取编排配置失败"。
+	//
+	// 换算规则很短：宿主 <HostRoot>/x  →  容器内 <HostMount>/x。
+	// 目标路径里出现 .. 、不是绝对路径、或不在 HostRoot 之下 → 不受理，
+	// 让调用方按"读不到"如实报错，绝不猜一个相近路径。
+	HostRoot string
+	// HostMount 是 HostRoot 在**本进程容器内**的挂载点。
+	// 只有 HostRoot 非空时才生效；默认见 DefaultHostMount。
+	HostMount string
 }
 
 // New 按配置创建运行时。
@@ -42,6 +56,12 @@ func New(cfg Config) (Runtime, error) {
 		}
 		rt, err := probe(context.Background(), ep, cfg.PreferPodman)
 		if err == nil {
+			// 宿主路径换算只在容器化部署（挂了宿主目录）时才配置；
+			// 空值保持原样，原生部署的 Agent 行为完全不变。
+			if e, ok := rt.(*engine); ok {
+				e.hostRoot = cfg.HostRoot
+				e.hostMount = cfg.HostMount
+			}
 			return rt, nil
 		}
 		lastErr = err

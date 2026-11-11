@@ -76,3 +76,39 @@ docker compose up -d --no-build --force-recreate hub agent
 ## 查看产物与排障
 
 工作流 Summary 会展示两个镜像的标签和 digest。构建未通过或权限失败时不会把失败说成发布成功，具体错误在对应 job 日志中。Hub 与 Agent 是两个独立发布 job，一个失败时另一个可能已成功；部署时请确认目标提交的两张镜像都存在。
+
+## 读取外部编排（宝塔等）的原始配置
+
+Agent 是容器，看不到宿主机路径；而外部编排的配置路径来自容器标签
+`com.docker.compose.project.config_files`，是**宿主机绝对路径**。宝塔面板创建的编排
+就在 `/www/server/panel/data/compose/<项目>/` 下，目录权限是 `0700`。
+
+这种情况下 Arkade 能看到容器、能看日志，但读不到原始 compose 文件，Agent 日志里反复出现
+`读取编排配置失败`。**这不是权限问题**：Agent 的 helper 已经带 `DAC_READ_SEARCH`，
+容器内实测能读 0700 目录和 0600 文件；缺的是"宿主路径没有被挂进 Agent 容器"。
+
+配置方式（`deploy/docker/.env`）：
+
+```dotenv
+ARKADE_COMPOSE_SOURCE_ROOT=/www/server/panel/data/compose
+```
+
+然后重建 Agent：
+
+```sh
+cd deploy/docker
+docker compose up -d --no-build --force-recreate agent
+```
+
+机制与边界：
+
+- 目录以**只读**方式挂进容器，Arkade 不会修改这里的内容，宝塔可以继续照常管理；
+- 只挂一个目录而不是 `/`：挂根目录等于把整台宿主机文件系统交给 Agent；
+- Agent 收到容器标签里的宿主路径后，先按原有规则做安全校验（单配置文件、规范路径、
+  非系统顶层目录、配置在工程目录内），校验通过才换算成容器内路径去读；
+- 路径不在 `ARKADE_COMPOSE_SOURCE_ROOT` 之下时给出明确原因（"该目录没有挂载进 Agent 容器"），
+  不会去猜一个相近目录，避免把别的项目当成这个项目；
+- 留空 = 不挂载，行为与以前一致（原生部署的 Agent 本来就能直接读宿主路径）。
+
+只读挂载的一个注意点：如果一个编排文件同时被 Arkade 和宝塔改，后保存的会覆盖先保存的。
+之所以只读挂载，是为了让 Arkade 不会在你不知情的时候改动宝塔的配置；编辑请以"谁的事实为准"决定在哪边改。

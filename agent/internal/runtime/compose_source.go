@@ -259,7 +259,22 @@ func (e *engine) resolveComposeSource(ctx context.Context, name string) (workDir
 	if rerr != nil {
 		return "", "", rerr
 	}
-	return cleanWD, rel, nil
+
+	// ============================ 容器化部署的路径换算 ============================
+	// 安全校验全部作用在**标签里的宿主机路径**上（那才是"这个项目声明了什么"），
+	// 校验通过后才换算成本进程容器内可见的路径去挂载。
+	//
+	// 顺序很重要：先换算再校验会把容器内前缀（/arkade/external）当成工作目录，
+	// 让它看起来总是"合法"，等于跳过了对真实来源的检查。
+	mountDir, ok := e.hostPath(cleanWD)
+	if !ok {
+		// 宿主目录没有挂进 Agent：如实报告"读不到"，
+		// 不猜一个相近路径去试——那会把别的目录当成这个项目的配置。
+		return "", "", sourceBlocked(
+			"该项目位于宿主机目录 %s，但该目录没有挂载进 Agent 容器，因此读不到配置；"+
+				"如需在 Arkade 里查看或编辑，请在部署时把该目录只读挂给 Agent", cleanWD)
+	}
+	return mountDir, rel, nil
 }
 
 // collectProjectLabels 取指定项目所有非 oneoff 容器的标签。

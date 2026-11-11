@@ -35,6 +35,16 @@ type Config struct {
 	LogLevel     string `toml:"log_level"`     // debug / info / warn / error
 	LogFormat    string `toml:"log_format"`    // text / json
 	InsecureTLS  bool   `toml:"insecure_tls"`  // 跳过 TLS 校验（仅自签名测试环境用）
+
+	// ComposeSourceRoot 是挂进本进程容器的"宿主机根目录"（只读）。
+	//
+	// 只有容器化部署时才需要：Agent 是容器，看不到宿主机路径，
+	// 而外部编排（宝塔等）的配置路径来自容器标签，是宿主机绝对路径。
+	// 留空表示原生部署，宿主路径直接可读，不做任何换算。
+	ComposeSourceRoot string `toml:"compose_source_root"`
+	// ComposeSourceMount 是上面那个目录在容器内的挂载点。
+	// 留空用 runtime.DefaultHostMount。
+	ComposeSourceMount string `toml:"compose_source_mount"`
 }
 
 // 默认值集中定义，避免散落在各处的魔法数字。
@@ -126,6 +136,13 @@ func applyEnvOverrides(c *Config) {
 	}
 	if v := strings.TrimSpace(os.Getenv("ARKADE_LOG_FORMAT")); v != "" {
 		c.LogFormat = v
+	}
+	// 容器化部署时的宿主目录换算。留空表示不配置（原生部署行为不变）。
+	if v := strings.TrimSpace(os.Getenv("ARKADE_COMPOSE_SOURCE_ROOT")); v != "" {
+		c.ComposeSourceRoot = v
+	}
+	if v := strings.TrimSpace(os.Getenv("ARKADE_COMPOSE_SOURCE_MOUNT")); v != "" {
+		c.ComposeSourceMount = v
 	}
 }
 

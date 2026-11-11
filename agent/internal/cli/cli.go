@@ -181,6 +181,9 @@ func createRuntime(cfg config.Config) (runtime.Runtime, error) {
 	return runtime.New(runtime.Config{
 		Socket:       cfg.Socket,
 		PreferPodman: cfg.PreferPodman || cfg.RuntimeKind == "podman",
+		// 容器化部署时才有值：把容器标签里的宿主路径换算成容器内路径。
+		HostRoot:  cfg.ComposeSourceRoot,
+		HostMount: cfg.ComposeSourceMount,
 	})
 }
 

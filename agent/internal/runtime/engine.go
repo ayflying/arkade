@@ -22,6 +22,11 @@ type engine struct {
 	endpoint string // 探测时实际使用的端点
 	rootless bool   // Podman 无 root 模式
 	info     Info   // 探测阶段缓存的版本信息，避免每次心跳都重复请求 /version
+
+	// hostRoot/hostMount：宿主机路径换算（见 Config.HostRoot）。
+	// 两者都为空表示"本进程不在容器里，宿主路径就是本机路径"，此时不做任何换算。
+	hostRoot  string
+	hostMount string
 }
 
 // 编译期断言：engine 必须实现 Runtime。
