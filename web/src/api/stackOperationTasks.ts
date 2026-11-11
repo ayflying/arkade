@@ -137,8 +137,10 @@ export async function migrateStack(
  */
 export function isMigrateNotDeployed(err: unknown): boolean {
   if (err === null || typeof err !== 'object') return false
-  const status = (err as { status?: unknown }).status
-  return status === 404
+  const error = err as { status?: unknown; code?: unknown; message?: unknown }
+  // Business not_found (missing source/target/project) is not a missing API.
+  return error.status === 404 && error.code === 'not_found' &&
+    error.message === '接口不存在'
 }
 
 /**

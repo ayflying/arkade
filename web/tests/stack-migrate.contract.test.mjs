@@ -182,7 +182,9 @@ const types = await loadTs('src/types/stackOperationTask.ts')
   check('API: 勾选后发送 true', captured[0].body.include_volumes === true && captured[0].body.start_after === true)
 
   /* 404 判定 */
-  check('404: 识别为未部署', api.isMigrateNotDeployed({ status: 404 }) === true)
+  check('404: 裸404不冒称未部署', api.isMigrateNotDeployed({ status: 404 }) === false)
+  check('404: 仅明确缺失端点才未部署', api.isMigrateNotDeployed({ status: 404, code: 'not_found', message: '接口不存在' }) === true)
+  check('404: 真实源项目不存在不是未部署', api.isMigrateNotDeployed({ status: 404, code: 'not_found', message: '源编排不存在' }) === false)
   check('404: 403 不算未部署', api.isMigrateNotDeployed({ status: 403 }) === false, '权限问题要如实说')
   check('404: 网络错误不算未部署', api.isMigrateNotDeployed(new Error('fetch failed')) === false)
   check('404: null 不算', api.isMigrateNotDeployed(null) === false)
@@ -289,7 +291,7 @@ const types = await loadTs('src/types/stackOperationTask.ts')
   )
   check(
     '弹窗: 自动启动的小字说明',
-    /容器不会运行/.test(modal)
+    /复制配置、镜像及所选数据卷，但不启动目标容器/.test(modal)
   )
 
   // 四点说明来自常量，逐条核对内容存在
@@ -309,7 +311,14 @@ const types = await loadTs('src/types/stackOperationTask.ts')
     '说明: 含「复制不是移动」',
     types.STACK_MIGRATE_NOTES.some((n) => /复制不是移动/.test(n) && /不会停止/.test(n))
   )
-  check('说明: 恰好四条', types.STACK_MIGRATE_NOTES.length === 4, String(types.STACK_MIGRATE_NOTES.length))
+  check('说明: 失败残留不假称回滚', types.STACK_MIGRATE_NOTES.some((n) => /失败/.test(n) && /保留/.test(n)))
+  check('范围: config和images不可取消', /编排配置与全部依赖镜像（不可取消）/.test(modal))
+  check('确认: 最终目标和可选副作用再次确认', /确认开始迁移？/.test(modal) && /targetName\.value/.test(modal) && /运行中业务的数据一致性/.test(modal))
+  check('未知: 锁表单且锁并发操作', /runner\.hasStartAttempted\(\)/.test(modal) && /next === 'blocked'/.test(modal) && /next === 'interrupted'/.test(modal))
+  check('残留: uncertain明确告警', /task\?\.residual\?\.uncertain/.test(modal) && /目标端可能有未确认的改动，先检查再重试/.test(modal))
+  const residualTask = types.normalizeOperationTask({ task_id: 'residual', residual: { uncertain: true } })
+  check('残留: wire uncertain保留', residualTask.residual?.uncertain === true)
+  check('残留: 缺失不编造false/零残留', types.normalizeOperationTask({ task_id: 'none' }).residual === undefined)
 
   // 没有百分比：迁移没有可靠总进度，硬造会骗人
   check('弹窗: 不出现百分比进度', !/%/.test(modal.replace(/\/\*[^]*?\*\//g, '')), '日志是文本流，不该有百分比')
@@ -469,6 +478,40 @@ const types = await loadTs('src/types/stackOperationTask.ts')
   )
   check('接线: 目标来自 agents store', /useAgentsStore/.test(actions))
   check('接线: 迁移结束刷新父级', /@finished="handleFinished"/.test(actions))
+}
+
+/* ───────── Immutable request intent: execute actual composable with boundary stubs ───────── */
+{
+  let options
+  const calls = []
+  globalThis.__MIGRATE_OPTIONS__ = (value) => { options = value }
+  globalThis.__MIGRATE_CALL__ = async (...args) => { calls.push(args); throw new Error('connection lost') }
+  const encoded = (source) => `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`
+  const js = ts.transpileModule(read('src/composables/useStackMigrateTask.ts'), {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 }
+  }).outputText.replace(/from\s+['"]([^'"]+)['"]/g, (whole, spec) => {
+    if (spec === 'vue') return `from '${import.meta.resolve('vue')}'`
+    if (spec.includes('api/stackOperationTasks')) return `from '${encoded(`export const migrateStack=(...args)=>globalThis.__MIGRATE_CALL__(...args);export const getStackOperationTask=()=>{};export const isMigrateNotDeployed=()=>false;`)}'`
+    if (spec.includes('useStackOperationTask')) return `from '${encoded(`export function useStackOperationTask(options){globalThis.__MIGRATE_OPTIONS__(options);return {};}`)}'`
+    return whole
+  })
+  const { useStackMigrateTask } = await import(encoded(js))
+  let target = 'target-a', volumes = false, start = false
+  useStackMigrateTask({ agentId: 'source', stackName: 'web' }, {
+    targetAgentId: () => target, includeVolumes: () => volumes, startAfter: () => start
+  })
+  await options.start('same-key').catch(() => {})
+  target = 'target-b'; volumes = true; start = true
+  await options.start('same-key').catch(() => {})
+  check('幂等: 不确定重试相同key和相同payload', calls[0][2] === calls[1][2] && JSON.stringify(calls[0][3]) === JSON.stringify(calls[1][3]))
+  check('幂等: 原目标和false选择保留', calls[1][3].target_agent_id === 'target-a' && !calls[1][3].include_volumes && !calls[1][3].start_after)
+  await options.start('new-key').catch(() => {})
+  check('幂等: 显式新任务才读取新选择', calls[2][3].target_agent_id === 'target-b' && calls[2][3].include_volumes && calls[2][3].start_after)
+  const missing = Object.assign(new Error('源编排不存在'), { status: 404 })
+  check('错误: 业务404保留真实文案', options.describeStartError(missing) === '源编排不存在')
+  check('错误: 双端manage权限文案', /源服务器和目标服务器/.test(options.describeStartError({ status: 403 })))
+  delete globalThis.__MIGRATE_OPTIONS__
+  delete globalThis.__MIGRATE_CALL__
 }
 
 /* ───────── 结果 ───────── */

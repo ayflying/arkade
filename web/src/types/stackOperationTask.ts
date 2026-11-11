@@ -163,6 +163,8 @@ export interface StackOperationTask {
   stack_version: number | null
   started_at: string
   finished_at: string
+  /** Migration interruption can leave mutations whose outcome is not confirmed. */
+  residual?: { uncertain: boolean }
 }
 
 export interface StackOperationTaskResponse {
@@ -249,7 +251,8 @@ export interface StackMigrateRequest {
 export const STACK_MIGRATE_NOTES: readonly string[] = [
   '默认只迁移编排配置和用到的镜像，不含数据卷。勾选「同时迁移数据卷」才会带上数据卷。',
   '用宿主机目录绑定的挂载（bind mount）不会迁移——目标服务器上需要自己准备对应目录。',
-  '目标服务器已有同名编排会被拒绝，请先在目标上改名或删除后再迁移。',
+  '目标服务器已有同名编排会被拒绝，绝不覆盖；请使用不冲突的项目名，不要为重试直接删除目标业务。',
+  '迁移失败时，目标上可能保留已复制的镜像、卷或配置；请查看阶段日志与失败详情后再决定如何处理。',
   '迁移是复制不是移动：源服务器的容器不会停止，也不会被删除。'
 ]
 
@@ -319,7 +322,10 @@ export function normalizeOperationTask(raw: unknown): StackOperationTask | null 
         ? r.stack_version
         : null,
     started_at: typeof r.started_at === 'string' ? r.started_at : '',
-    finished_at: typeof r.finished_at === 'string' ? r.finished_at : ''
+    finished_at: typeof r.finished_at === 'string' ? r.finished_at : '',
+    residual: r.residual !== null && typeof r.residual === 'object'
+      ? { uncertain: (r.residual as Record<string, unknown>).uncertain === true }
+      : undefined
   }
 }
 

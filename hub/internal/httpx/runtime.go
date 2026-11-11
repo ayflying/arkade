@@ -17,6 +17,8 @@ import (
 	"arkade/hub/internal/auth"
 	"arkade/hub/internal/config"
 	"arkade/hub/internal/imagetask"
+	"arkade/hub/internal/service/stackmigration"
+	"arkade/hub/internal/stackmigrate"
 	"arkade/hub/internal/store"
 	"arkade/hub/internal/user"
 )
@@ -34,6 +36,7 @@ type App struct {
 	agentSrv    *agentlink.Server
 	authSvc     *auth.Service
 	imageTasks  *imagetask.Manager
+	migrations  *stackmigrate.Manager
 	autoAdopt   *autoAdopter
 }
 
@@ -65,20 +68,25 @@ func NewApp(ctx context.Context, cfg config.Config, log *slog.Logger, version st
 	agentSrv.SetEnrollmentGuard(guard)
 	ops := agentlink.NewOps(reg)
 
-	imageTasks := imagetask.New(agentlink.NewImageBackend(ops))
+	imageBackend := agentlink.NewImageBackend(ops)
+	imageTasks := imagetask.New(imageBackend)
+	migrations := stackmigrate.New(stackmigration.New(stackmigration.Deps{
+		DB: db, Ops: ops, Registry: reg, Images: imageBackend,
+	}))
 	autoAdopt := newAutoAdopter(db, ops, reg.OnlineIDs)
 	connections := &connectionTracker{}
 	router := NewRouter(Deps{
-		AutoAdopt:  autoAdopt,
-		ImageTasks: imageTasks,
-		Log:        log,
-		DB:         db,
-		Auth:       authSvc,
-		Registry:   reg,
-		Ops:        ops,
-		AgentConn:  connections.wrap(http.HandlerFunc(agentSrv.HandleConnect)),
-		WebDist:    cfg.Web.Dist,
-		HubVersion: version,
+		AutoAdopt:    autoAdopt,
+		ImageTasks:   imageTasks,
+		StackMigrate: migrations,
+		Log:          log,
+		DB:           db,
+		Auth:         authSvc,
+		Registry:     reg,
+		Ops:          ops,
+		AgentConn:    connections.wrap(http.HandlerFunc(agentSrv.HandleConnect)),
+		WebDist:      cfg.Web.Dist,
+		HubVersion:   version,
 		// 传给 handler 只为"生成密钥时避开与共享 token 同值"。
 		// 它不会写库、不会进响应、不会进日志。
 		AgentSharedToken: cfg.Auth.AgentToken,
@@ -107,6 +115,7 @@ func NewApp(ctx context.Context, cfg config.Config, log *slog.Logger, version st
 		agentSrv:    agentSrv,
 		authSvc:     authSvc,
 		imageTasks:  imageTasks,
+		migrations:  migrations,
 		autoAdopt:   autoAdopt,
 	}, nil
 }
@@ -135,6 +144,13 @@ func (a *App) Shutdown(ctx context.Context) error {
 	// 先停止监听并等待框架的请求排空期限，再关闭后台任务和业务池。
 	// 避免退出期间仍接受请求、却已经销毁请求依赖的任务管理器。
 	err := a.server.Shutdown()
+	// 后台迁移仍可能使用 Agent RPC 和数据库；先取消并等待资源释放，
+	// 再断开 Agent，避免中断导入后连清理临时归档的通道也先被关闭。
+	if a.migrations != nil {
+		if cerr := a.migrations.Close(ctx); cerr != nil {
+			return cerr // 工作未排空时保留连接与业务池，不能提前销毁依赖。
+		}
+	}
 	if a.connections != nil {
 		joinCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()

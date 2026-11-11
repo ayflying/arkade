@@ -64,7 +64,7 @@ func MigrateTaskView(agent, name string, s stackmigrate.Snapshot) api.MigrateTas
 }
 
 func migrateView(agent, name string, s stackmigrate.Snapshot) api.MigrateTask {
-	out := api.MigrateTask{TaskID: s.TaskID, AgentID: agent, Name: name, Action: "migrate", Status: s.Status, NextCursor: s.NextCursor, Output: make([]api.MigrateEvent, 0, len(s.Events)), Truncated: s.Truncated, Error: s.Error, Migrate: api.MigrationInfo{Source: s.Source, Target: s.Target, IncludeVolumes: s.IncludeVolumes, StartAfter: s.StartAfter, Stage: s.Stage, StageTitle: s.StageTitle, ImageCount: s.ImageCount, VolumeCount: s.VolumeCount, SkippedVolumes: s.SkippedVolumes, BindDirs: s.BindDirs, Residual: api.MigrationResidual{ImagesImported: s.Residual.ImagesImported, VolumesRestored: s.Residual.VolumesRestored, ComposeWritten: s.Residual.ComposeWritten, Started: s.Residual.Started}}}
+	out := api.MigrateTask{TaskID: s.TaskID, AgentID: agent, Name: name, Action: "migrate", Status: s.Status, NextCursor: s.NextCursor, Output: make([]api.MigrateEvent, 0, len(s.Events)), Truncated: s.Truncated, Error: s.Error, Migrate: api.MigrationInfo{Source: s.Source, Target: s.Target, IncludeVolumes: s.IncludeVolumes, StartAfter: s.StartAfter, Stage: s.Stage, StageTitle: s.StageTitle, ImageCount: s.ImageCount, VolumeCount: s.VolumeCount, SkippedVolumes: s.SkippedVolumes, BindDirs: s.BindDirs, Residual: api.MigrationResidual{ImagesImported: s.Residual.ImagesImported, VolumesRestored: s.Residual.VolumesRestored, ComposeWritten: s.Residual.ComposeWritten, Started: s.Residual.Started, Uncertain: s.Residual.Uncertain}}}
 	for _, e := range s.Events {
 		out.Output = append(out.Output, api.MigrateEvent{Seq: e.Seq, Stream: e.Stream, Text: e.Text})
 	}
@@ -89,6 +89,17 @@ func (c *Controller) migrateFallback(ctx context.Context, agent, name, id string
 	}
 	if snap.Name != name || snap.Source != agent {
 		return nil, false, nil
+	}
+	u, ok := c.d.Session.CurrentUser(ctx)
+	if !ok || (snap.OwnerID != "" && snap.OwnerID != u.ID && u.Role != user.RoleAdmin) {
+		return nil, true, controller.Failure("not_found", "迁移任务不存在或已过期")
+	}
+	// 迁移日志跨越两台服务器，不能只凭源端 operate 权限读取目标信息。
+	if e := c.access.Require(ctx, snap.Source, user.PermManage); e != nil {
+		return nil, true, e
+	}
+	if e := c.access.Require(ctx, snap.Target, user.PermManage); e != nil {
+		return nil, true, e
 	}
 	secret(ctx)
 	v := migrateView(agent, name, snap)

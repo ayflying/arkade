@@ -12,6 +12,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -324,7 +325,7 @@ func TestImportRejectsBadChecksum(t *testing.T) {
 func TestImportRespectsLimit(t *testing.T) {
 	imp, _ := newTestImporter(t)
 	for i := 0; i < MaxVolumeImports; i++ {
-		if _, _, err := imp.Begin(context.Background(), "demo_data", "demo", 10, strings.Repeat("a", 64), ""); err != nil {
+		if _, _, err := imp.Begin(context.Background(), fmt.Sprintf("demo_data_%d", i), "demo", 10, strings.Repeat("a", 64), ""); err != nil {
 			t.Fatalf("第 %d 次 begin 应成功: %v", i+1, err)
 		}
 	}

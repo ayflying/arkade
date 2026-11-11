@@ -141,6 +141,8 @@ const (
 	MethodVolumeImportChunkPut  = "volume.import.chunk.put"
 	MethodVolumeImportCommit    = "volume.import.commit"
 	MethodVolumeImportStatus    = "volume.import.status"
+ MethodVolumeImportCancel = "volume.import.cancel"
+ MethodComposeMigrationPlan = "compose.migration.plan"
 	MethodComposeImport         = "compose.import"
 )
 
@@ -205,5 +207,7 @@ const (
 	LocalMethodVolumeImportChunkPut  = MethodVolumeImportChunkPut
 	LocalMethodVolumeImportCommit    = MethodVolumeImportCommit
 	LocalMethodVolumeImportStatus    = MethodVolumeImportStatus
+ LocalMethodVolumeImportCancel = MethodVolumeImportCancel
+ LocalMethodComposeMigrationPlan = MethodComposeMigrationPlan
 	LocalMethodComposeImport         = MethodComposeImport
 )

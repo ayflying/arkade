@@ -25,13 +25,9 @@ package migrate
 //
 // ============================ 目标卷已存在数据怎么办 ============================
 //
-// 解包是**合并覆盖**（tar -xf 不会先清空）。这是刻意的：
-//   - 目标卷若不存在则由 Docker 新建空卷，解包即完整恢复；
-//   - 目标卷若已存在（例如目标上已有一个同名编排跑过），
-//     合并比"清空再解"安全——清空是不可逆的破坏，而合并最多留下多余文件。
-//
-// 但这意味着**不能保证目标卷与源完全一致**（源已删除的文件在该卷里仍会存在）。
-// 这是已知限制，必须在结果里如实告知，不能宣称"完全一致"。
+// 目标卷一律 create-only：创建时附随机归属标签，再 inspect 核对。
+// 已有同名卷不会获得本任务的标签，因此拒绝写入，不合并、不清空。
+// 失败/取消后可能留下本任务创建的部分卷，保留给人工排查，绝不自动删除。
 
 import (
 	"context"
@@ -39,7 +35,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 )
@@ -97,17 +92,18 @@ type importTask struct {
 	// 反过来（持 mu 时做 IO）会让一个慢磁盘拖死所有任务。
 	ioMu sync.Mutex
 
-	mu         sync.Mutex
-	status     string
-	phase      string
-	message    string
-	received   int64
-	bytesTotal int64
-	errText    string
-	sha256Done string
-	createdAt  time.Time
-	finishedAt time.Time
-	cancel     context.CancelFunc
+	mu            sync.Mutex
+	status        string
+	phase         string
+	message       string
+	received      int64
+	bytesTotal    int64
+	errText       string
+	sha256Done    string
+	createdAt     time.Time
+	finishedAt    time.Time
+	cleanupFailed bool
+	cancel        context.CancelFunc
 }
 
 // ImportSnapshot 是导入任务的一次快照。
@@ -170,7 +166,7 @@ func (m *Importer) Begin(ctx context.Context, volume, project string, size int64
 		if ok {
 			// 同 id 必须同参数：不同参数说明是另一次导入，
 			// 静默复用会让调用方以为新参数已生效。
-			if prior.volume != volume || prior.size != size || prior.sha256 != sha {
+			if prior.volume != volume || prior.project != project || prior.size != size || !equalHex(prior.sha256, sha) {
 				m.mu.Unlock()
 				return ImportSnapshot{}, false, ErrImportParamMismatch
 			}
@@ -186,7 +182,10 @@ func (m *Importer) Begin(ctx context.Context, volume, project string, size int64
 	m.sweepLocked()
 	live := 0
 	for _, t := range m.task {
-		if !importTerminal(t.status) {
+		t.mu.Lock()
+		active := !importTerminal(t.status)
+		t.mu.Unlock()
+		if active {
 			live++
 		}
 	}
@@ -194,23 +193,44 @@ func (m *Importer) Begin(ctx context.Context, volume, project string, size int64
 		m.mu.Unlock()
 		return ImportSnapshot{}, false, ErrTooManyImports
 	}
+	for _, prior := range m.task {
+		prior.mu.Lock()
+		live := !importTerminal(prior.status)
+		prior.mu.Unlock()
+		if live && prior.volume == volume {
+			m.mu.Unlock()
+			return ImportSnapshot{}, false, ErrTargetVolumeExists
+		}
+	}
 	if taskID == "" {
 		taskID = newExportID()
 	}
 	dir := filepath.Join(m.root, taskID)
-	m.mu.Unlock()
-
-	// 目录创建在锁外（IO 不进临界区）。
+	// Begin reservation is held through mkdir and table insertion. This is a short
+	// metadata operation; no upload/engine IO is performed under the manager lock.
 	if err := os.MkdirAll(dir, 0o700); err != nil {
+		m.mu.Unlock()
 		return ImportSnapshot{}, false, fmt.Errorf("创建导入临时目录失败: %w", err)
 	}
-
-	m.mu.Lock()
 	if _, exists := m.task[taskID]; exists {
 		// 并发 Begin 同一 id：另一个赢家已建好，复用它的。
-		snap := m.task[taskID].snapshot()
+		prior := m.task[taskID]
+		if prior.volume != volume || prior.project != project || prior.size != size || !equalHex(prior.sha256, sha) {
+			m.mu.Unlock()
+			return ImportSnapshot{}, false, ErrImportParamMismatch
+		}
+		snap := prior.snapshot()
 		m.mu.Unlock()
 		return snap, true, nil
+	}
+	for _, prior := range m.task {
+		prior.mu.Lock()
+		live := !importTerminal(prior.status)
+		prior.mu.Unlock()
+		if live && prior.volume == volume {
+			m.mu.Unlock()
+			return ImportSnapshot{}, false, ErrTargetVolumeExists
+		}
 	}
 	t := &importTask{
 		id: taskID, volume: volume, project: project,
@@ -223,291 +243,4 @@ func (m *Importer) Begin(ctx context.Context, volume, project string, size int64
 	snap := t.snapshot()
 	m.mu.Unlock()
 	return snap, false, nil
-}
-
-// PutChunk 写入一块字节。
-//
-// offset 必须**正好等于已接收字节数**：允许任意 offset 会让"重传同一块"
-// 变成静默的重复写入，最终文件长度正确但内容错乱，而校验和要到最后才报错。
-// 只允许"从当前位置继续"这一个含义，语义最简单也最难出错。
-func (m *Importer) PutChunk(ctx context.Context, taskID string, offset int64, data []byte) (int64, error) {
-	if offset < 0 {
-		return 0, ErrBadOffset
-	}
-	m.mu.Lock()
-	t, ok := m.task[taskID]
-	m.mu.Unlock()
-	if !ok {
-		return 0, ErrImportNotFound
-	}
-
-	t.mu.Lock()
-	status := t.status
-	current := t.received
-	t.mu.Unlock()
-
-	if importTerminal(status) {
-		return current, ErrImportState
-	}
-	if status == ImportSucceeded {
-		return current, ErrImportState
-	}
-
-	// ============================ 续传语义 ============================
-	// offset < current：调用方在重发已收到的块。**幂等接受**，不重复写。
-	//   —— 网络重试时 Hub 不知道上一次的 ack 是否到达，重发是正常的。
-	// offset > current：中间缺块，必须拒绝——接受会造成空洞，
-	//   而空洞的 tar 在解包时行为不可预测。
-	if offset < current {
-		return current, nil
-	}
-	if offset > current {
-		return current, fmt.Errorf("分块偏移不连续（已收到 %d 字节，请求写入 offset=%d）", current, offset)
-	}
-	// 超过声明大小直接拒绝：不能指望最后由长度校验兜底，
-	// 那意味着磁盘已经被写超了。
-	if current+int64(len(data)) > t.size {
-		return current, ErrSizeMismatch
-	}
-
-	t.ioMu.Lock()
-	defer t.ioMu.Unlock()
-
-	if status == ImportPending {
-		t.mu.Lock()
-		t.status = ImportRunning
-		t.phase = "接收归档"
-		t.mu.Unlock()
-	}
-
-	path := filepath.Join(t.dir, "archive.tar")
-	// O_WRONLY|O_CREATE 不带 TRUNC：续传要保留已有内容。
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0o600)
-	if err != nil {
-		t.fail("无法写入导入临时文件")
-		return current, fmt.Errorf("写入导入临时文件失败: %w", err)
-	}
-	if _, err := f.WriteAt(data, offset); err != nil {
-		_ = f.Close()
-		t.fail("写入导入临时文件失败")
-		return current, fmt.Errorf("写入导入临时文件失败: %w", err)
-	}
-	if err := f.Close(); err != nil {
-		t.fail("写入导入临时文件失败")
-		return current, fmt.Errorf("写入导入临时文件失败: %w", err)
-	}
-
-	t.mu.Lock()
-	t.received = current + int64(len(data))
-	done := t.received
-	t.mu.Unlock()
-	return done, nil
-}
-
-// Commit 校验并解包。
-//
-// ============================ 校验必须先于解包 ============================
-// 顺序绝不能反：一旦解包开始，卷里就已经混入了可能损坏的数据。
-// 因此这里先算 sha256、比对长度，全部通过才起容器解包。
-func (m *Importer) Commit(ctx context.Context, taskID, sha string) (ImportSnapshot, error) {
-	m.mu.Lock()
-	t, ok := m.task[taskID]
-	m.mu.Unlock()
-	if !ok {
-		return ImportSnapshot{}, ErrImportNotFound
-	}
-
-	t.mu.Lock()
-	status := t.status
-	received := t.received
-	wantSize := t.size
-	wantSHA := t.sha256
-	t.mu.Unlock()
-
-	if importTerminal(status) {
-		return t.snapshot(), nil
-	}
-	if sha != "" && !equalHex(sha, wantSHA) {
-		t.fail("提交的校验和与开始时声明的不一致")
-		return t.snapshot(), ErrImportParamMismatch
-	}
-	if received != wantSize {
-		t.fail("收到的字节数与声明不一致")
-		return t.snapshot(), ErrSizeMismatch
-	}
-
-	t.ioMu.Lock()
-	defer t.ioMu.Unlock()
-
-	path := filepath.Join(t.dir, "archive.tar")
-	got, size, err := hashFile(path)
-	if err != nil {
-		t.fail("读取导入临时文件失败")
-		return t.snapshot(), err
-	}
-	if size != wantSize || !equalHex(got, wantSHA) {
-		// 校验失败**不解包**：卷保持原样，用户数据未被污染。
-		t.fail("卷归档校验和不一致，已中止导入（目标卷未被修改）")
-		return t.snapshot(), ErrChecksumMismatch
-	}
-
-	t.mu.Lock()
-	t.phase = "解包到数据卷"
-	t.message = "校验通过，正在解包"
-	t.mu.Unlock()
-
-	// 解包：临时容器把归档解进目标卷。
-	// 目标卷不存在时 docker run -v <name>:/to 会自动创建它。
-	out, derr := m.docker(ctx, "run", "--rm",
-		"-v", t.volume+":/to",
-		"-v", t.dir+":/from:ro",
-		"alpine:3.20",
-		"tar", "-xf", "/from/archive.tar", "-C", "/to")
-
-	t.mu.Lock()
-	t.finishedAt = m.now()
-	if derr != nil {
-		t.status = ImportFailed
-		t.phase = "失败"
-		t.message = filterImportError(derr, string(out))
-		t.errText = t.message
-		t.mu.Unlock()
-		return t.snapshot(), derr
-	}
-	t.status = ImportSucceeded
-	t.phase = "已完成"
-	t.message = "数据卷已恢复"
-	t.sha256Done = wantSHA
-	t.mu.Unlock()
-
-	// 成功后才删临时文件：失败时保留，便于排查（由 TTL 清理兜底）。
-	_ = os.Remove(path)
-	return t.snapshot(), nil
-}
-
-// Status 查询任务快照。
-func (m *Importer) Status(taskID string) (ImportSnapshot, error) {
-	m.mu.Lock()
-	m.sweepLocked()
-	t, ok := m.task[taskID]
-	m.mu.Unlock()
-	if !ok {
-		return ImportSnapshot{}, ErrImportNotFound
-	}
-	return t.snapshot(), nil
-}
-
-// sweepLocked 清理过期任务（调用方已持锁）。
-func (m *Importer) sweepLocked() {
-	now := m.now()
-	for id, t := range m.task {
-		t.mu.Lock()
-		expired := importTerminal(t.status) && now.Sub(t.finishedAt) > VolumeImportTTL
-		dir := t.dir
-		t.mu.Unlock()
-		if !expired {
-			continue
-		}
-		delete(m.task, id)
-		_ = os.RemoveAll(dir)
-	}
-}
-
-// snapshot 生成快照。
-func (t *importTask) snapshot() ImportSnapshot {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return ImportSnapshot{
-		TaskID: t.id, Volume: t.volume, Status: t.status,
-		Phase: t.phase, Message: t.message,
-		Received: t.received, BytesTotal: t.bytesTotal,
-		SHA256: t.sha256Done, Error: t.errText,
-	}
-}
-
-// fail 把任务置为失败。
-func (t *importTask) fail(msg string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if importTerminal(t.status) {
-		return
-	}
-	t.status = ImportFailed
-	t.phase = "失败"
-	t.message = msg
-	t.errText = msg
-	t.finishedAt = time.Now()
-}
-
-// importTerminal 判断状态是否终态。
-func importTerminal(s string) bool {
-	return s == ImportSucceeded || s == ImportFailed || s == ImportCanceled
-}
-
-// isHexSHA256 校验 64 位十六进制。
-//
-// 注意这里的判断必须同时接受大小写：不同引擎/系统给出的校验和
-// 大小写并不统一，只接受一种会把正确的归档判成非法。
-func isHexSHA256(s string) bool {
-	if len(s) != 64 {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F') {
-			continue
-		}
-		return false
-	}
-	return true
-}
-
-// equalHex 大小写不敏感比较十六进制串。
-func equalHex(a, b string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := 0; i < len(a); i++ {
-		ca, cb := a[i], b[i]
-		if ca >= 'A' && ca <= 'F' {
-			ca += 'a' - 'A'
-		}
-		if cb >= 'A' && cb <= 'F' {
-			cb += 'a' - 'A'
-		}
-		if ca != cb {
-			return false
-		}
-	}
-	return true
-}
-
-// filterImportError 把解包失败转成中文说明（过滤掉容器输出里的敏感内容）。
-func filterImportError(err error, out string) string {
-	msg := err.Error() + " " + out
-	switch {
-	case strings.Contains(msg, "No space left"):
-		return "目标磁盘空间不足，解包失败"
-	case strings.Contains(msg, "Permission denied"):
-		return "无权限写入目标数据卷"
-	case strings.Contains(msg, "Cannot open"), strings.Contains(msg, "not found in archive"):
-		return "归档内容无法解包（可能不是有效的 tar）"
-	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
-		return "解包超时或被取消"
-	}
-	return "解包数据卷失败（请查看服务器上的 docker 日志）"
-}
-
-// ReadArchiveFile 返回导入临时文件（仅测试与调试用）。
-//
-// 导出它的目的是让测试能验证"收到的字节确实落盘且内容正确"，
-// 而不必真的起容器解包。
-func (m *Importer) ReadArchiveFile(taskID string) ([]byte, error) {
-	m.mu.Lock()
-	t, ok := m.task[taskID]
-	m.mu.Unlock()
-	if !ok {
-		return nil, ErrImportNotFound
-	}
-	return os.ReadFile(filepath.Join(t.dir, "archive.tar"))
 }

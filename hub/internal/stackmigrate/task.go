@@ -25,6 +25,7 @@ import (
 	"errors"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // 任务限额。
@@ -100,11 +101,13 @@ type Residual struct {
 	ComposeWritten bool
 	// Started 表示是否已在目标端启动过。
 	Started bool
+	// Uncertain means an interrupted mutation may have left partial effects.
+	Uncertain bool
 }
 
 // Empty 表示目标端没有任何残留。
 func (r Residual) Empty() bool {
-	return r.ImagesImported == 0 && r.VolumesRestored == 0 && !r.ComposeWritten && !r.Started
+	return r.ImagesImported == 0 && r.VolumesRestored == 0 && !r.ComposeWritten && !r.Started && !r.Uncertain
 }
 
 // Describe 生成中文描述（给失败原因用）。
@@ -125,6 +128,9 @@ func (r Residual) Describe() string {
 	if r.Started {
 		parts = append(parts, "已在目标上启动")
 	}
+	if r.Uncertain {
+		parts = append(parts, "部分写入结果尚未确认，请检查目标端；未自动删除任何用户数据")
+	}
 	return "目标服务器上已留下：" + joinComma(parts)
 }
 
@@ -135,6 +141,8 @@ type Task struct {
 	Name string
 	// RequestID 是幂等键。
 	RequestID string
+	// OwnerID scopes request identity; immutable after registration.
+	OwnerID string
 	// Source 是源 Agent 标识。
 	Source string
 	// Target 是目标 Agent 标识。
@@ -175,6 +183,7 @@ type Task struct {
 // Snapshot 是任务的一次快照（协议层的输入）。
 type Snapshot struct {
 	TaskID         string
+	OwnerID        string
 	Name           string
 	Source         string
 	Target         string
@@ -213,6 +222,13 @@ func (t *Task) appendEvent(stream, text string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
+	if len(text) > maxEventBytes {
+		text = text[len(text)-maxEventBytes:]
+		for len(text) > 0 && !utf8.RuneStart(text[0]) {
+			text = text[1:]
+		}
+		t.truncated = true
+	}
 	t.nextSeq++
 	ev := Event{Seq: t.nextSeq, Stream: stream, Text: text}
 	t.events = append(t.events, ev)
@@ -249,7 +265,7 @@ func (t *Task) snapshot(after int64) Snapshot {
 	defer t.mu.Unlock()
 
 	out := Snapshot{
-		TaskID: t.id, Name: t.Name, Source: t.Source, Target: t.Target,
+		TaskID: t.id, OwnerID: t.OwnerID, Name: t.Name, Source: t.Source, Target: t.Target,
 		IncludeVolumes: t.IncludeVolumes, StartAfter: t.StartAfter,
 		Status: t.status, NextCursor: t.nextSeq, Truncated: t.truncated,
 		Error: t.errText, Stage: t.stage, StageTitle: StageTitle(t.stage),
@@ -268,39 +284,4 @@ func (t *Task) snapshot(after int64) Snapshot {
 // terminal 判断状态是否终态。
 func terminal(status string) bool {
 	return status == StatusSucceeded || status == StatusFailed
-}
-
-// itoa 是 strconv.Itoa 的本地别名（避免在多个文件重复导入 strconv）。
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-	var buf [20]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	if neg {
-		i--
-		buf[i] = '-'
-	}
-	return string(buf[i:])
-}
-
-// joinComma 用顿号连接中文列表。
-func joinComma(parts []string) string {
-	out := ""
-	for i, p := range parts {
-		if i > 0 {
-			out += "、"
-		}
-		out += p
-	}
-	return out
 }

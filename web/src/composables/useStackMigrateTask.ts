@@ -11,6 +11,7 @@
  * 用户会去怀疑自己的编排或目标服务器，排查一个根本不存在的问题。
  */
 import { ref } from 'vue'
+import type { StackMigrateRequest } from '@/types/stackOperationTask'
 import { getStackOperationTask, isMigrateNotDeployed, migrateStack } from '@/api/stackOperationTasks'
 import { useStackOperationTask } from './useStackOperationTask'
 
@@ -45,6 +46,10 @@ export function useStackMigrateTask(
    * 并且它成立时不该让用户反复点重试。
    */
   const notDeployed = ref(false)
+  // The idempotency key and payload are one immutable intent. A network retry
+  // must never read changed form getters with the same request_id.
+  let submitted: Readonly<StackMigrateRequest> | null = null
+  let submittedRequestId = ''
 
   const runner = useStackOperationTask({
     /*
@@ -55,13 +60,17 @@ export function useStackMigrateTask(
      */
     start: async (requestId) => {
       try {
-        const task = await migrateStack(options.agentId, options.stackName, requestId, {
+        if (requestId !== submittedRequestId) {
+          submittedRequestId = requestId
+          submitted = null
+        }
+        submitted ??= Object.freeze({
           target_agent_id: params.targetAgentId(),
           include_volumes: params.includeVolumes(),
           start_after: params.startAfter(),
-          // 硬性确认位：界面上已经过二次确认
           confirmation: true
         })
+        const task = await migrateStack(options.agentId, options.stackName, requestId, submitted)
         notDeployed.value = false
         return task
       } catch (err) {
@@ -83,7 +92,15 @@ export function useStackMigrateTask(
     expectedName: options.stackName,
     expectedAction: 'migrate',
     // 迁移不保存配置，503 就是「不知道有没有跑起来」，不能声称已保存
-    savesConfig: false
+    savesConfig: false,
+    describeStartError: (error) => {
+      const status = (error as { status?: unknown } | null)?.status
+      if (status === 403) return '迁移要求对源服务器和目标服务器都具有 manage 管理权限。'
+      if (status === 404 || status === 409) {
+        return error instanceof Error ? error.message : '源或目标不可用、存在同名项目或迁移冲突，请核对后重试。'
+      }
+      return undefined
+    }
   })
 
   return { ...runner, notDeployed }

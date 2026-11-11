@@ -59,6 +59,8 @@ export interface StackOperationRunnerOptions {
    * 其余动作 503 只是「连不上，不知道有没有跑起来」，不能一概说成已保存。
    */
   savesConfig?: boolean
+  /** Domain-specific rejection text; transport uncertainty keeps the shared safe state machine. */
+  describeStartError?: (error: unknown) => string | undefined
 }
 
 export function useStackOperationTask(options: StackOperationRunnerOptions) {
@@ -294,6 +296,11 @@ export function useStackOperationTask(options: StackOperationRunnerOptions) {
        * 不能丢弃——收下它，只是不启动轮询，重开时 resume() 能看到。
        */
       if (myGen !== generation) {
+        if (!belongsToCurrent(created)) {
+          errorText.value = '服务器返回的任务不属于当前编排或动作，已停止读取。'
+          permanentError.value = true
+          return
+        }
         applySnapshot(created)
         return
       }
@@ -363,6 +370,8 @@ export function useStackOperationTask(options: StackOperationRunnerOptions) {
       } else {
         errorText.value = err instanceof Error ? err.message : '操作启动失败'
       }
+      const domainMessage = options.describeStartError?.(err)
+      if (domainMessage !== undefined) errorText.value = domainMessage
     } finally {
       if (!disposed) starting.value = false
     }

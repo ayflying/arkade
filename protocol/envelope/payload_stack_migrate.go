@@ -175,6 +175,35 @@ type VolumeImportCommitPayload struct {
 	SHA256 string `json:"sha256"`
 }
 
+// VolumeImportCancelPayload cancels receiving/extraction and releases only temporary files.
+type VolumeImportCancelPayload struct { TaskID string `json:"task_id"` }
+
+// ComposeMigrationPlanPayload reads a source project's authoritative migration inputs.
+type ComposeMigrationPlanPayload struct { Name string `json:"name"` }
+type ComposeMigrationPlanResult struct {
+ Name string `json:"name"`
+ Config string `json:"config"`
+ Env string `json:"env"`
+ ConfigHash string `json:"config_hash"`
+ Images []string `json:"images"`
+ Volumes []ComposeMigrationVolume `json:"volumes"`
+ BindMounts []ComposeMigrationSkippedMount `json:"bind_mounts"`
+ AnonymousMounts []ComposeMigrationSkippedMount `json:"anonymous_mounts"`
+ Busy bool `json:"busy"`
+}
+type ComposeMigrationVolume struct {
+ Key string `json:"key"`
+ Name string `json:"name"`
+ Kind string `json:"kind"` // named, explicit, external
+ Services []string `json:"services"`
+}
+type ComposeMigrationSkippedMount struct {
+ Service string `json:"service"`
+ Source string `json:"source"`
+ Target string `json:"target"`
+ Reason string `json:"reason"`
+}
+
 // VolumeImportStatusPayload 查询导入任务。
 type VolumeImportStatusPayload struct {
 	TaskID string `json:"task_id"`

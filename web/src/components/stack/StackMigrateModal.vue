@@ -26,6 +26,7 @@ import { useStackMigrateTask } from '@/composables/useStackMigrateTask'
 import type { StackMigrateTarget } from '@/types/stackMigrate'
 import { STACK_MIGRATE_NOTES } from '@/types/stackOperationTask'
 import { useAgentsStore } from '@/stores/agents'
+import { confirmAction } from '@/utils/confirm'
 
 const props = withDefaults(
   defineProps<{
@@ -113,7 +114,8 @@ const targetName = computed(() => {
 })
 
 /** 执行期间锁定选择：中途改目标等于让任务执行的东西和界面显示的不一致 */
-const locked = computed(() => task.value !== null || starting.value)
+const confirming = ref(false)
+const locked = computed(() => task.value !== null || starting.value || confirming.value || runner.hasStartAttempted())
 
 const canStart = computed(
   () =>
@@ -121,7 +123,7 @@ const canStart = computed(
     !starting.value &&
     !uncertain.value &&
     !locked.value &&
-    targetAgentId.value !== '' &&
+    props.agents.some((agent) => agent.id === targetAgentId.value && agent.online) &&
     targetAgentId.value !== props.agentId
 )
 
@@ -211,7 +213,8 @@ watch(lastSeq, () => {
 watch(
   () => phase.value,
   (next) => {
-    emit('busy', next === 'starting' || next === 'queued' || next === 'running')
+    emit('busy', next === 'starting' || next === 'queued' || next === 'running' ||
+      next === 'blocked' || next === 'interrupted')
   },
   { immediate: true }
 )
@@ -247,7 +250,7 @@ function onShow(): void {
  * 弹出一条"加载服务器列表失败"只会让用户困惑，而且现有列表仍可用于选择。
  */
 async function ensureAgents(): Promise<void> {
-  if (agentsStore.agents.length > 0) return
+  if (refreshingAgents.value) return
   refreshingAgents.value = true
   try {
     await agentsStore.refresh(true)
@@ -270,8 +273,24 @@ onMounted(() => {
 
 async function handleStart(): Promise<void> {
   if (!canStart.value) return
-  atBottom.value = true
-  await runner.start()
+  confirming.value = true
+  try {
+    const confirmed = await confirmAction({
+      title: '确认开始迁移？',
+      content: `将「${props.stackName}」的配置和全部镜像复制到「${targetName.value}」。\n` +
+        (includeVolumes.value ? '将同时复制数据卷；运行中业务的数据一致性请先确认。\n' : '不迁移数据卷，目标不会包含源卷数据。\n') +
+        (startAfter.value ? '完成后会自动启动目标编排。\n' : '完成后不启动目标编排。\n') +
+        '目标同名项目会被拒绝，bind 目录不迁移。源项目不会停止或删除；失败可能保留已复制的镜像、卷或配置。',
+      positiveText: '确认开始迁移',
+      danger: true
+    })
+    if (!confirmed || !props.show || !props.online ||
+      !props.agents.some((agent) => agent.id === targetAgentId.value && agent.online)) return
+    atBottom.value = true
+    await runner.start()
+  } finally {
+    confirming.value = false
+  }
 }
 
 async function handleResume(): Promise<void> {
@@ -334,6 +353,10 @@ function close(): void {
       没有其它可选的服务器。迁移目标是另一台已接入的服务器，请先在「服务器」页添加。
     </p>
 
+    <n-alert type="info" :bordered="false" class="migrate-modal__alert">
+      必选范围：编排配置与全部依赖镜像（不可取消）。源、目标均需要 manage 管理权限。
+    </n-alert>
+
     <!-- 两个勾选：默认都不勾，各带小字说明 -->
     <div class="migrate-modal__options">
       <n-checkbox v-model:checked="includeVolumes" :disabled="locked">
@@ -361,7 +384,7 @@ function close(): void {
         迁移完成后会在目标服务器上执行启动，容器会立刻运行。
       </p>
       <p v-else class="migrate-modal__hint">
-        不勾选时迁移完成后目标服务器上只有配置，容器不会运行，需要你手动启动。
+        不勾选时会复制配置、镜像及所选数据卷，但不启动目标容器，需要你手动启动。
       </p>
     </div>
 
@@ -428,6 +451,10 @@ function close(): void {
       {{ task.error }}
     </n-alert>
 
+    <n-alert v-if="task?.residual?.uncertain" type="warning" :bordered="false" class="migrate-modal__alert">
+      目标端可能有未确认的改动，先检查再重试。已完成的复制不会因任务失败自动回滚。
+    </n-alert>
+
     <div v-if="dropped" class="migrate-modal__truncated">
       <span v-if="droppedReasons.includes('trimmed')">
         输出过长，较早的内容已省略（仅保留最近 256 KB / 2000 条）。
@@ -487,7 +514,7 @@ function close(): void {
       </n-button>
       <!-- 状态未知：给同 key 重试入口，不换任务 -->
       <n-button
-        v-else-if="!locked && (uncertain || (task === null && phase === 'blocked'))"
+        v-else-if="!starting && !confirming && task === null && (uncertain || phase === 'blocked')"
         type="primary"
         size="small"
         :loading="starting"

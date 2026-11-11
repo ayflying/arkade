@@ -54,4 +54,5 @@ type MigrationResidual struct {
 	VolumesRestored int  `json:"volumes_restored"`
 	ComposeWritten  bool `json:"compose_written"`
 	Started         bool `json:"started"`
+	Uncertain       bool `json:"uncertain,omitempty"`
 }

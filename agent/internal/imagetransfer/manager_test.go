@@ -972,8 +972,18 @@ func TestSaveEnforcesLimitBeforeWriting(t *testing.T) {
 		t.Fatalf("无限输出的导出必须失败，实际: %s", final.Status)
 	}
 
+	// Terminal status is published before the writer's cleanup completes by design.
+	// Wait on the existing lifecycle event, not a sleep or quota polling loop:
+	// Status alone is never a resource-release receipt (Release also waits on done).
+	m.mu.Lock()
+	task := m.tasks[snap.ID]
+	m.mu.Unlock()
+	if task == nil || !m.waitWritersIdle(task, 5*time.Second) {
+		t.Fatal("failed save worker did not finish cleanup")
+	}
+
 	// 关键断言：落盘量不超过上限。
-	// 任务失败后归档已被删除，因此用失败消息与磁盘状态共同判断。
+	// 任务失败且 writer 已结束后归档已被删除，因此用失败消息与磁盘状态共同判断。
 	// 这里直接查磁盘：transfers 下不应留下任何 archive.tar。
 	if got := m.store.usage(); got != 0 {
 		t.Fatalf("失败后不应留下归档，实际占用 %d 字节", got)

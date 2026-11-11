@@ -12,6 +12,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,9 +29,34 @@ type fakeDocker struct {
 	payload []byte
 	err     error
 	calls   [][]string
+	owners  map[string]string
 }
 
 func (f *fakeDocker) run(ctx context.Context, args ...string) ([]byte, error) {
+	if len(args) > 0 && args[0] == "volume" {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if args[1] == "create" {
+			if f.owners == nil {
+				f.owners = map[string]string{}
+			}
+			f.owners[args[len(args)-1]] = strings.TrimPrefix(args[3], importOwnerLabel+"=")
+			return nil, nil
+		}
+		if args[1] == "inspect" {
+			name := args[2]
+			if owner := f.owners[name]; owner != "" {
+				return []byte(fmt.Sprintf(`[{"Name":%q,"Labels":{%q:%q}}]`, name, importOwnerLabel, owner)), nil
+			}
+		}
+		return nil, nil
+	}
+	if len(args) > 0 && args[0] == "inspect" {
+		return []byte(strings.TrimPrefix(args[len(args)-1], "arkade-migrate-")), nil
+	}
+	if len(args) > 0 && args[0] == "rm" {
+		return nil, nil
+	}
 	f.mu.Lock()
 	f.calls = append(f.calls, args)
 	f.mu.Unlock()

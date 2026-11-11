@@ -28,15 +28,11 @@ package migrate
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 )
@@ -119,6 +115,7 @@ type VolumeExporter struct {
 
 	mu       sync.Mutex
 	archives map[string]*volumeArchive
+	pending  int
 }
 
 // NewVolumeExporter 构造卷归档管理器。
@@ -152,7 +149,7 @@ func defaultDocker(ctx context.Context, args ...string) ([]byte, error) {
 // 因此这里严格按它校验——任何含 / 或 .. 的输入在这里就被拒，
 // 不会走到"拼路径"或"传给 docker"那一步。
 func validVolumeName(name string) bool {
-	if len(name) == 0 || len(name) > 255 {
+	if len(name) == 0 || len(name) > 255 || !((name[0] >= 'a' && name[0] <= 'z') || (name[0] >= 'A' && name[0] <= 'Z') || (name[0] >= '0' && name[0] <= '9')) {
 		return false
 	}
 	for i := 0; i < len(name); i++ {
@@ -182,9 +179,12 @@ func (e *VolumeExporter) Export(ctx context.Context, volume, project string) (Vo
 		return VolumeExportInfo{}, fmt.Errorf("%w: %q", ErrBadVolumeName, volume)
 	}
 
+	if out, err := e.docker(ctx, "volume", "inspect", volume); err != nil {
+		return VolumeExportInfo{}, filterDockerError(fmt.Errorf("%w: %s", err, out))
+	}
 	// 数量上限在落盘**之前**判断：否则会先写满磁盘再报"超限"。
 	e.mu.Lock()
-	live := 0
+	live := e.pending
 	for _, a := range e.archives {
 		if !a.gone {
 			live++
@@ -195,7 +195,9 @@ func (e *VolumeExporter) Export(ctx context.Context, volume, project string) (Vo
 		return VolumeExportInfo{}, ErrTooManyVolumeExports
 	}
 	id := newExportID()
+	e.pending++
 	e.mu.Unlock()
+	defer func() { e.mu.Lock(); e.pending--; e.mu.Unlock() }()
 
 	// 归档落在专用子目录：<root>/<exportID>/volume.tar
 	// 用 exportID 而不是卷名做目录名：卷名可能重复（不同项目的同名卷），
@@ -211,11 +213,14 @@ func (e *VolumeExporter) Export(ctx context.Context, volume, project string) (Vo
 
 	// 用临时容器的 tar：与 backup.go 同一条路径。
 	// 挂载为 :ro——导出绝不能修改源数据。
-	if _, derr := e.docker(ctx, "run", "--rm",
+	if _, derr := runArchiveHelper(ctx, e.docker,
 		"-v", volume+":/from:ro",
 		"-v", dir+":/backup",
 		"alpine:3.20",
 		"tar", "-cf", "/backup/volume.tar", "-C", "/from", "."); derr != nil {
+		if errors.Is(derr, ErrHelperCleanup) {
+			return VolumeExportInfo{}, derr
+		}
 		_ = os.RemoveAll(dir)
 		return VolumeExportInfo{}, filterDockerError(derr)
 	}
@@ -238,329 +243,4 @@ func (e *VolumeExporter) Export(ctx context.Context, volume, project string) (Vo
 	}
 	e.archives[id] = a
 	return a.info(), nil
-}
-
-// Open 确认归档仍可用。
-func (e *VolumeExporter) Open(ctx context.Context, exportID string) (VolumeExportInfo, error) {
-	a, err := e.lookup(exportID)
-	if err != nil {
-		return VolumeExportInfo{}, err
-	}
-	defer e.endRead(a)
-
-	path, err := e.archivePath(exportID)
-	if err != nil {
-		return VolumeExportInfo{}, err
-	}
-	fi, serr := os.Lstat(path)
-	if serr != nil {
-		// 登记还在但文件没了：报"不存在"，调用方的正确反应是重新导出。
-		return VolumeExportInfo{}, ErrVolumeExportNotFound
-	}
-	// 大小必须与登记一致：被截断的归档若被当成完整归档传给目标端，
-	// 会在解包时失败——而那时已经花掉了整个传输时间。
-	if fi.Size() != a.size {
-		return VolumeExportInfo{}, fmt.Errorf("卷归档大小与登记不一致（登记 %d，实际 %d）", a.size, fi.Size())
-	}
-	return a.info(), nil
-}
-
-// GetChunk 读取一块字节。
-func (e *VolumeExporter) GetChunk(ctx context.Context, exportID string, offset, maxBytes int64) ([]byte, bool, error) {
-	if offset < 0 {
-		return nil, false, ErrBadOffset
-	}
-	a, err := e.lookup(exportID)
-	if err != nil {
-		return nil, false, err
-	}
-	defer e.endRead(a)
-
-	if maxBytes <= 0 || maxBytes > ChunkSize {
-		maxBytes = ChunkSize
-	}
-	path, err := e.archivePath(exportID)
-	if err != nil {
-		return nil, false, err
-	}
-	f, oerr := os.Open(path)
-	if oerr != nil {
-		return nil, false, ErrVolumeExportNotFound
-	}
-	defer func() { _ = f.Close() }()
-
-	if offset >= a.size {
-		return nil, true, nil
-	}
-	buf := make([]byte, maxBytes)
-	n, rerr := f.ReadAt(buf, offset)
-	if rerr != nil && !errors.Is(rerr, io.EOF) {
-		return nil, false, rerr
-	}
-	eof := offset+int64(n) >= a.size
-	return buf[:n], eof, nil
-}
-
-// Close 释放归档。
-//
-// released=false 且 err=nil 表示本来就不存在，**不是错误**。
-func (e *VolumeExporter) Close(ctx context.Context, exportID string) (bool, string, error) {
-	e.mu.Lock()
-	a, ok := e.archives[exportID]
-	if ok {
-		a.gone = true
-		delete(e.archives, exportID)
-	}
-	e.mu.Unlock()
-
-	if !ok {
-		return false, "卷归档不存在（可能已释放或已过期）", nil
-	}
-	// 等正在读的调用结束再删：否则读者会拿到一个已 unlink 但可读的句柄，
-	// 读到看似正常却已不存在的字节。
-	if !e.waitReadersIdle(a) {
-		return false, "卷归档仍被读取占用，请稍后重试", fmt.Errorf("卷归档仍被读取")
-	}
-	dir, err := e.archiveDir(exportID)
-	if err != nil {
-		return false, "", err
-	}
-	if err := os.RemoveAll(dir); err != nil {
-		return false, "删除卷归档失败", err
-	}
-	return true, "已释放", nil
-}
-
-// SweepExpired 清理过期归档，返回清理数量。
-func (e *VolumeExporter) SweepExpired() int {
-	now := e.now()
-	var expired []*volumeArchive
-	e.mu.Lock()
-	for id, a := range e.archives {
-		if now.After(a.expires) {
-			a.gone = true
-			delete(e.archives, id)
-			expired = append(expired, a)
-		}
-	}
-	e.mu.Unlock()
-
-	removed := 0
-	for _, a := range expired {
-		if !e.waitReadersIdle(a) {
-			continue
-		}
-		if dir, err := e.archiveDir(a.id); err == nil {
-			if err := os.RemoveAll(dir); err == nil {
-				removed++
-			}
-		}
-	}
-	return removed
-}
-
-// CleanupOrphans 删除 root 下所有"没有登记"的子目录。
-//
-// 用于启动清理：进程被 kill 时 defer 不会执行，残留只能在这里收拾。
-// 进程重启后登记表是空的，磁盘上的归档**无法证明仍然有效**，
-// 因此一律删除——宁可让迁移重新导出，也不能让调用方拿到
-// 一份"没有登记、无从校验"的卷归档。
-// CleanupOrphans 清理当前登记表里没有的归档目录。
-//
-// ============================ 为什么不盲删 root 下的所有目录 ============================
-// 早期版本直接遍历 root 并删掉所有不在登记表里的目录。它当时是对的，
-// 但正确性依赖一个**没有强制、也没有说明**的隐式前提：root 是独占目录。
-//
-// 现实是我们把 root 放在 transfers/ 之下（transfers/volumes），
-// 与镜像归档共用同一个临时区。同级的 transfers/imports 就是导入任务的
-// 目录，而 imagetransfer 的 cleanupOrphans 恰好也在扫 transfers/。
-// 两边都在"删自己不认识的目录"——目前靠各自的名字规则**碰巧**错开：
-//   - imagetransfer 只删 32 位小写 hex；
-//   - 我们删一切。
-//
-// 只要有人把某一侧的目录名改成看起来像另一侧，或者把 root 上提一层
-// （改成 transfers 本身），一次启动清理就会删掉对面正在用的归档。
-//
-// 因此这里改成**白名单式**：只删符合卷归档 id 规则的目录。
-// 这让"清理"永远只作用于自己建的东西，与邻居的命名规则无关。
-func (e *VolumeExporter) CleanupOrphans() int {
-	active := make(map[string]struct{})
-	e.mu.Lock()
-	for id := range e.archives {
-		active[id] = struct{}{}
-	}
-	e.mu.Unlock()
-
-	entries, err := os.ReadDir(e.root)
-	if err != nil {
-		return 0
-	}
-	removed := 0
-	for _, ent := range entries {
-		// 名字不符合归档 id 规则：不是我们建的，**不动它**。
-		//
-		// 这条判断同时挡住了"root 被上提一层"的事故：
-		// 若 root 误设成 transfers/，imports 与其它非 hex 名字都会被跳过。
-		if !validExportID(ent.Name()) {
-			continue
-		}
-		if !ent.IsDir() {
-			// 符号链接或普通文件：不是我们建的目录，删链接本身即可，
-			// 绝不进入它指向的位置。
-			if ent.Type()&os.ModeSymlink != 0 {
-				if os.Remove(filepath.Join(e.root, ent.Name())) == nil {
-					removed++
-				}
-			}
-			continue
-		}
-		if _, ok := active[ent.Name()]; ok {
-			continue
-		}
-		if err := os.RemoveAll(filepath.Join(e.root, ent.Name())); err == nil {
-			removed++
-		}
-	}
-	return removed
-}
-
-// validExportID 判断目录名是否是本包生成的卷归档 id。
-//
-// 与 imagetransfer 的 validTaskID 用同一种形状（32 位小写 hex），
-// 但不是同一条规则：两个包各自的 id 空间独立，
-// 谁将来改格式都不该影响对方。
-func validExportID(id string) bool {
-	if len(id) != exportIDLen {
-		return false
-	}
-	for i := 0; i < len(id); i++ {
-		c := id[i]
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-			return false
-		}
-	}
-	return true
-}
-
-// lookup 取出可读归档并登记一次读（必须与 endRead 配对）。
-//
-// 过期判定在访问时做，而不只靠后台清扫：后台是尽力而为的，
-// 若只靠它，过期归档会继续被读到——**读出过期数据比报错危险得多**。
-func (e *VolumeExporter) lookup(id string) (*volumeArchive, error) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	a, ok := e.archives[id]
-	if !ok {
-		return nil, ErrVolumeExportNotFound
-	}
-	if a.gone {
-		return nil, ErrVolumeExportNotFound
-	}
-	if e.now().After(a.expires) {
-		a.gone = true
-		delete(e.archives, id)
-		return nil, ErrVolumeExportExpired
-	}
-	a.readers++
-	return a, nil
-}
-
-func (e *VolumeExporter) endRead(a *volumeArchive) {
-	e.mu.Lock()
-	if a.readers > 0 {
-		a.readers--
-	}
-	e.mu.Unlock()
-}
-
-// waitReadersIdle 等该归档在飞读结束，返回是否等到。
-func (e *VolumeExporter) waitReadersIdle(a *volumeArchive) bool {
-	const (
-		step    = 2 * time.Millisecond
-		maxWait = 2 * time.Second
-	)
-	var waited time.Duration
-	for {
-		e.mu.Lock()
-		n := a.readers
-		e.mu.Unlock()
-		if n == 0 {
-			return true
-		}
-		if waited >= maxWait {
-			return false
-		}
-		time.Sleep(step)
-		waited += step
-	}
-}
-
-// archiveDir 返回某归档的目录（含路径逃逸防护）。
-func (e *VolumeExporter) archiveDir(id string) (string, error) {
-	if !validVolumeName(id) {
-		return "", fmt.Errorf("%w: %q", ErrBadVolumeName, id)
-	}
-	dir := filepath.Join(e.root, id)
-	rel, err := filepath.Rel(e.root, dir)
-	if err != nil || strings.HasPrefix(rel, "..") {
-		return "", fmt.Errorf("归档路径逃出根目录")
-	}
-	return dir, nil
-}
-
-// archivePath 返回某归档的 tar 文件路径。
-func (e *VolumeExporter) archivePath(id string) (string, error) {
-	dir, err := e.archiveDir(id)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, "volume.tar"), nil
-}
-
-// info 生成对外信息。
-func (a *volumeArchive) info() VolumeExportInfo {
-	return VolumeExportInfo{
-		ExportID: a.id, Volume: a.volume, SizeBytes: a.size,
-		SHA256: a.sha256, ExpiresAt: a.expires,
-	}
-}
-
-// hashFile 计算文件的大小与 sha256（一块一块读，不整文件进内存）。
-func hashFile(path string) (string, int64, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", 0, fmt.Errorf("打开卷归档失败: %w", err)
-	}
-	defer func() { _ = f.Close() }()
-
-	h := sha256.New()
-	n, cerr := io.Copy(h, f)
-	if cerr != nil {
-		return "", 0, fmt.Errorf("读取卷归档失败: %w", cerr)
-	}
-	return hex.EncodeToString(h.Sum(nil)), n, nil
-}
-
-// filterDockerError 把 docker 的原始输出转成中文说明。
-//
-// ============================ 必须过滤 ============================
-// docker 的错误文本常含镜像地址、registry 认证细节、内网主机名。
-// 这些信息会随"任务失败原因"流到 Hub、浏览器与日志里。
-// 因此这里只保留**可操作**的部分，其余一律替换成固定文案。
-func filterDockerError(err error) error {
-	msg := err.Error()
-	switch {
-	case strings.Contains(msg, "No such volume"):
-		return fmt.Errorf("源服务器上不存在该数据卷")
-	case strings.Contains(msg, "permission denied"):
-		return fmt.Errorf("无权限读取该数据卷（请检查 Agent 的 docker 权限）")
-	case strings.Contains(msg, "no space left"):
-		return fmt.Errorf("磁盘空间不足，无法写出卷归档")
-	case strings.Contains(msg, "pull access denied"), strings.Contains(msg, "not found"):
-		// 打包用的 alpine 镜像拉不到（离线环境）。
-		return fmt.Errorf("无法获取打包用的临时镜像，请确认服务器可访问镜像源")
-	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
-		return fmt.Errorf("打包数据卷超时或被取消")
-	}
-	return fmt.Errorf("打包数据卷失败（请查看服务器上的 docker 日志）")
 }

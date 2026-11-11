@@ -206,7 +206,7 @@ const migrateTargets = computed<StackMigrateTarget[]>(() =>
   agentsStore.agents.map((a) => ({
     id: a.id,
     name: a.name,
-    online: a.status === 'online'
+    online: a.status === 'online' && a.disabled !== true
   }))
 )
 

@@ -2,8 +2,9 @@ package handler
 
 // compose_test.go 覆盖编排类处理器。
 //
-// 测试策略：这些处理器最终会执行 docker compose 命令，但**本机没有 docker**，
-// 因此命令必然失败。这不是缺陷而是正好能验证最重要的一条规则：
+// 测试策略：这些处理器最终会执行 docker compose 命令。构造 fixture 时
+// 将 PATH 隔离到空的临时目录，明确模拟不可用的引擎 CLI，不依赖宿主是否安装 Docker。
+// 命令确定性失败，因此能验证最重要的一条规则：
 //   **命令失败必须向 Hub 报错，绝不能返回"成功"**。
 // 用户最怕的是界面显示"已启动"而服务实际没起来。
 //
@@ -22,6 +23,10 @@ import (
 // newComposeRegistry 构造带编排能力的注册表，数据目录用临时目录。
 func newComposeRegistry(t *testing.T) (*Registry, *compose.Manager) {
 	t.Helper()
+	// Manager intentionally has no production runner injection API. Isolate its
+	// command lookup instead: even a host-installed docker wrapper cannot run.
+	// t.Setenv is restored after the test and these fixtures are never parallel.
+	t.Setenv("PATH", t.TempDir())
 	mgr := compose.NewManager(t.TempDir(), "")
 	reg := NewRegistry()
 	RegisterDefaults(reg, &fakeRuntime{}, mgr, nil)
@@ -102,7 +107,7 @@ func TestComposeUpValidation(t *testing.T) {
 // 用户看到"下发失败"，但下一次 stop/restart 用的已经是被判为无效的那份内容。
 //
 // 因此现在的顺序是：先在临时目录校验 → 通过才写 → 再 up。
-// 本机没有 docker，校验必然失败，所以断言"目录里什么都没有"。
+// fixture 隔离了 CLI 搜索路径，校验确定性失败，所以断言"目录里什么都没有"。
 func TestComposeUpValidatesBeforeWriting(t *testing.T) {
 	reg, mgr := newComposeRegistry(t)
 	const content = "services:\n  web:\n    image: nginx\n"
@@ -250,7 +255,7 @@ func TestComposeListReportsLocalHash(t *testing.T) {
 	if len(p.Services) != 1 || p.Services[0] != "db" {
 		t.Errorf("服务列表应为 [db]，实际 %v", p.Services)
 	}
-	// 本机没 docker，ps 失败 → 状态应为 unknown 而不是 stopped。
+	// fixture 无可执行的 docker，ps 失败 → 状态应为 unknown 而不是 stopped。
 	if p.Status != compose.StatusUnknown {
 		t.Errorf("ps 失败时状态应为 unknown，实际 %q", p.Status)
 	}
@@ -258,7 +263,7 @@ func TestComposeListReportsLocalHash(t *testing.T) {
 
 // TestComposeLogsTailClamp 验证 tail 被限制在合法范围。
 //
-// 只验证不 panic 且能走到执行阶段（本机无 docker 会失败）——
+// 只验证不 panic 且能走到执行阶段（fixture 隔离 docker 会失败）——
 // 越界的 tail 会被 Manager 内部夹紧，不会传给命令行造成异常。
 func TestComposeLogsTailClamp(t *testing.T) {
 	reg, mgr := newComposeRegistry(t)
@@ -269,13 +274,13 @@ func TestComposeLogsTailClamp(t *testing.T) {
 	resp := request(t, reg, envelope.MethodComposeLogs,
 		envelope.ComposeLogsPayload{Name: "web", TailLines: 999999})
 	if resp.Error == nil {
-		t.Error("本机无 docker，应返回错误")
+		t.Error("fixture 隔离 docker，应返回错误")
 	}
 	// 负数 tail 同样不应导致异常。
 	resp = request(t, reg, envelope.MethodComposeLogs,
 		envelope.ComposeLogsPayload{Name: "web", TailLines: -5})
 	if resp.Error == nil {
-		t.Error("本机无 docker，应返回错误")
+		t.Error("fixture 隔离 docker，应返回错误")
 	}
 }
 
@@ -327,7 +332,7 @@ func TestComposeFailureIsRuntimeFailed(t *testing.T) {
 	}
 	resp := request(t, reg, envelope.MethodComposeStop, envelope.ComposeOpPayload{Name: "web"})
 	if resp.Error == nil {
-		t.Fatal("本机无 docker，应返回错误")
+		t.Fatal("fixture 隔离 docker，应返回错误")
 	}
 	if resp.Error.Code != envelope.CodeRuntimeFailed {
 		t.Errorf("错误码应为 runtime_failed，实际 %q（消息 %q）", resp.Error.Code, resp.Error.Message)
