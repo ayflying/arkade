@@ -181,9 +181,6 @@ func (c Config) Validate() error {
 	if c.Auth.InitialPass == "" {
 		errs = append(errs, errors.New("首次启动必须通过 auth.initial_pass 或环境变量 ARKADE_INITIAL_PASS 设置管理员密码"))
 	}
-	if len(c.Auth.InitialPass) > 0 && len(c.Auth.InitialPass) < 8 {
-		errs = append(errs, errors.New("管理员密码至少 8 位"))
-	}
 	if len(c.Auth.AgentToken) > 0 && len(c.Auth.AgentToken) < 16 {
 		errs = append(errs, errors.New("agent_token 至少 16 位，过短容易被爆破"))
 	}

@@ -44,7 +44,7 @@ docker compose --env-file .env -f compose.yml ps
 curl -fsS http://127.0.0.1:8080/healthz
 ```
 
-默认浏览器地址 `http://服务器地址:8080`，改端口直接修改 compose.yml 中的 `ports` 和 `ARKADE_BASE_URL`。管理员初始密码至少 8 位，Hub 准入令牌至少 16 位。已有数据库不会因初始密码变量改变而重置账号。
+默认浏览器地址 `http://服务器地址:8080`，改端口直接修改 compose.yml 中的 `ports` 和 `ARKADE_BASE_URL`。管理员初始密码不能为空，允许短密码，登录后请尽快修改；Hub 准入令牌仍至少 16 位。已有数据库不会因初始密码变量改变而重置账号。
 
 编排不提供源码构建。开发者需要本地构建时，在仓库根目录单独执行，再直接修改编排中的 `image`：
 

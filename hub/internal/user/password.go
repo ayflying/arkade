@@ -20,7 +20,7 @@ const (
 	bcryptCost = 10
 	// maxPasswordBytes 是 bcrypt 的硬上限。
 	maxPasswordBytes = 72
-	// minPasswordLen 是最小长度，与配置校验保持一致。
+	// minPasswordLen 用于正常创建账号和修改密码，不限制部署初始密码。
 	minPasswordLen = 8
 )
 
@@ -29,6 +29,22 @@ func HashPassword(plain string) (string, error) {
 	if err := validatePassword(plain); err != nil {
 		return "", err
 	}
+	return hashPassword(plain)
+}
+
+// HashInitialPassword 仅用于部署时创建初始管理员，允许短密码；
+// 保留非空白和 bcrypt 上限检查，不放宽正常创建账号/改密规则。
+func HashInitialPassword(plain string) (string, error) {
+	if strings.TrimSpace(plain) == "" {
+		return "", fmt.Errorf("初始密码不能为空或全为空白字符")
+	}
+	if len(plain) > maxPasswordBytes {
+		return "", fmt.Errorf("密码不能超过 %d 字节（bcrypt 上限）", maxPasswordBytes)
+	}
+	return hashPassword(plain)
+}
+
+func hashPassword(plain string) (string, error) {
 	hash, err := bcryptGenerate([]byte(plain), bcryptCost)
 	if err != nil {
 		return "", fmt.Errorf("生成密码哈希失败: %w", err)

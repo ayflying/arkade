@@ -152,9 +152,9 @@ dsn = "host=localhost port=5432 user=arkade dbname=arkade sslmode=disable"
 session_ttl = "72h"
 # Agent 反向连接使用的预共享 Token，至少 16 位；也可用环境变量 ARKADE_AGENT_TOKEN
 agent_token = "请替换为至少16位的随机字符串"
-# 首次启动时创建的管理员账号；密码至少 8 位，也可用环境变量 ARKADE_INITIAL_PASS
+# 首次启动管理员密码不能为空，允许短密码；登录后请尽快修改，也可用 ARKADE_INITIAL_PASS
 initial_user = "admin"
-initial_pass = "请替换为至少8位的管理员密码"
+initial_pass = "请替换为管理员初始密码"
 # OIDC 客户端密钥的加密主密钥文件，独立于 PostgreSQL 数据库连接。
 # 备份/迁移必须同时保留数据库和密钥文件；不要提交此文件到版本库。
 settings_key_file = "./data/settings.key"

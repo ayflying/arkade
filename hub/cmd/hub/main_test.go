@@ -23,10 +23,11 @@ func runWithArgs(t *testing.T, args ...string) error {
 }
 
 func TestRunWithoutConfigUsesEnv(t *testing.T) {
-	t.Setenv("ARKADE_INITIAL_PASS", "short")
+	t.Setenv("ARKADE_INITIAL_PASS", "1")
+	t.Setenv("ARKADE_AGENT_TOKEN", "short")
 	// 在配置校验阶段停止，不创建数据库或监听网络。
 	err := runWithArgs(t)
-	if err == nil || !strings.Contains(err.Error(), "管理员密码至少 8 位") {
+	if err == nil || !strings.Contains(err.Error(), "agent_token 至少 16 位") {
 		t.Fatalf("不传 -c 应加载环境配置并进入校验，实际: %v", err)
 	}
 }

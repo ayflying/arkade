@@ -39,13 +39,13 @@ func TestValidateRequiresInitialPassword(t *testing.T) {
 	}
 }
 
-// TestValidateRejectsShortPassword 验证弱密码被拒绝。
-func TestValidateRejectsShortPassword(t *testing.T) {
+// 初始密码由部署者指定，短密码不应阻断启动。
+func TestValidateAllowsShortInitialPassword(t *testing.T) {
 	cfg := Default()
-	cfg.Auth.InitialPass = "short"
+	cfg.Auth.InitialPass = "1"
 
-	if err := cfg.Validate(); err == nil {
-		t.Fatal("过短的密码必须被拒绝")
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("短初始密码应允许启动: %v", err)
 	}
 }
 

@@ -198,7 +198,7 @@ func (a *App) Shutdown(ctx context.Context) error {
 // ensureInitialAdmin 在数据库为空时创建初始管理员账号。
 //
 // 安全要求：密码绝不硬编码在代码里，必须由配置或环境变量提供；
-// 校验已在 config.Validate 中完成（至少 8 位）。
+// 初始密码允许短密码，非空白与 bcrypt 上限由 HashInitialPassword 校验。
 func ensureInitialAdmin(ctx context.Context, db *store.DB, cfg config.Config, log *slog.Logger) error {
 	n, err := db.CountUsers(ctx)
 	if err != nil {
@@ -208,7 +208,7 @@ func ensureInitialAdmin(ctx context.Context, db *store.DB, cfg config.Config, lo
 		return nil
 	}
 
-	hash, err := user.HashPassword(cfg.Auth.InitialPass)
+	hash, err := user.HashInitialPassword(cfg.Auth.InitialPass)
 	if err != nil {
 		return fmt.Errorf("初始化管理员密码无效: %w", err)
 	}
