@@ -39,8 +39,8 @@ func TestImageTasksFullListCancelOwnerGrantsAndPath(t *testing.T) {
 		}
 	}
 	grant(a.id, user.PermManage)
-	ownerCookies := e.loginAsFor(t, a.url, "image-full-owner", testPassword)
-	otherCookies := e.loginAsFor(t, a.url, "image-full-other", testPassword)
+	ownerCookies := e.loginAs(t, "image-full-owner", testPassword)
+	otherCookies := e.loginAs(t, "image-full-other", testPassword)
 	resp, raw := doHTTP(t, http.MethodPost, a.url+"/api/agents/"+a.id+"/images/pull", `{"reference":"alpine:3.20"}`, ownerCookies)
 	if resp.StatusCode != 202 {
 		t.Fatalf("start %d %s", resp.StatusCode, raw)

@@ -113,7 +113,7 @@ func TestSeedOnLegacyUpgrade(t *testing.T) {
 	if err != nil {
 		t.Fatalf("读哈希记录失败: %v", err)
 	}
-	if len(recorded) != 10 {
+	if len(recorded) != latestTestVersion(t) {
 		t.Fatalf("补齐后应有 10 条记录，实际 %d", len(recorded))
 	}
 }
@@ -228,7 +228,7 @@ func TestPartialMissingRecordedChecksums(t *testing.T) {
 	if err != nil {
 		t.Fatalf("读记录失败: %v", err)
 	}
-	if len(recorded) != 10 {
+	if len(recorded) != latestTestVersion(t) {
 		t.Fatalf("补齐后应有 10 条记录，实际 %d: %v", len(recorded), recorded)
 	}
 }

@@ -60,7 +60,9 @@ func (sessionAccessor) SetCookie(ctx context.Context, token string, expires time
 	if r == nil {
 		return
 	}
-	setSessionCookie(r.Response.Writer, r.Request, token, expires, sessionTTLFromCtx(ctx))
+	// The issued expiry is authoritative: settings can change TTL without a
+	// router rebuild. Do not reuse a stale startup TTL in Cookie Max-Age.
+	setSessionCookie(r.Response.Writer, r.Request, token, expires, time.Until(expires))
 }
 
 // ClearCookie 清会话 Cookie。

@@ -10,13 +10,14 @@ import (
 
 // Users is the golang structure of table users for DAO operations like Where/Data.
 type Users struct {
-	g.Meta       `orm:"table:users, do:true"`
-	Id           any //
-	Username     any //
-	DisplayName  any //
-	PasswordHash any //
-	Role         any //
-	Disabled     any //
-	CreatedAt    any //
-	UpdatedAt    any //
+	g.Meta             `orm:"table:users, do:true"`
+	Id                 any //
+	Username           any //
+	DisplayName        any //
+	PasswordHash       any //
+	Role               any //
+	Disabled           any //
+	CreatedAt          any //
+	UpdatedAt          any //
+	MustChangePassword any //
 }

@@ -46,6 +46,8 @@ func badRequest(err error) error {
 
 func (c *Controller) storeError(err error, notFoundMessage string) error {
 	switch {
+	case errors.Is(err, store.ErrLastLocalAdmin):
+		return failure(http.StatusForbidden, "forbidden", "必须保留至少一个可用的本地密码管理员")
 	case errors.Is(err, store.ErrNotFound):
 		return failure(http.StatusNotFound, "not_found", notFoundMessage)
 	case errors.Is(err, store.ErrConflict):
@@ -62,7 +64,7 @@ func viewOf(u user.User, groupIDs []string) api.UserView {
 	}
 	return api.UserView{
 		ID: u.ID, Username: u.Username, DisplayName: u.DisplayName,
-		Role: string(u.Role), Disabled: u.Disabled,
+		Role: string(u.Role), Disabled: u.Disabled, MustChangePassword: u.MustChangePassword,
 		CreatedAt: u.CreatedAt.Unix(), UpdatedAt: u.UpdatedAt.Unix(), GroupIDs: groupIDs,
 	}
 }

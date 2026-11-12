@@ -39,9 +39,9 @@ func TestMigrationV2Applied(t *testing.T) {
 	if dirty != 0 {
 		t.Fatalf("全新库迁移后不应处于 dirty 状态")
 	}
-	// 期望已推进到最新版本（当前共 10 个）。
-	if version != 10 {
-		t.Errorf("迁移游标应推进到 v10，实际 v%d", version)
+	// 期望已推进到最新版本（当前共 11 个）。
+	if version != 11 {
+		t.Errorf("迁移游标应推进到 v11，实际 v%d", version)
 	}
 
 	// 全新库不应存在旧体系记录表。

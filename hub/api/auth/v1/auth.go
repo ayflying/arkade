@@ -69,8 +69,10 @@ type MeRes struct {
 // 存在性暴露给序列化逻辑——一旦将来有人加了 json tag，泄漏就发生了。
 // 这里只列**允许出现在网络上**的字段。
 type UserView struct {
-	ID          string `json:"id" dc:"用户 ID"`
-	Username    string `json:"username" dc:"登录名"`
-	DisplayName string `json:"display_name" dc:"显示名"`
-	Role        string `json:"role" dc:"角色"`
+	ID                 string `json:"id" dc:"用户 ID"`
+	Username           string `json:"username" dc:"登录名"`
+	DisplayName        string `json:"display_name" dc:"显示名"`
+	Role               string `json:"role" dc:"角色"`
+	MustChangePassword bool   `json:"must_change_password"`
+	LocalPassword      bool   `json:"local_password"`
 }

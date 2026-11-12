@@ -6,12 +6,14 @@ go 1.24.0
 require (
 	arkade/protocol v0.0.0-00010101000000-000000000000
 	github.com/BurntSushi/toml v1.5.0
+	github.com/coreos/go-oidc/v3 v3.14.1
 	github.com/gofrs/flock v0.12.1
 	github.com/gogf/gf/contrib/drivers/sqlite/v2 v2.9.6
 	github.com/gogf/gf/v2 v2.9.6
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/gorilla/websocket v1.5.3
 	golang.org/x/crypto v0.45.0
+	golang.org/x/oauth2 v0.30.0
 )
 
 require (
@@ -21,6 +23,7 @@ require (
 	github.com/fatih/color v1.18.0 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/glebarez/go-sqlite v1.21.2 // indirect
+	github.com/go-jose/go-jose/v4 v4.0.5 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect

@@ -44,11 +44,11 @@ func TestAuditCountRetention(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = rawDBOf(t, d).QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_logs`).Scan(&count)
-	if count != AuditMaxRecords {
-		t.Fatal("write exceeded limit", count)
+	if count != AuditMaxRecords+1 {
+		t.Fatal("write unexpectedly pruned configured retention", count)
 	}
 	_ = rawDBOf(t, d).QueryRowContext(ctx, `SELECT MIN(id) FROM audit_logs WHERE id LIKE 'id-%'`).Scan(&min)
-	if min != "id-000006" {
-		t.Fatal("write removed wrong record", min)
+	if min != "id-000005" {
+		t.Fatal("write removed historical record", min)
 	}
 }

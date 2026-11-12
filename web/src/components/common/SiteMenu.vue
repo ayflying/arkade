@@ -11,6 +11,7 @@
  */
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
 import { NMenu } from 'naive-ui'
 import { buildMenuOptions, isGlobalMenuKey } from '@/layouts/menuConfig'
 import { SIDER_WIDTH_COLLAPSED } from '@/composables/useResponsive'
@@ -48,7 +49,8 @@ const router = useRouter()
  * 不用 ref 缓存一次的原因：agentId 会随用户切换服务器实时变化，
  * 操作菜单里的跳转参数必须跟着变，否则切了服务器仍跳到旧服务器。
  */
-const menuOptions = computed(() => buildMenuOptions(props.agentId, props.agentName))
+const auth = useAuthStore()
+const menuOptions = computed(() => buildMenuOptions(props.agentId, props.agentName, auth.isAdmin))
 
 /**
  * 菜单点击：key 即 routeName（约定见 menuConfig.buildMenuOptions）。

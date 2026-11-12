@@ -62,11 +62,6 @@ func Open(ctx context.Context, path string) (*DB, error) {
 		return nil, err
 	}
 
-	if err := db.PruneAuditCount(ctx); err != nil {
-		closeGDB(gdbInst)
-		return nil, fmt.Errorf("清理超限审计记录失败: %w", err)
-	}
-
 	// 预热表元数据缓存，必须在这里做（详见 warmTableMetadata 的说明）。
 	if err := warmTableMetadata(ctx, db); err != nil {
 		closeGDB(gdbInst)

@@ -150,6 +150,10 @@ func authenticatorGF(svc *auth.Service) func(*ghttp.Request) bool {
 				nil, envelope.CodeUnauthorized, "登录已失效，请重新登录")
 			return false
 		}
+		if u.MustChangePassword && !passwordChangeAllowed(r.URL.Path) {
+			commit(r, slog.Default(), http.StatusForbidden, nil, "password_change_required", "请先修改初始密码后再使用系统")
+			return false
+		}
 		ctx := context.WithValue(r.Context(), ctxKeyUser, u)
 		ctx = context.WithValue(ctx, ctxKeyToken, token)
 		r.Request = r.Request.WithContext(ctx)

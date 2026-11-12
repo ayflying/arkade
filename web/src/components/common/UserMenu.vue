@@ -12,6 +12,7 @@
  * 避免 display_name 本身就叫「管理员」时出现「管理员 管理员」的重复。
  */
 import { computed, h } from 'vue'
+import { useRouter } from 'vue-router'
 import { NAvatar, NButton, NDropdown, NIcon, NTag } from 'naive-ui'
 import type { DropdownOption } from 'naive-ui'
 import AppIcon from '@/components/common/AppIcon.vue'
@@ -38,8 +39,7 @@ const auth = useAuthStore()
 /** 角色中文名；后端可能出现契约外的角色值，未知时不展示徽标而不是显示乱码 */
 const ROLE_LABELS: Record<string, string> = {
   admin: '管理员',
-  operator: '操作员',
-  viewer: '只读'
+  user: '普通用户'
 }
 
 const roleLabel = computed<string>(() => ROLE_LABELS[auth.user?.role ?? ''] ?? '')
@@ -85,6 +85,7 @@ const userMenuOptions = computed<DropdownOption[]>(() => {
   return [
     ...infoGroup,
     { key: 'divider', type: 'divider' },
+    { key: 'account', label: '个人设置' },
     ...actionGroup
   ]
 })
@@ -94,7 +95,9 @@ function renderLogoutIcon(): ReturnType<typeof h> {
   return h(NIcon, { size: 16 }, { default: () => h(AppIcon, { name: 'logout' }) })
 }
 
+const router = useRouter()
 function handleSelect(key: string): void {
+  if (key === 'account') void router.push('/account')
   if (key === 'logout') {
     emit('logout')
   }

@@ -1,0 +1,75 @@
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import ts from 'typescript'
+const read = path => readFileSync(new URL(`../src/${path}`, import.meta.url), 'utf8')
+const encode = js => `data:text/javascript;base64,${Buffer.from(js).toString('base64')}`
+const calls = []
+const request = encode(`export const httpGet=(...a)=>globalThis.__ADMIN_REQ__('GET',...a);export const httpPost=(...a)=>globalThis.__ADMIN_REQ__('POST',...a);export const httpPut=(...a)=>globalThis.__ADMIN_REQ__('PUT',...a);export const httpPatch=(...a)=>globalThis.__ADMIN_REQ__('PATCH',...a);export const httpDelete=(...a)=>globalThis.__ADMIN_REQ__('DELETE',...a);`)
+globalThis.__ADMIN_REQ__ = async (...args) => { calls.push(args); return { user: { id: 'u1' }, users: [], groups: [], group: { id: 'g1' }, settings: { version: 8 }, provider: { id: 'p1' }, providers: [], items: [], members: [], grants: [] } }
+async function load(path) {
+  const js = ts.transpileModule(read(path), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText.replace(/from ['"]\.\/request['"]/g, `from '${request}'`)
+  return import(encode(js))
+}
+const policy = await load('utils/accessPolicy.ts')
+const base = { loggedIn: true, mustChange: false, admin: false, public: false, adminOnly: false, account: false }
+assert.equal(policy.accessRedirect({ ...base, adminOnly: true }), '/forbidden')
+assert.equal(policy.accessRedirect({ ...base, admin: true, adminOnly: true }), null)
+assert.equal(policy.accessRedirect({ ...base, loggedIn: false }), '/login')
+assert.equal(policy.accessRedirect({ ...base, mustChange: true, public: true }), '/account')
+assert.equal(policy.accessRedirect({ ...base, mustChange: true, account: true }), null)
+assert.equal(policy.safeLocalPath('//evil.example'), '/overview')
+assert.equal(policy.safeLocalPath('/\\evil.example'), '/overview')
+assert.equal(policy.safeProviderStart('https://evil.example'), null)
+assert.equal(policy.safeProviderStart('/api/auth/oidc/a/start'), '/api/auth/oidc/a/start')
+const password = await load('utils/passwordPolicy.ts')
+assert.equal(password.passwordIssue('a'.repeat(72)), '')
+assert.match(password.passwordIssue('中'.repeat(25)), /72/)
+assert.match(password.passwordIssue('short'), /8/)
+const settings = await load('api/settings.ts')
+assert.deepEqual(settings.providerPayload({ client_secret: '', version: 3 }), { version: 3 })
+assert.deepEqual(settings.providerPayload({ client_secret: 'replacement', version: 3 }), { client_secret: 'replacement', version: 3 })
+await settings.updateProvider('id/slash', settings.providerPayload({ version: 3, client_secret: '' }))
+assert.deepEqual(calls.at(-1), ['PATCH', '/settings/oidc-providers/id%2Fslash', { version: 3 }])
+await settings.saveSettings({ version: 7, site_name: '测试' })
+assert.deepEqual(calls.at(-1), ['PUT', '/settings', { version: 7, site_name: '测试' }])
+const management = await load('api/management.ts')
+await management.setGroupMembers('g/a', ['u1', 'u2'])
+assert.deepEqual(calls.at(-1), ['PUT', '/groups/g%2Fa/members', { user_ids: ['u1', 'u2'] }])
+await management.setGroupGrants('g1', [])
+assert.deepEqual(calls.at(-1), ['PUT', '/groups/g1/grants', { grants: [] }])
+await management.userPermissions('u/a')
+assert.deepEqual(calls.at(-1), ['GET', '/users/u%2Fa/permissions'])
+const account = await load('api/account.ts')
+await account.changePassword('old', 'new')
+assert.deepEqual(calls.at(-1), ['PUT', '/account/password', { old_password: 'old', new_password: 'new' }])
+await account.register({ username: 'u', display_name: '名', password: 'p' })
+assert.equal(calls.at(-1)[1], '/auth/register')
+const identities = await load('api/identities.ts')
+await identities.bindIdentity('p/a', 'password')
+assert.deepEqual(calls.at(-1), ['POST', '/account/identities/p%2Fa/bind', { password: 'password', redirect: '/account' }])
+// Compile real SFC scripts/templates, then verify key component security wiring.
+const { parse, compileScript, compileTemplate } = await import('vue/compiler-sfc')
+const components = ['views/RegisterView.vue','views/AccountView.vue','views/UsersView.vue','views/GroupsView.vue','views/SettingsView.vue','components/account/IdentitySettings.vue','components/account/PasswordForm.vue','components/admin/UserEditor.vue','components/admin/UserPermissions.vue','components/admin/GroupAccessEditor.vue','components/admin/ProviderEditor.vue','components/admin/ProviderSettings.vue','components/admin/SystemSettingsForm.vue']
+for (const filename of components) {
+  const source = read(filename), { descriptor, errors } = parse(source)
+  assert.deepEqual(errors, [], filename)
+  compileScript(descriptor, { id: filename })
+  assert.deepEqual(compileTemplate({ source: descriptor.template.content, filename, id: filename }).errors, [], filename)
+  assert.ok(source.split('\n').length < 300, filename)
+}
+assert.match(read('views/RegisterView.vue'), /router\.replace\('\/login\?registered=1'\)/)
+assert.doesNotMatch(read('views/RegisterView.vue'), /auth\.login/)
+assert.match(read('components/account/PasswordForm.vue'), /auth\.clearLocal\(\)/)
+assert.match(read('components/admin/GroupAccessEditor.vue'), /grants\[agent.id\] \|\| 'none'/)
+assert.match(read('components/admin/GroupAccessEditor.vue'), /permission !== 'none'/)
+assert.match(read('components/admin/ProviderEditor.vue'), /callback_url/)
+assert.doesNotMatch(read('components/admin/ProviderEditor.vue'), /location\.host/)
+assert.match(read('components/admin/ProviderEditor.vue'), /有账号绑定后不能修改签发者和客户端标识/)
+assert.match(read('views/RegisterView.vue'), /options\.value\?\.registration_enabled !== true/)
+assert.match(read('views/RegisterView.vue'), /v-if="options\?\.registration_enabled"/)
+assert.match(read('views/AccountView.vue'), /local_password === true/)
+assert.match(read('views/AccountView.vue'), /暂不支持在此设置本地密码/)
+assert.match(read('router/guards.ts'), /accessRedirect/)
+assert.match(read('components/common/SiteMenu.vue'), /auth\.isAdmin/)
+delete globalThis.__ADMIN_REQ__
+console.log(`✓ 管理与账户契约测试通过，${components.length} 个真实组件编译通过`)

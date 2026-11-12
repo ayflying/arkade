@@ -1,4 +1,5 @@
 import { useAuthStore } from '@/stores/auth'
+import { accessRedirect } from '@/utils/accessPolicy'
 import { HOME_PATH, LOGIN_PATH, router } from './index'
 
 /**
@@ -18,6 +19,12 @@ router.beforeEach(async (to) => {
     await auth.fetchMe()
   }
 
+  const destination = accessRedirect({
+    loggedIn: auth.isLoggedIn, mustChange: auth.user?.must_change_password === true,
+    admin: auth.isAdmin, public: to.meta.public === true,
+    adminOnly: to.meta.adminOnly === true, account: to.name === 'account'
+  })
+  if (destination !== null) return { path: destination, query: destination === LOGIN_PATH ? { redirect: to.fullPath } : undefined }
   const isPublic = to.meta.public === true
 
   if (isPublic) {

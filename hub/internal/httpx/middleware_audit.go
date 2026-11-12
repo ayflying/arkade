@@ -282,6 +282,12 @@ func writeAuditRecord(w auditWriter, log *slog.Logger, r *http.Request, rec *sta
 		}
 	}
 
+	// Credential endpoints never persist arbitrary response error strings: provider
+	// SDK/validation errors can contain reflected secrets or remote URLs.
+	if credentialAuditPath(r.URL.Path) && result == audit.ResultFailed {
+		errMsg = "操作失败"
+	}
+
 	r2 := audit.Record{
 		ID:         audit.NewID(),
 		UserID:     u.ID,

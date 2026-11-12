@@ -49,7 +49,41 @@ func (e *testEnv) loginAs(t *testing.T, username, password string) []*http.Cooki
 	if rec.Code != http.StatusOK {
 		t.Fatalf("账号 %s 登录应成功，实际 %d，响应 %s", username, rec.Code, rec.Body.String())
 	}
-	return rec.Result().Cookies()
+	cookies := rec.Result().Cookies()
+	var login struct {
+		User struct {
+			MustChangePassword bool `json:"must_change_password"`
+		} `json:"user"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &login); err != nil {
+		t.Fatal(err)
+	}
+	if login.User.MustChangePassword {
+		// This legacy helper represents an established usable account. Exercise
+		// the real first-change flow instead of clearing the flag in storage.
+		// Dedicated forced-change tests use raw HTTP rather than this helper.
+		replacement := password + "!Changed"
+		changed := e.completeInitialPassword(t, username, password, replacement, cookies)
+		// Restore the fixture's known password through a second legitimate
+		// change, preserving callers that subsequently test that credential.
+		return e.completeInitialPassword(t, username, replacement, password, changed)
+	}
+	return cookies
+}
+
+// completeInitialPassword follows the real mandatory-change flow, including
+// session revocation and an explicit login with the replacement password.
+func (e *testEnv) completeInitialPassword(t *testing.T, username, oldPassword, newPassword string, cookies []*http.Cookie) []*http.Cookie {
+	t.Helper()
+	payload, err := json.Marshal(map[string]string{"old_password": oldPassword, "new_password": newPassword})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, _ := e.do(t, http.MethodPut, "/api/account/password", string(payload), cookies)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("首次改密应返回204，实际%d：%s", rec.Code, rec.Body.String())
+	}
+	return e.loginAs(t, username, newPassword)
 }
 
 // decodeUsers 解析用户列表响应。
@@ -95,7 +129,7 @@ func TestCreateUser(t *testing.T) {
 	cookies := env.login(t)
 
 	rec, body := env.do(t, http.MethodPost, "/api/users",
-		`{"username":"  NEWUSER  ","display_name":"新用户","password":"Password123","role":"user"}`, cookies)
+		`{"username":"  NEWUSER  ","display_name":"新用户","password":"Password123!","role":"user"}`, cookies)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("创建用户应返回 200，实际 %d，响应 %s", rec.Code, rec.Body.String())
 	}
@@ -115,7 +149,7 @@ func TestCreateUser(t *testing.T) {
 	}
 
 	// 用规整后的用户名可以登录，说明创建与登录的规整口径一致。
-	env.loginAs(t, "newuser", "Password123")
+	env.loginAs(t, "newuser", "Password123!")
 }
 
 // TestCreateUserDuplicate 验证重名返回 409 conflict。
@@ -125,7 +159,7 @@ func TestCreateUserDuplicate(t *testing.T) {
 
 	// 已存在 admin（大小写不同也算重复，因为规整后相同）。
 	rec, body := env.do(t, http.MethodPost, "/api/users",
-		`{"username":"ADMIN","display_name":"x","password":"Password123","role":"user"}`, cookies)
+		`{"username":"ADMIN","display_name":"x","password":"Password123!","role":"user"}`, cookies)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("重名应返回 409，实际 %d，响应 %s", rec.Code, rec.Body.String())
 	}
@@ -147,10 +181,10 @@ func TestCreateUserInvalid(t *testing.T) {
 		// 用户名必须合法，才能让用例真正测到「密码」「角色」的校验分支：
 		// 用户名先被拦下会让断言指向错误的字段。
 		{"密码太短", `{"username":"user1","password":"short","role":"user"}`, "密码至少"},
-		{"非法角色", `{"username":"user2","password":"Password123","role":"Admin"}`, "角色只能是"},
-		{"用户名带空格", `{"username":"a b","password":"Password123","role":"user"}`, "用户名只能包含"},
-		{"用户名全数字", `{"username":"12345","password":"Password123","role":"user"}`, "不能全为数字"},
-		{"未知字段", `{"username":"user3","password":"Password123","role":"user","x":1}`, "请求格式错误"},
+		{"非法角色", `{"username":"user2","password":"Password123!","role":"Admin"}`, "角色只能是"},
+		{"用户名带空格", `{"username":"a b","password":"Password123!","role":"user"}`, "用户名只能包含"},
+		{"用户名全数字", `{"username":"12345","password":"Password123!","role":"user"}`, "不能全为数字"},
+		{"未知字段", `{"username":"user3","password":"Password123!","role":"user","x":1}`, "请求格式错误"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -169,7 +203,7 @@ func TestCreateUserInvalid(t *testing.T) {
 func TestUpdateUser(t *testing.T) {
 	env := newTestEnv(t)
 	cookies := env.login(t)
-	id := env.createUser(t, cookies, "target", "Password123", "user")
+	id := env.createUser(t, cookies, "target", "Password123!", "user")
 
 	rec, _ := env.do(t, http.MethodPatch, "/api/users/"+id,
 		`{"display_name":"改过的名字","role":"admin"}`, cookies)
@@ -187,7 +221,7 @@ func TestUpdateUser(t *testing.T) {
 	}
 
 	// 禁用该用户后，其会话应立即失效（Authenticate 会检查 Disabled）。
-	targetCookies := env.loginAs(t, "target", "Password123")
+	targetCookies := env.loginAs(t, "target", "Password123!")
 	rec2, _ := env.do(t, http.MethodPatch, "/api/users/"+id, `{"disabled":true}`, cookies)
 	if rec2.Code != http.StatusOK {
 		t.Fatalf("禁用用户应返回 200，实际 %d", rec2.Code)
@@ -227,9 +261,9 @@ func TestUpdateUserNoFields(t *testing.T) {
 func TestResetPassword(t *testing.T) {
 	env := newTestEnv(t)
 	cookies := env.login(t)
-	id := env.createUser(t, cookies, "victim", "Password123", "user")
+	id := env.createUser(t, cookies, "victim", "Password123!", "user")
 
-	oldCookies := env.loginAs(t, "victim", "Password123")
+	oldCookies := env.loginAs(t, "victim", "Password123!")
 
 	rec, _ := env.do(t, http.MethodPut, "/api/users/"+id+"/password", `{"password":"NewPassword456"}`, cookies)
 	if rec.Code != http.StatusNoContent {
@@ -243,7 +277,7 @@ func TestResetPassword(t *testing.T) {
 	}
 	// 旧密码不可登录，新密码可以。
 	rec3, _ := env.do(t, http.MethodPost, "/api/auth/login",
-		`{"username":"victim","password":"Password123"}`, nil)
+		`{"username":"victim","password":"Password123!"}`, nil)
 	if rec3.Code != http.StatusUnauthorized {
 		t.Errorf("旧密码应失效，实际 %d", rec3.Code)
 	}
@@ -254,7 +288,7 @@ func TestResetPassword(t *testing.T) {
 func TestDeleteUser(t *testing.T) {
 	env := newTestEnv(t)
 	cookies := env.login(t)
-	id := env.createUser(t, cookies, "doomed", "Password123", "user")
+	id := env.createUser(t, cookies, "doomed", "Password123!", "user")
 
 	// 先给他建一个组并加入，验证删除后组成员关系被清理。
 	recG, _ := env.do(t, http.MethodPost, "/api/groups", `{"name":"清理测试组"}`, cookies)
@@ -374,8 +408,8 @@ func TestCannotDeleteLastAdmin(t *testing.T) {
 
 	// 造一个「唯一管理员」的场景：把 admin 降级失败过，这里反过来——
 	// 先建第二个管理员 B，然后让 B 删 admin。
-	idB := env.createUser(t, adminCookies, "adminb", "Password123", "admin")
-	bCookies := env.loginAs(t, "adminb", "Password123")
+	idB := env.createUser(t, adminCookies, "adminb", "Password123!", "admin")
+	bCookies := env.loginAs(t, "adminb", "Password123!")
 
 	// B 删 admin：这时还剩 B，属于允许的操作。
 	rec, _ := env.do(t, http.MethodDelete, "/api/users/u-test", "", bCookies)
@@ -406,7 +440,7 @@ func TestCannotDeleteLastAdmin(t *testing.T) {
 func TestLastAdminAllowsWhenOthersExist(t *testing.T) {
 	env := newTestEnv(t)
 	cookies := env.login(t)
-	idB := env.createUser(t, cookies, "adminb", "Password123", "admin")
+	idB := env.createUser(t, cookies, "adminb", "Password123!", "admin")
 
 	rec, _ := env.do(t, http.MethodPatch, "/api/users/"+idB, `{"role":"user"}`, cookies)
 	if rec.Code != http.StatusOK {
@@ -427,7 +461,7 @@ func TestLastAdminAllowsWhenOthersExist(t *testing.T) {
 func TestDisabledAdminNotCounted(t *testing.T) {
 	env := newTestEnv(t)
 	cookies := env.login(t)
-	idB := env.createUser(t, cookies, "adminb", "Password123", "admin")
+	idB := env.createUser(t, cookies, "adminb", "Password123!", "admin")
 
 	// 禁用 B（此时 A 仍有效，所以允许）。
 	rec, _ := env.do(t, http.MethodPatch, "/api/users/"+idB, `{"disabled":true}`, cookies)
@@ -448,8 +482,8 @@ func TestDisabledAdminNotCounted(t *testing.T) {
 func TestNonAdminForbidden(t *testing.T) {
 	env := newTestEnv(t)
 	adminCookies := env.login(t)
-	env.createUser(t, adminCookies, "normal", "Password123", "user")
-	userCookies := env.loginAs(t, "normal", "Password123")
+	env.createUser(t, adminCookies, "normal", "Password123!", "user")
+	userCookies := env.loginAs(t, "normal", "Password123!")
 
 	// 普通用户即使拥有 manage 档的服务器授权，也不能碰用户与组（权限来源不能自己改）。
 	endpoints := []struct {
@@ -458,9 +492,9 @@ func TestNonAdminForbidden(t *testing.T) {
 		body   string
 	}{
 		{http.MethodGet, "/api/users", ""},
-		{http.MethodPost, "/api/users", `{"username":"x1","password":"Password123","role":"user"}`},
+		{http.MethodPost, "/api/users", `{"username":"x1","password":"Password123!","role":"user"}`},
 		{http.MethodPatch, "/api/users/u-test", `{"display_name":"x"}`},
-		{http.MethodPut, "/api/users/u-test/password", `{"password":"Password123"}`},
+		{http.MethodPut, "/api/users/u-test/password", `{"password":"Password123!"}`},
 		{http.MethodDelete, "/api/users/u-test", ""},
 		{http.MethodGet, "/api/groups", ""},
 		{http.MethodPost, "/api/groups", `{"name":"x"}`},

@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
+import { administrationRoutes } from './administration'
 
 /**
  * 路由表
@@ -110,6 +111,7 @@ const agentChildRoutes: RouteRecordRaw[] = [
 ]
 
 const routes: RouteRecordRaw[] = [
+  ...administrationRoutes,
   {
     path: '/',
     // 根路径不单独做页面，直接去概览（登录后的首页）

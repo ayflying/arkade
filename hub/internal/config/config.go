@@ -36,10 +36,12 @@ type DatabaseConfig struct {
 
 // AuthConfig 是登录与会话配置。
 type AuthConfig struct {
-	SessionTTL  time.Duration `toml:"session_ttl"`  // 登录会话有效期
-	AgentToken  string        `toml:"agent_token"`  // 首期 Agent 接入的预共享 Token（简化版）
-	InitialUser string        `toml:"initial_user"` // 首次启动时创建的管理员用户名
-	InitialPass string        `toml:"initial_pass"` // 首次启动时创建的管理员密码
+	SessionTTL                time.Duration `toml:"session_ttl"`                  // 登录会话有效期
+	AgentToken                string        `toml:"agent_token"`                  // 首期 Agent 接入的预共享 Token（简化版）
+	InitialUser               string        `toml:"initial_user"`                 // 首次启动时创建的管理员用户名
+	InitialPass               string        `toml:"initial_pass"`                 // 首次启动时创建的管理员密码
+	SettingsKeyFile           string        `toml:"settings_key_file"`            // OIDC 密钥加密主密钥文件；空则使用数据库旁的 .settings.key
+	AllowInsecureOIDCLoopback bool          `toml:"allow_insecure_oidc_loopback"` // 仅本地开发允许 HTTP loopback OIDC，生产必须关闭
 }
 
 // WebConfig 是前端静态资源托管配置。
@@ -95,6 +97,12 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("ARKADE_INITIAL_PASS"); v != "" {
 		cfg.Auth.InitialPass = v
+	}
+	if v := os.Getenv("ARKADE_SETTINGS_KEY_FILE"); v != "" {
+		cfg.Auth.SettingsKeyFile = v
+	}
+	if v := os.Getenv("ARKADE_ALLOW_INSECURE_OIDC_LOOPBACK"); v != "" {
+		cfg.Auth.AllowInsecureOIDCLoopback = v == "true"
 	}
 	if v := os.Getenv("ARKADE_INITIAL_USER"); v != "" {
 		cfg.Auth.InitialUser = v

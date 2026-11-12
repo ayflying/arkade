@@ -20,7 +20,7 @@ func TestReviewEveryLegacyVersionUpgradesAndReopens(t *testing.T) {
 				t.Fatal(err)
 			}
 			result, err := Run(ctx, path)
-			if err != nil || result.ToVersion != 10 || result.Dirty {
+			if err != nil || result.ToVersion != latestTestVersion(t) || result.Dirty {
 				t.Fatalf("upgrade v%d: result=%+v err=%v", version, result, err)
 			}
 			var name, hash string
@@ -32,7 +32,7 @@ func TestReviewEveryLegacyVersionUpgradesAndReopens(t *testing.T) {
 				t.Fatalf("upgrade changed existing user: %q %q %d %d", name, hash, created, updated)
 			}
 			result, err = Run(ctx, path)
-			if err != nil || result.Applied != 0 || result.ToVersion != 10 {
+			if err != nil || result.Applied != 0 || result.ToVersion != latestTestVersion(t) {
 				t.Fatalf("reopen v%d: result=%+v err=%v", version, result, err)
 			}
 		})

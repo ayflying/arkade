@@ -38,6 +38,14 @@ func setup(t *testing.T) (*Controller, *store.DB, *sessionStub) {
 			t.Error(err)
 		}
 	})
+	settings, err := db.GetSystemSettings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.PasswordMinLength = 8 // legacy contract fixture; production defaults to 12
+	if err := db.UpdateSystemSettings(context.Background(), settings, settings.Version); err != nil {
+		t.Fatal(err)
+	}
 	s := &sessionStub{u: user.User{ID: "operator", Username: "operator", Role: user.RoleAdmin}, ok: true}
 	return New(db, s, slog.New(slog.NewTextHandler(io.Discard, nil))), db, s
 }
@@ -81,7 +89,7 @@ func TestLifecycleAndSessionRevocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(body), "password") || strings.Contains(string(body), stored.PasswordHash) {
+	if strings.Contains(string(body), `"password":`) || strings.Contains(string(body), `"password_hash":`) || strings.Contains(string(body), stored.PasswordHash) {
 		t.Fatal("password leaked")
 	}
 	_, err = c.Create(ctx, &api.CreateReq{Username: "ALICE", Password: "password123", Role: "user"})

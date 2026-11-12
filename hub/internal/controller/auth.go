@@ -27,6 +27,8 @@ package controller
 import (
 	"context"
 	"errors"
+	"github.com/gogf/gf/v2/net/ghttp"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -134,8 +136,24 @@ func (c *Auth) Login(ctx context.Context, req *authapi.LoginReq) (*authapi.Login
 	// " admin " 和 "admin" 两条看起来不同实为同一账号的记录。
 	attempted := strings.TrimSpace(req.Username)
 
-	res, err := c.deps.Auth.Login(ctx, req.Username, req.Password)
+	var res auth.LoginResult
+	var err error
+	if limiter, ok := c.deps.Auth.(interface {
+		LoginWithClient(context.Context, string, string, string) (auth.LoginResult, error)
+	}); ok {
+		ip := ""
+		if r := ghttp.RequestFromCtx(ctx); r != nil {
+			ip, _, _ = net.SplitHostPort(r.RemoteAddr)
+		}
+		res, err = limiter.LoginWithClient(ctx, req.Username, req.Password, ip)
+	} else {
+		res, err = c.deps.Auth.Login(ctx, req.Username, req.Password)
+	}
 	if err != nil {
+		if errors.Is(err, auth.ErrRateLimited) {
+			c.writeLoginAudit(attempted, "", auditLoginFailure)
+			return nil, &Error{Status: http.StatusTooManyRequests, Code: "rate_limited", Message: "登录尝试过多，请稍后重试"}
+		}
 		if errors.Is(err, auth.ErrInvalidCredentials) {
 			// 统一提示，不区分「用户不存在」与「密码错误」，避免账号枚举。
 			c.writeLoginAudit(attempted, "", auditLoginFailure)
@@ -210,9 +228,11 @@ func (c *AuthPrivate) Me(ctx context.Context, _ *authapi.MeReq) (*authapi.MeRes,
 // 一旦有人补了 json tag 就会泄漏。这里只挑允许上网的字段。
 func UserViewOf(u user.User) authapi.UserView {
 	return authapi.UserView{
-		ID:          u.ID,
-		Username:    u.Username,
-		DisplayName: u.DisplayName,
-		Role:        string(u.Role),
+		ID:                 u.ID,
+		Username:           u.Username,
+		DisplayName:        u.DisplayName,
+		Role:               string(u.Role),
+		MustChangePassword: u.MustChangePassword,
+		LocalPassword:      u.PasswordHash != "",
 	}
 }

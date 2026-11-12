@@ -115,7 +115,7 @@ func TestRunSerializesConcurrentMigrations(t *testing.T) {
 	if dirty != 0 {
 		t.Fatalf("并发迁移把库推进了 dirty 状态（version=%d）", version)
 	}
-	if version != 10 {
+	if version != latestTestVersion(t) {
 		t.Fatalf("期望最终版本 10，实际 %d", version)
 	}
 }

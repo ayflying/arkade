@@ -318,12 +318,8 @@ func TestPruneAuditLogs(t *testing.T) {
 	}
 }
 
-// TestWriteAuditTriggersPrune 验证写入时会顺带清理过期记录。
-//
-// 这是保留策略的"自动"部分：管理员不需要记得手动清理。
-// 因为清理是异步的，这里轮询等待而不是固定 sleep——
-// 固定 sleep 要么白等要么在大负载机器上偶发失败。
-func TestWriteAuditTriggersPrune(t *testing.T) {
+// Only the configured retention worker may expire historical records.
+func TestWriteAuditDoesNotPrune(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	now := time.Now().UTC()
@@ -342,19 +338,13 @@ func TestWriteAuditTriggersPrune(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 轮询等待异步清理完成。
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		n, err := db.CountAuditLogs(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if n == 1 { // 只剩刚写入的那条
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
+	n, err := db.CountAuditLogs(ctx)
+	if err != nil {
+		t.Fatal(err)
 	}
-	t.Error("写入后应自动清理掉 120 天前的过期记录")
+	if n != 2 {
+		t.Fatalf("写入不应隐式清理旧记录，实际 %d", n)
+	}
 }
 
 // TestAuditSurvivesDeletedUser 验证用户删除后审计仍可读。

@@ -8,6 +8,7 @@ import (
 	api "arkade/hub/api/users/v1"
 	"arkade/hub/internal/controller"
 	"arkade/hub/internal/httpwire"
+	accountservice "arkade/hub/internal/service/account"
 	"arkade/hub/internal/store"
 	"arkade/hub/internal/user"
 )
@@ -36,7 +37,11 @@ func (c *Controller) Create(ctx context.Context, req *api.CreateReq) (*api.Creat
 	if err != nil {
 		return nil, badRequest(err)
 	}
-	if err := user.ValidatePassword(req.Password); err != nil {
+	settings, err := c.db.GetSystemSettings(ctx)
+	if err != nil {
+		return nil, c.storeError(err, "安全策略不可用")
+	}
+	if err := accountservice.PasswordPolicy(req.Password, settings.PasswordMinLength); err != nil {
 		return nil, badRequest(err)
 	}
 	hash, err := user.HashPassword(req.Password)
@@ -46,7 +51,7 @@ func (c *Controller) Create(ctx context.Context, req *api.CreateReq) (*api.Creat
 	now := time.Now().UTC()
 	u := user.User{
 		ID: newUserID(), Username: username, DisplayName: displayName,
-		PasswordHash: hash, Role: role, CreatedAt: now, UpdatedAt: now,
+		PasswordHash: hash, Role: role, MustChangePassword: true, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := c.db.CreateUser(ctx, u); err != nil {
 		return nil, c.storeError(err, "创建用户失败")
@@ -139,7 +144,11 @@ func (c *Controller) ResetPassword(ctx context.Context, req *api.ResetPasswordRe
 	if err != nil {
 		return nil, err
 	}
-	if err := user.ValidatePassword(req.Password); err != nil {
+	settings, err := c.db.GetSystemSettings(ctx)
+	if err != nil {
+		return nil, c.storeError(err, "安全策略不可用")
+	}
+	if err := accountservice.PasswordPolicy(req.Password, settings.PasswordMinLength); err != nil {
 		return nil, badRequest(err)
 	}
 	hash, err := user.HashPassword(req.Password)

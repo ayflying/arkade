@@ -139,7 +139,9 @@ func newTestEnvWithLogger(t *testing.T, log *slog.Logger) *testEnv {
 	// 不用 registry 代替：握手完成前连接还没登记进 registry，
 	// 只关 registry 会漏掉那些连接。
 	tracker := &connectionTracker{}
+	identity := testIdentityServices(t, db, authSvc, dbPath, log)
 	router := NewRouter(Deps{
+		Identity:     identity,
 		Log:          log,
 		DB:           db,
 		Auth:         authSvc,

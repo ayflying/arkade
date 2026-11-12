@@ -92,7 +92,7 @@ func TestListGroupsWithCounts(t *testing.T) {
 	env := newTestEnv(t)
 	cookies := env.login(t)
 	grp := env.createGroup(t, cookies, "统计组")
-	idU := env.createUser(t, cookies, "member1", "Password123", "user")
+	idU := env.createUser(t, cookies, "member1", "Password123!", "user")
 
 	// 加一个成员、一条授权。
 	env.do(t, http.MethodPut, "/api/groups/"+grp.ID+"/members", `{"user_ids":["`+idU+`"]}`, cookies)
@@ -165,7 +165,7 @@ func TestDeleteGroup(t *testing.T) {
 	env := newTestEnv(t)
 	cookies := env.login(t)
 	grp := env.createGroup(t, cookies, "待删组")
-	idU := env.createUser(t, cookies, "keepme", "Password123", "user")
+	idU := env.createUser(t, cookies, "keepme", "Password123!", "user")
 	env.do(t, http.MethodPut, "/api/groups/"+grp.ID+"/members", `{"user_ids":["`+idU+`"]}`, cookies)
 	env.do(t, http.MethodPut, "/api/groups/"+grp.ID+"/grants",
 		`{"grants":[{"agent_id":"agent-1","permission":"operate"}]}`, cookies)
@@ -202,8 +202,8 @@ func TestSetGroupMembers(t *testing.T) {
 	env := newTestEnv(t)
 	cookies := env.login(t)
 	grp := env.createGroup(t, cookies, "成员组")
-	idA := env.createUser(t, cookies, "membera", "Password123", "user")
-	idB := env.createUser(t, cookies, "memberb", "Password123", "user")
+	idA := env.createUser(t, cookies, "membera", "Password123!", "user")
+	idB := env.createUser(t, cookies, "memberb", "Password123!", "user")
 
 	// 先设 A。
 	rec, _ := env.do(t, http.MethodPut, "/api/groups/"+grp.ID+"/members",
@@ -378,7 +378,7 @@ func TestGroupGrantTakesEffect(t *testing.T) {
 	env := newTestEnv(t)
 	cookies := env.login(t)
 	grp := env.createGroup(t, cookies, "生效组")
-	idU := env.createUser(t, cookies, "viewer", "Password123", "user")
+	idU := env.createUser(t, cookies, "viewer", "Password123!", "user")
 	env.do(t, http.MethodPut, "/api/groups/"+grp.ID+"/members", `{"user_ids":["`+idU+`"]}`, cookies)
 
 	// 造一台 Agent 记录（只落库，不真连接），让 /api/agents 有可见对象。
@@ -392,7 +392,7 @@ func TestGroupGrantTakesEffect(t *testing.T) {
 	}
 
 	// 授权前：普通用户看不到任何服务器。
-	userCookies := env.loginAs(t, "viewer", "Password123")
+	userCookies := env.loginAs(t, "viewer", "Password123!")
 	recBefore, _ := env.do(t, http.MethodGet, "/api/agents", "", userCookies)
 	var before struct {
 		Agents []agentView `json:"agents"`

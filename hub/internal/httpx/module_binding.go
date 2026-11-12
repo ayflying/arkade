@@ -44,6 +44,9 @@ func bindPrivateModule(s *ghttp.Server, d Deps, ctl any, factory func(*ghttp.Req
 						// Legacy query readers use Values.Get: first occurrence wins; bodies never filter a GET.
 						values := url.Values{}
 						for key, list := range req.URL.Query() {
+							if shadowsPath(key, info.Params) {
+								continue
+							}
 							if len(list) > 0 {
 								values.Set(key, list[0])
 							}

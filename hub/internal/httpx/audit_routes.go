@@ -36,6 +36,15 @@ type auditRoute struct {
 // 中间件本身也会按 HTTP 方法先筛一遍，这里是第二道保险：
 // 即使有人误把 GET 路由登记进来，也不会被记录。
 var auditRoutes = map[string]auditRoute{
+	"/api/auth/register":                             {Action: audit.ActionUserRegister},
+	"/api/account":                                   {Action: audit.ActionProfileUpdate},
+	"/api/account/password":                          {Action: audit.ActionPasswordChange},
+	"/api/settings":                                  {Action: audit.ActionSettingsUpdate},
+	"/api/settings/oidc-providers":                   {Action: audit.ActionProviderCreate},
+	"/api/settings/oidc-providers/{providerID}":      {Action: audit.ActionProviderUpdate, TargetParam: "providerID"},
+	"/api/settings/oidc-providers/{providerID}/test": {Action: audit.ActionProviderTest, TargetParam: "providerID"},
+	"/api/account/identities/{providerID}/bind":      {Action: audit.ActionIdentityBind, TargetParam: "providerID"},
+	"/api/account/identities/{identityID}":           {Action: audit.ActionIdentityDelete, TargetParam: "identityID"},
 	// ---- 容器 ----
 	"/api/agents/{agentID}/containers/{containerID}/start": {
 		Action:      audit.ActionContainerStart,
@@ -194,10 +203,11 @@ var auditRoutes = map[string]auditRoute{
 // 同理 /api/agents/{agentID}/stacks/{name} 的 PUT 是"保存内容"、
 // DELETE 是"删除编排"，也是两种完全不同的操作。
 var auditDeleteOverrides = map[string]auditRoute{
-	"/api/agents/{agentID}":               {Action: audit.ActionAgentDelete},
-	"/api/users/{userID}":                 {Action: audit.ActionUserDelete},
-	"/api/groups/{groupID}":               {Action: audit.ActionGroupDelete},
-	"/api/agents/{agentID}/stacks/{name}": {Action: audit.ActionStackDelete, TargetParam: "name"},
+	"/api/settings/oidc-providers/{providerID}": {Action: audit.ActionProviderDelete, TargetParam: "providerID"},
+	"/api/agents/{agentID}":                     {Action: audit.ActionAgentDelete},
+	"/api/users/{userID}":                       {Action: audit.ActionUserDelete},
+	"/api/groups/{groupID}":                     {Action: audit.ActionGroupDelete},
+	"/api/agents/{agentID}/stacks/{name}":       {Action: audit.ActionStackDelete, TargetParam: "name"},
 }
 
 // auditPutOverrides 覆盖 PUT 方法对应的动作。

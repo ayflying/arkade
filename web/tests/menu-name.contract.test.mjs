@@ -243,7 +243,7 @@ function groupLabelTitle(options, key) {
   )
   check(
     '接线: SiteMenu 把名字交给 buildMenuOptions',
-    /buildMenuOptions\(props\.agentId, props\.agentName\)/.test(siteMenu)
+    /buildMenuOptions\(props\.agentId, props\.agentName, auth\.isAdmin\)/.test(siteMenu)
   )
   check(
     '接线: SiteMenu 有省略号样式',

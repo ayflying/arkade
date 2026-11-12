@@ -150,6 +150,11 @@ agent_token = "请替换为至少16位的随机字符串"
 # 首次启动时创建的管理员账号；密码至少 8 位，也可用环境变量 ARKADE_INITIAL_PASS
 initial_user = "admin"
 initial_pass = "请替换为至少8位的管理员密码"
+# OIDC 客户端密钥的加密主密钥文件，空则自动生成在数据库旁的 .settings.key。
+# 备份/迁移必须同时保留数据库和密钥文件；不要提交此文件到版本库。
+settings_key_file = ""
+# 仅本地假 OIDC 测试可开启；生产保持 false，OIDC Issuer 必须 HTTPS。
+allow_insecure_oidc_loopback = false
 
 [web]
 # 前端构建产物目录；留空则只提供 API

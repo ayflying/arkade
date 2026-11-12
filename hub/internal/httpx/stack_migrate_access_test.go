@@ -49,9 +49,9 @@ func TestStackMigrationTaskAccessOwnerAndBothManageHTTP(t *testing.T) {
 		return err == nil && cur.Status == stackmigrate.StatusSucceeded
 	}, "migration task succeeded")
 	path := a.url + "/api/agents/" + a.id + "/stacks/demo/operation-tasks/" + snap.TaskID
-	ownerCookies := e.loginAsFor(t, a.url, "migration-owner", testPassword)
-	otherCookies := e.loginAsFor(t, a.url, "migration-other", testPassword)
-	adminCookies := e.loginAsFor(t, a.url, "admin", testPassword)
+	ownerCookies := e.loginAs(t, "migration-owner", testPassword)
+	otherCookies := e.loginAs(t, "migration-other", testPassword)
+	adminCookies := e.loginAs(t, "admin", testPassword)
 	grant(a.id, user.PermOperate)
 	resp, raw := doHTTP(t, http.MethodGet, path, "", ownerCookies)
 	if resp.StatusCode != 403 {
@@ -92,7 +92,7 @@ func TestStackMigrationResidualUncertainHTTP(t *testing.T) {
 	e.migrateBackend.mu.Lock()
 	e.migrateBackend.copyErr = &stackmigrate.ResidualError{Err: errors.New("mutation interrupted"), Residual: stackmigrate.Residual{Uncertain: true}}
 	e.migrateBackend.mu.Unlock()
-	cookies := e.loginAsFor(t, a.url, "admin", testPassword)
+	cookies := e.loginAs(t, "admin", testPassword)
 	snap, err := e.migrateMgr.Submit(context.Background(), stackmigrate.Options{Source: a.id, Target: "uncertain-target", StackName: "demo"})
 	if err != nil {
 		t.Fatal(err)

@@ -43,7 +43,7 @@ func userFields() []string {
 	c := dao.Users.Columns()
 	return []string{
 		c.Id, c.Username, c.DisplayName, c.PasswordHash,
-		c.Role, c.Disabled, c.CreatedAt, c.UpdatedAt,
+		c.Role, c.Disabled, c.CreatedAt, c.UpdatedAt, c.MustChangePassword,
 	}
 }
 
@@ -87,6 +87,7 @@ func userFromEntity(e entity.Users) user.User {
 	u.PasswordHash = e.PasswordHash
 	u.Role = user.Role(e.Role)
 	u.Disabled = e.Disabled != 0
+	u.MustChangePassword = e.MustChangePassword != 0
 	u.CreatedAt = unixToTime(int64(e.CreatedAt))
 	u.UpdatedAt = unixToTime(int64(e.UpdatedAt))
 	return u
@@ -107,14 +108,15 @@ func usersFromEntities(ents []entity.Users) []user.User {
 // 而不是把驱动的 "UNIQUE constraint failed" 原文甩给前端。
 func (d *DB) CreateUser(ctx context.Context, u user.User) error {
 	_, err := d.gdb.Model(dao.Users.Table()).Ctx(ctx).Data(do.Users{
-		Id:           u.ID,
-		Username:     u.Username,
-		DisplayName:  u.DisplayName,
-		PasswordHash: u.PasswordHash,
-		Role:         string(u.Role),
-		Disabled:     boolToInt(u.Disabled),
-		CreatedAt:    timeToUnix(u.CreatedAt),
-		UpdatedAt:    timeToUnix(u.UpdatedAt),
+		Id:                 u.ID,
+		Username:           u.Username,
+		DisplayName:        u.DisplayName,
+		PasswordHash:       u.PasswordHash,
+		Role:               string(u.Role),
+		Disabled:           boolToInt(u.Disabled),
+		MustChangePassword: boolToInt(u.MustChangePassword),
+		CreatedAt:          timeToUnix(u.CreatedAt),
+		UpdatedAt:          timeToUnix(u.UpdatedAt),
 	}).Insert()
 	return normalizeExecError(err, "创建用户")
 }
@@ -206,14 +208,17 @@ func (d *DB) UpdateUser(ctx context.Context, id string, upd UserUpdate, updatedA
 	}
 	data.UpdatedAt = updatedAt
 
-	res, err := d.gdb.Model(dao.Users.Table()).Ctx(ctx).
-		Where(dao.Users.Columns().Id, id).
-		Data(data).
-		Update()
-	if err != nil {
-		return normalizeExecError(err, "更新用户")
-	}
-	return requireAffected(res, "更新用户")
+	return d.TxModel(ctx, func(ctx context.Context, tx gdb.TX) error {
+		removes := upd.Disabled != nil && *upd.Disabled || upd.Role != nil && *upd.Role != user.RoleAdmin
+		if err := protectLocalAdmin(ctx, tx, id, removes); err != nil {
+			return err
+		}
+		res, err := tx.Model(dao.Users.Table()).Ctx(ctx).Where(dao.Users.Columns().Id, id).Data(data).Update()
+		if err != nil {
+			return normalizeExecError(err, "更新用户")
+		}
+		return requireAffected(res, "更新用户")
+	})
 }
 
 // UpdateUserPassword 重置密码。passwordHash 必须由 user.HashPassword 生成。
@@ -222,12 +227,16 @@ func (d *DB) UpdateUser(ctx context.Context, id string, upd UserUpdate, updatedA
 // 若旧会话继续有效，改密就失去了意义。
 func (d *DB) UpdateUserPassword(ctx context.Context, id, passwordHash string, updatedAt int64) error {
 	return d.TxModel(ctx, func(ctx context.Context, tx gdb.TX) error {
+		if err := protectLocalAdmin(ctx, tx, id, passwordHash == ""); err != nil {
+			return err
+		}
 		c := dao.Users.Columns()
 		res, err := tx.Model(dao.Users.Table()).Ctx(ctx).
 			Where(c.Id, id).
 			Data(do.Users{
-				PasswordHash: passwordHash,
-				UpdatedAt:    updatedAt,
+				PasswordHash:       passwordHash,
+				MustChangePassword: 1,
+				UpdatedAt:          updatedAt,
 			}).
 			Update()
 		if err != nil {
@@ -254,6 +263,9 @@ func (d *DB) UpdateUserPassword(ctx context.Context, id, passwordHash string, up
 //   - 显式删除是幂等的，与外键同时生效不会冲突，但能把「依赖隐式行为」变成「代码里写明的意图」。
 func (d *DB) DeleteUser(ctx context.Context, id string) error {
 	return d.TxModel(ctx, func(ctx context.Context, tx gdb.TX) error {
+		if err := protectLocalAdmin(ctx, tx, id, true); err != nil {
+			return err
+		}
 		if _, err := tx.Model(dao.UserGroups.Table()).Ctx(ctx).
 			Where(dao.UserGroups.Columns().UserId, id).
 			Delete(); err != nil {
@@ -274,13 +286,7 @@ func (d *DB) DeleteUser(ctx context.Context, id string) error {
 	})
 }
 
-// requireAffected 在影响行数为 0 时返回 ErrNotFound。
-//
-// ============================ 为什么集中成函数 ============================
-// 「更新/删除的 WHERE 没命中」必须翻译成 ErrNotFound，否则上层会把
-// 「目标不存在」当成成功，返回 200 却什么也没改。
-// 这个判断在十来个方法里重复，集中一处能保证口径一致
-// （比如有人忘了判断、或判断成 == -1 之类的）。
+// requireAffected 在影响行数为 0 时返回 ErrNotFound，拒绝假成功。
 func requireAffected(res sql.Result, action string) error {
 	n, err := res.RowsAffected()
 	if err != nil {

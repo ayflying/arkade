@@ -108,6 +108,12 @@ func securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "same-origin")
+		if !browserMutationAllowed(r) {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"code":"forbidden","message":"拒绝跨站修改请求"}`))
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
 }

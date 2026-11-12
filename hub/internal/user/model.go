@@ -9,13 +9,14 @@ import "time"
 
 // User 是登录用户。
 type User struct {
-	ID          string    `json:"id"`
-	Username    string    `json:"username"`
-	DisplayName string    `json:"display_name"`
-	Role        Role      `json:"role"`
-	Disabled    bool      `json:"disabled"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID                 string    `json:"id"`
+	Username           string    `json:"username"`
+	DisplayName        string    `json:"display_name"`
+	Role               Role      `json:"role"`
+	Disabled           bool      `json:"disabled"`
+	MustChangePassword bool      `json:"must_change_password"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
 
 	// PasswordHash 只在服务端内部流转，绝不参与 JSON 序列化。
 	PasswordHash string `json:"-"`

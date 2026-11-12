@@ -15,10 +15,14 @@ import { useRoute, useRouter } from 'vue-router'
 import { NAlert, NButton, NForm, NFormItem, NInput } from 'naive-ui'
 import { ApiError } from '@/types/api'
 import { useAuthStore } from '@/stores/auth'
+import { useAuthOptions } from '@/composables/useAuthOptions'
+import { safeLocalPath, safeProviderStart } from '@/utils/accessPolicy'
 
 const auth = useAuthStore()
 const router = useRouter()
 const route = useRoute()
+const { options, error: optionsError, load } = useAuthOptions()
+const providers = computed(() => (options.value?.providers ?? []).filter((provider) => safeProviderStart(provider.start_url) !== null))
 
 const username = ref('')
 const password = ref('')
@@ -37,12 +41,13 @@ const redirectTarget = computed<string>(() => {
   const raw = route.query.redirect
   const value = Array.isArray(raw) ? raw[0] : raw
   if (typeof value === 'string' && value.startsWith('/') && !value.startsWith('//')) {
-    return value
+    return safeLocalPath(value)
   }
   return '/overview'
 })
 
 async function handleSubmit(): Promise<void> {
+  if (submitting.value) return
   errorText.value = ''
 
   // 基础非空校验：避免把空请求发给后端
@@ -55,7 +60,7 @@ async function handleSubmit(): Promise<void> {
     await auth.login({ username: username.value.trim(), password: password.value })
     // 登录成功后清空本地密码，避免残留在内存里
     password.value = ''
-    await router.replace(redirectTarget.value)
+    await router.replace(auth.user?.must_change_password ? '/account' : redirectTarget.value)
   } catch (err) {
     errorText.value = err instanceof ApiError ? err.message : '登录失败，请稍后重试'
   }
@@ -68,7 +73,7 @@ async function handleSubmit(): Promise<void> {
       <div class="login-brand">
         <img src="/favicon.svg" alt="Arkade 图标" class="login-brand__logo" />
         <div>
-          <h1 class="login-brand__title">Arkade 容器方舟</h1>
+          <h1 class="login-brand__title">{{ options?.site_name || 'Arkade 容器方舟' }}</h1>
           <p class="login-brand__desc">多服务器容器管理平台</p>
         </div>
       </div>
@@ -77,6 +82,11 @@ async function handleSubmit(): Promise<void> {
         {{ errorText }}
       </n-alert>
 
+      <n-alert v-if="options?.login_notice" type="info">{{ options.login_notice }}</n-alert>
+      <n-alert v-if="route.query.oidc_error" type="error">第三方登录未完成，请重试或使用本地账户登录。</n-alert>
+      <n-alert v-if="optionsError" type="warning">{{ optionsError }} <n-button text @click="load">重新读取登录选项</n-button></n-alert>
+      <n-alert v-if="route.query.registered" type="success">注册成功，请使用新账户登录。</n-alert>
+      <n-alert v-if="route.query.password_changed" type="success">密码已修改，所有会话已失效，请重新登录。</n-alert>
       <n-form label-placement="top" @submit.prevent="handleSubmit">
         <n-form-item label="用户名">
           <n-input
@@ -110,6 +120,8 @@ async function handleSubmit(): Promise<void> {
         </n-button>
       </n-form>
 
+      <p v-for="provider in providers" :key="provider.id"><n-button tag="a" :href="provider.start_url" block>使用 {{ provider.display_name }} 登录</n-button></p>
+      <p v-if="options?.registration_enabled"><n-button text @click="router.push('/register')">注册新账户</n-button></p>
       <p class="login-footnote">登录状态通过 Cookie 维持，关闭浏览器后需重新登录。</p>
     </div>
   </div>

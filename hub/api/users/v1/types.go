@@ -5,14 +5,15 @@ import "encoding/json"
 
 // UserView deliberately has no password or password hash field.
 type UserView struct {
-	ID          string   `json:"id"`
-	Username    string   `json:"username"`
-	DisplayName string   `json:"display_name"`
-	Role        string   `json:"role"`
-	Disabled    bool     `json:"disabled"`
-	CreatedAt   int64    `json:"created_at"`
-	UpdatedAt   int64    `json:"updated_at"`
-	GroupIDs    []string `json:"group_ids"`
+	ID                 string   `json:"id"`
+	Username           string   `json:"username"`
+	DisplayName        string   `json:"display_name"`
+	Role               string   `json:"role"`
+	Disabled           bool     `json:"disabled"`
+	MustChangePassword bool     `json:"must_change_password"`
+	CreatedAt          int64    `json:"created_at"`
+	UpdatedAt          int64    `json:"updated_at"`
+	GroupIDs           []string `json:"group_ids"`
 }
 
 // Optional distinguishes omitted PATCH fields from explicit null (the zero value).

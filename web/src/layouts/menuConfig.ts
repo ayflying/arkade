@@ -29,6 +29,7 @@ export interface MenuItemDef {
   label: string
   /** 图标名（内联 SVG） */
   icon: IconName
+  adminOnly?: boolean
 }
 
 /**
@@ -54,7 +55,11 @@ export const AGENT_OPERATION_ITEMS: MenuItemDef[] = [
 const GLOBAL_ENTRIES: MenuItemDef[] = [
   { routeName: 'overview', label: '概览', icon: 'overview' },
   { routeName: 'agents', label: '服务器', icon: 'server' },
-  { routeName: 'audit', label: '操作审计', icon: 'audit' }
+  { routeName: 'audit', label: '操作审计', icon: 'audit' },
+  { routeName: 'account', label: '个人设置', icon: 'audit' },
+  { routeName: 'users', label: '用户管理', icon: 'server', adminOnly: true },
+  { routeName: 'groups', label: '用户组与授权', icon: 'network', adminOnly: true },
+  { routeName: 'settings', label: '系统设置', icon: 'overview', adminOnly: true }
 ]
 
 /** 菜单分组：分组标题为空字符串时不渲染标题行 */
@@ -109,14 +114,15 @@ function toMenuOption(item: MenuItemDef): MenuOption {
  */
 export function buildMenuOptions(
   agentId: string | null,
-  agentName = ''
+  agentName = '',
+  isAdmin = false
 ): MenuOption[] {
   const groups: MenuOption[] = [
     {
       type: 'group',
       key: 'entry',
       label: '',
-      children: GLOBAL_ENTRIES.map((item) => toMenuOption(item))
+      children: GLOBAL_ENTRIES.filter((item) => !item.adminOnly || isAdmin).map((item) => toMenuOption(item))
     } as MenuOption
   ]
 
@@ -172,6 +178,7 @@ const ROUTE_TO_MENU_KEY: Record<string, string> = {
   overview: 'overview',
   agents: 'agents',
   audit: 'audit',
+  account: 'account', users: 'users', groups: 'groups', settings: 'settings',
   'agent-containers': 'agent-containers',
   'agent-stacks': 'agent-stacks',
   // 编排详情/新建属于「容器编排」这一菜单项的下级页面

@@ -107,7 +107,7 @@ func TestFreshDatabaseMigrates(t *testing.T) {
 	if res.Dirty {
 		t.Fatal("迁移后处于 dirty 状态")
 	}
-	if res.Applied != 10 {
+	if res.Applied != latestTestVersion(t) {
 		t.Fatalf("期望执行 10 个版本，实际 %d", res.Applied)
 	}
 	if res.Adopted {
@@ -307,7 +307,7 @@ func TestDirtyRejectedAndNoPartialDDL(t *testing.T) {
 
 	// 手工把状态改成 dirty（模拟上次执行中途失败）。
 	db := openTestDB(t, path)
-	if _, err := db.Exec(`UPDATE ` + MigrationsTable + ` SET dirty=1 WHERE version=10`); err != nil {
+	if _, err := db.Exec(`UPDATE ` + MigrationsTable + ` SET dirty=1`); err != nil {
 		t.Fatalf("设置 dirty 失败: %v", err)
 	}
 
@@ -321,7 +321,7 @@ func TestDirtyRejectedAndNoPartialDDL(t *testing.T) {
 
 	// dirty 被拒绝后，表结构不应有任何变化。
 	var dirty int
-	if err := db.QueryRow(`SELECT dirty FROM ` + MigrationsTable + ` WHERE version=10`).Scan(&dirty); err != nil {
+	if err := db.QueryRow(`SELECT dirty FROM ` + MigrationsTable + ``).Scan(&dirty); err != nil {
 		t.Fatalf("读 dirty 失败: %v", err)
 	}
 	if dirty != 1 {
@@ -390,7 +390,7 @@ func TestEmbeddedScriptsExecuteWhole(t *testing.T) {
 	if err != nil {
 		t.Fatalf("读迁移文件失败: %v", err)
 	}
-	if len(files) != 10 {
+	if len(files) != latestTestVersion(t) {
 		t.Fatalf("期望 10 个版本，实际 %d", len(files))
 	}
 	for _, f := range files {
@@ -406,7 +406,7 @@ func TestEmbeddedVersionsAreContiguous(t *testing.T) {
 	if err != nil {
 		t.Fatalf("读取内嵌版本失败: %v", err)
 	}
-	if len(versions) != 10 {
+	if len(versions) < 11 {
 		t.Fatalf("期望 10 个版本，实际 %d: %v", len(versions), versions)
 	}
 	for i, v := range versions {

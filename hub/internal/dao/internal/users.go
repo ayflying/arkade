@@ -21,26 +21,28 @@ type UsersDao struct {
 
 // UsersColumns defines and stores column names for the table users.
 type UsersColumns struct {
-	Id           string //
-	Username     string //
-	DisplayName  string //
-	PasswordHash string //
-	Role         string //
-	Disabled     string //
-	CreatedAt    string //
-	UpdatedAt    string //
+	Id                 string //
+	Username           string //
+	DisplayName        string //
+	PasswordHash       string //
+	Role               string //
+	Disabled           string //
+	CreatedAt          string //
+	UpdatedAt          string //
+	MustChangePassword string //
 }
 
 // usersColumns holds the columns for the table users.
 var usersColumns = UsersColumns{
-	Id:           "id",
-	Username:     "username",
-	DisplayName:  "display_name",
-	PasswordHash: "password_hash",
-	Role:         "role",
-	Disabled:     "disabled",
-	CreatedAt:    "created_at",
-	UpdatedAt:    "updated_at",
+	Id:                 "id",
+	Username:           "username",
+	DisplayName:        "display_name",
+	PasswordHash:       "password_hash",
+	Role:               "role",
+	Disabled:           "disabled",
+	CreatedAt:          "created_at",
+	UpdatedAt:          "updated_at",
+	MustChangePassword: "must_change_password",
 }
 
 // NewUsersDao creates and returns a new DAO object for table data access.

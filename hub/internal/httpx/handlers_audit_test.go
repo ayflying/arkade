@@ -55,7 +55,7 @@ func TestAuditEndToEnd(t *testing.T) {
 
 	// 产生一个真实的操作。
 	if rec, _ := e.do(t, http.MethodPost, "/api/users",
-		`{"username":"audited","display_name":"x","password":"Password123","role":"user"}`, cookies); rec.Code != http.StatusOK {
+		`{"username":"audited","display_name":"x","password":"Password123!","role":"user"}`, cookies); rec.Code != http.StatusOK {
 		t.Fatalf("创建用户应成功，实际 %d", rec.Code)
 	}
 

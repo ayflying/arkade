@@ -21,7 +21,7 @@ func TestRuntimeWatcherCloseHookPrecedesStorageAndRetries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(app.backgroundClose) != 1 {
+	if len(app.backgroundClose) != 2 {
 		t.Fatalf("route controller close hook missing: %d", len(app.backgroundClose))
 	}
 	original := app.backgroundClose[0]

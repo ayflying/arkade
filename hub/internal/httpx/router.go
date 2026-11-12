@@ -58,6 +58,7 @@ type Deps struct {
 	Log        *slog.Logger
 	DB         *store.DB
 	Auth       *auth.Service
+	Identity   *identityServices
 	Registry   *agentlink.Registry
 	Ops        *agentlink.Ops
 	// StackMigrate 是跨服务器迁移编排器。
@@ -218,6 +219,7 @@ func NewRouter(d Deps) *ghttp.Server {
 	bindOperationalRoutes(s, d)
 	// 独立模块由各自 API 的 g.Meta 声明路由，入口只负责装配。
 	bindManagementRoutes(s, d)
+	bindIdentityRoutes(s, d)
 
 	// ---------- 兜底 ----------
 	//

@@ -645,8 +645,8 @@ func TestStackEndpointsNonAdmin(t *testing.T) {
 	agentID := "agent-1"
 	env.seedAgent(t, agentID)
 
-	env.createUser(t, adminCookies, "bob", "UserPass123", string(user.RoleUser))
-	bobCookies := env.loginAs(t, "bob", "UserPass123")
+	env.createUser(t, adminCookies, "bob", "UserPass123!", string(user.RoleUser))
+	bobCookies := env.loginAs(t, "bob", "UserPass123!")
 
 	base := "/api/agents/" + agentID
 	paths := []struct{ method, path string }{

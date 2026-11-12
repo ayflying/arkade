@@ -17,6 +17,7 @@ import (
 	"arkade/hub/internal/auth"
 	"arkade/hub/internal/config"
 	"arkade/hub/internal/imagetask"
+	"arkade/hub/internal/service/auditretention"
 	"arkade/hub/internal/service/stackmigration"
 	"arkade/hub/internal/stackmigrate"
 	"arkade/hub/internal/store"
@@ -49,6 +50,11 @@ func NewApp(ctx context.Context, cfg config.Config, log *slog.Logger, version st
 	}
 
 	authSvc := auth.NewService(db, cfg.Auth.SessionTTL)
+	identityServices, err := newIdentityServices(ctx, db, authSvc, cfg, log)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	if err := ensureInitialAdmin(ctx, db, cfg, log); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -85,6 +91,7 @@ func NewApp(ctx context.Context, cfg config.Config, log *slog.Logger, version st
 		Log:                     log,
 		DB:                      db,
 		Auth:                    authSvc,
+		Identity:                identityServices,
 		Registry:                reg,
 		Ops:                     ops,
 		AgentConn:               connections.wrap(http.HandlerFunc(agentSrv.HandleConnect)),
@@ -95,6 +102,9 @@ func NewApp(ctx context.Context, cfg config.Config, log *slog.Logger, version st
 		AgentSharedToken: cfg.Auth.AgentToken,
 		Guard:            guard,
 	})
+
+	retention := auditretention.New(context.Background(), db, log)
+	backgroundClose = append(backgroundClose, retention.Close)
 
 	// GoFrame 的 session/request 清理依赖 Start 初始化，不能只把未启动
 	// 的 Server 塞进另一个 http.Server；生产监听与关闭都使用框架生命周期。

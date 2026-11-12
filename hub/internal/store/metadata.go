@@ -43,6 +43,9 @@ func businessTables() []string {
 		dao.GroupAgents.Table(),
 		dao.Sessions.Table(),
 		dao.UserGroups.Table(),
+		dao.SystemSettings.Table(),
+		dao.OidcProviders.Table(),
+		dao.UserIdentities.Table(),
 	}
 }
 

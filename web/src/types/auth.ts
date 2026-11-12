@@ -12,7 +12,9 @@ export type UserRole = 'admin' | 'user'
 
 /** 后端返回的当前登录用户；字段名与后端一致使用 snake_case */
 export interface User {
-  id: number
+  id: string
+  must_change_password?: boolean
+  local_password?: boolean
   username: string
   display_name: string
   /** 角色：后端可能返回契约外的值，前端按 string 收下并在权限判断处兜底 */

@@ -14,6 +14,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
+	"sync"
 	"time"
 
 	"arkade/hub/internal/store"
@@ -40,6 +42,9 @@ var ErrSessionExpired = errors.New("登录已失效")
 type Service struct {
 	db         *store.DB
 	sessionTTL time.Duration
+	policyMu   sync.RWMutex
+	policy     PolicyReader
+	limiter    loginLimiter
 }
 
 // NewService 构造认证服务。ttl 为 0 时使用默认值。
@@ -59,6 +64,20 @@ type LoginResult struct {
 
 // Login 校验用户名密码并创建会话。
 func (s *Service) Login(ctx context.Context, username, password string) (LoginResult, error) {
+	return s.LoginWithClient(ctx, username, password, "")
+}
+
+var ErrRateLimited = errors.New("登录尝试过于频繁，请稍后重试")
+
+func (s *Service) LoginWithClient(ctx context.Context, username, password, clientIP string) (LoginResult, error) {
+	username = user.NormalizeUsername(username)
+	policy, err := s.currentPolicy(ctx)
+	if err != nil {
+		return LoginResult{}, err
+	}
+	if !s.limiter.reserve(time.Now(), username, strings.TrimSpace(clientIP), policy) {
+		return LoginResult{}, ErrRateLimited
+	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
@@ -72,23 +91,20 @@ func (s *Service) Login(ctx context.Context, username, password string) (LoginRe
 	if err != nil {
 		return LoginResult{}, fmt.Errorf("查询用户失败: %w", err)
 	}
-	if u.Disabled {
+	if u.Disabled || u.PasswordHash == "" {
+		_ = user.VerifyPassword(dummyHash, password)
 		return LoginResult{}, ErrInvalidCredentials
 	}
 	if err := user.VerifyPassword(u.PasswordHash, password); err != nil {
 		return LoginResult{}, ErrInvalidCredentials
 	}
 
-	token, err := newToken()
-	if err != nil {
-		return LoginResult{}, err
+	result, err := s.issue(ctx, u, &u.PasswordHash, policy)
+	if err == nil {
+		s.limiter.success(username, strings.TrimSpace(clientIP))
 	}
-	now := time.Now().UTC()
-	expires := now.Add(s.sessionTTL)
-	if err := s.db.CreateSession(ctx, hashToken(token), u.ID, now.Unix(), expires.Unix()); err != nil {
-		return LoginResult{}, err
-	}
-	return LoginResult{User: u, Token: token, ExpiresAt: expires}, nil
+	return result, err
+
 }
 
 // Authenticate 用令牌换取当前用户。令牌无效或过期返回 ErrSessionExpired。

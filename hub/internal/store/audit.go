@@ -23,7 +23,8 @@ import (
 
 // 审计保留与清理相关常量集中在此，便于统一调整。
 const (
-	// AuditMaxRecords 是整张审计表的硬上限，不按用户或服务器分别计算。
+	// AuditMaxRecords is retained only for the explicit legacy PruneAuditCount API.
+	// Normal writes and Open never enforce an implicit row-count retention cap.
 	AuditMaxRecords = 9999
 
 	// AuditRetentionDays 是审计记录保留天数。
@@ -100,45 +101,14 @@ func (d *DB) WriteAudit(rec audit.Record) error {
 		}).Insert(); err != nil {
 			return err
 		}
-		// 与插入同事务：并发写入及同秒记录也不能短暂突破已提交的条数上限。
-		_, err := tx.ExecContext(ctx, auditCountPruneSQL, AuditMaxRecords)
-		return err
+		return nil
 	})
 	if err != nil {
 		return gerror.Wrap(err, "写入审计记录")
 	}
 
-	// 顺手清理过期记录（按时间间隔节流，见常量注释）。
-	// 单独起 goroutine：删除可能耗时，不能拖慢这次请求的响应。
-	// 即使清理失败也只是日志问题，返回给调用方的仍是"插入成功"。
-	d.maybePruneAudit()
+	// Time retention belongs exclusively to the instance retention worker.
 	return nil
-}
-
-// maybePruneAudit 在满足间隔条件时异步清理过期审计。
-func (d *DB) maybePruneAudit() {
-	now := time.Now()
-
-	d.auditPrune.mu.Lock()
-	// 用"上次尝试时间"而不是"上次成功时间"判断间隔：
-	// 若清理一直失败（比如磁盘满），用成功时间会导致每次写入都重试，
-	// 反而把故障放大成性能问题。
-	if now.Sub(d.auditPrune.lastPrune) < AuditPruneInterval {
-		d.auditPrune.mu.Unlock()
-		return
-	}
-	d.auditPrune.lastPrune = now
-	d.auditPrune.mu.Unlock()
-
-	// 交给生命周期闸门：Close 会等它结束再关连接。
-	// 不受闸门管理的话，Close 之后这个 goroutine 仍会通过 d.gdb 重新建连接，
-	// 表现为"库已关闭但文件句柄又被打开"（Windows 上删不掉文件）。
-	//
-	// 清理失败只在下次写入时再试，不向任何人报错：调用方对此无能为力。
-	d.goBackground(context.Background(), func(ctx context.Context) {
-		cutoff := now.AddDate(0, 0, -AuditRetentionDays).Unix()
-		_, _ = d.gdb.Exec(ctx, `DELETE FROM audit_logs WHERE created_at < ?`, cutoff)
-	})
 }
 
 // ListAuditLogs 按筛选条件分页查询审计，返回记录与总数。

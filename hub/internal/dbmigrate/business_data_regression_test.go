@@ -34,7 +34,7 @@ func TestBusinessDataLegacyUpgradeProductionRunAndOpen(t *testing.T) {
 				before := businessSnapshot(t, db)
 				if entry == "Run" {
 					result, err := dbmigrate.Run(ctx, path)
-					if err != nil || result == nil || !result.Adopted || result.FromVersion != version || result.ToVersion != 10 || result.Applied != 10-version || result.Dirty {
+					if err != nil || result == nil || !result.Adopted || result.FromVersion != version || result.ToVersion != 11 || result.Applied != 11-version || result.Dirty {
 						t.Fatalf("production upgrade: %+v %v", result, err)
 					}
 				} else {
