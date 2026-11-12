@@ -24,7 +24,9 @@
 
 ## 镜像版本：先确认，再部署
 
-CI 在推送到 `master` 后构建 `ghcr.io/ayflying/arkade-hub`、`ghcr.io/ayflying/arkade-agent`，包括 amd64 / arm64。标签包含 `latest` 和 `sha-<完整提交号>`，生产应固定标签或摘要。
+CI 在推送到 `master` 后构建 Hub、Agent 的 amd64 / arm64 镜像，同一次构建同时发布到 GHCR（`ghcr.io/ayflying/arkade-hub`、`ghcr.io/ayflying/arkade-agent`）和 Docker Hub（`docker.io/ayflying/arkade-hub`、`docker.io/ayflying/arkade-agent`）。两处标签规则一致，包含 `latest` 和 `sha-<完整提交号>`，生产应固定标签或摘要。需要使用 Docker Hub 时直接修改编排中的 image，其他参数不变。
+
+GitHub Actions 发布需要仓库 Secret `DOCKERHUB_TOKEN`，以及 Variable 或 Secret `DOCKERHUB_USERNAME`（当前为 `ayflying`）。若发布到组织命名空间，另设 Variable `DOCKERHUB_NAMESPACE`；默认使用登录用户名。PR 只构建、不登录或推送镜像。缺少发布凭据会明确失败，不假称双仓库发布完成。
 
 **这套编排必须配合支持 PostgreSQL 的新 Hub 镜像。** 旧镜像的启动参数仍指向 TOML，不能直接删除挂载后继续用旧镜像。代码提交/本地验证不代表远端 CI、GHCR 或服务器已更新。
 
