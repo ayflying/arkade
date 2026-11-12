@@ -2,6 +2,7 @@
 """只解析编排，不启动容器；使用临时虚构凭据，禁止输出完整配置。需要 Docker Compose v2。"""
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -56,7 +57,6 @@ def main():
         "ARKADE_INITIAL_PASS": "test-admin-not-a-real-password",
         "ARKADE_AGENT_TOKEN": "test-hub-admission-token",
         "ARKADE_LOCAL_AGENT_TOKEN": "test-local-dedicated-token",
-        "ARKADE_AGENT_HUB_URL": "wss://hub.example.invalid/agent/connect",
     }
     with tempfile.TemporaryDirectory(prefix="arkade-compose-check-") as directory:
         envfile = Path(directory) / ".env"
@@ -70,7 +70,7 @@ def main():
         check_hub(hub)
         agent = render("agent-compose.yml", envfile)
         assert set(agent["services"]) == {"agent"}
-        check_agent(agent, values["ARKADE_AGENT_TOKEN"], values["ARKADE_AGENT_HUB_URL"])
+        check_agent(agent, values["ARKADE_AGENT_TOKEN"], "ws://请填写Hub地址:8080/agent/connect")
         combined = render("combined-compose.yml", envfile)
         assert set(combined["services"]) == {"hub", "agent"}
         check_hub(combined)
@@ -87,23 +87,29 @@ def main():
 
         for filename, missing in (("hub-compose.yml", "ARKADE_INITIAL_PASS"),
                                   ("hub-compose.yml", "ARKADE_AGENT_TOKEN"),
-                                  ("agent-compose.yml", "ARKADE_AGENT_TOKEN"),
-                                  ("agent-compose.yml", "ARKADE_AGENT_HUB_URL")):
+                                  ("agent-compose.yml", "ARKADE_AGENT_TOKEN")):
             save({k: v for k, v in values.items() if k != missing})
             render(filename, envfile, valid=False)
 
-        # 所有面向部署的参数均能从 .env 修改；保留容器内部数据路径和健康检查端口。
-        save(dict(values, ARKADE_HUB_PORT="18080", ARKADE_HUB_BIND_IP="127.0.0.1",
-                  ARKADE_HUB_VOLUME="test-existing-hub-volume",
-                  ARKADE_AGENT_NAME="test-custom-node", ARKADE_AGENT_LOG_LEVEL="debug"))
-        custom = render("combined-compose.yml", envfile)
-        port = custom["services"]["hub"]["ports"][0]
-        assert str(port["published"]) == "18080" and port["target"] == 8080
-        assert port["host_ip"] == "127.0.0.1"
-        assert custom["volumes"]["hub-data"]["name"] == "test-existing-hub-volume"
-        assert custom["services"]["agent"]["environment"]["ARKADE_AGENT_NAME"] == "test-custom-node"
-        assert custom["services"]["agent"]["environment"]["ARKADE_LOG_LEVEL"] == "debug"
-    print("三套编排解析、密钥隔离、数据卷、健康依赖、首次启动及环境变量覆盖检查通过（未启动容器）。")
+        # 普通配置直接写在编排中，外部旧变量不能意外覆盖。
+        save(dict(values, ARKADE_HUB_IMAGE="unexpected:tag", ARKADE_HUB_PORT="18080",
+                  ARKADE_HUB_VOLUME="unexpected-volume", ARKADE_AGENT_NAME="unexpected-node"))
+        assert render("combined-compose.yml", envfile) == combined
+        allowed = {"ARKADE_INITIAL_PASS", "ARKADE_AGENT_TOKEN", "ARKADE_LOCAL_AGENT_TOKEN"}
+        for filename, config in (("hub-compose.yml", hub), ("agent-compose.yml", agent),
+                                 ("combined-compose.yml", combined)):
+            source = (DEPLOY / filename).read_text(encoding="utf-8")
+            names = set(re.findall(r"\$\{([A-Z_]+)", source))
+            assert names <= allowed, f"{filename}: 普通配置不得使用变量插值"
+            assert not any("build" in service for service in config["services"].values())
+            for name, service in config["services"].items():
+                assert service["image"] == f"ghcr.io/ayflying/arkade-{name}:latest"
+        for filename in (".env.example", "agent.env.example"):
+            source = (DEPLOY / filename).read_text(encoding="utf-8")
+            keys = {line.split("=", 1)[0] for line in source.splitlines()
+                    if line.strip() and not line.startswith("#")}
+            assert keys <= allowed, f"{filename}: 样例只能包含凭据"
+    print("三套编排解析、密钥隔离、数据卷、健康依赖、首次启动及仅凭据变量/无 build 检查通过（未启动容器）。")
 
 
 if __name__ == "__main__":

@@ -4,31 +4,31 @@ name: arkade-agent
 
 services:
   agent:
-    image: ${ARKADE_AGENT_IMAGE:-ghcr.io/ayflying/arkade-agent:latest}
+    image: ghcr.io/ayflying/arkade-agent:latest
     container_name: arkade-agent
     restart: unless-stopped
     environment:
       ARKADE_AGENT_TOKEN: ${ARKADE_AGENT_TOKEN:?请在 .env 填写网页生成的 Agent 专属密钥}
-      ARKADE_HUB_URL: ${ARKADE_AGENT_HUB_URL:?请在 .env 填写此节点可达的 Hub WebSocket 地址}
-      ARKADE_AGENT_NAME: ${ARKADE_AGENT_NAME:-arkade-node}
+      ARKADE_HUB_URL: ws://请填写Hub地址:8080/agent/connect
+      ARKADE_AGENT_NAME: arkade-node
       # 内部数据路径固定，避免仅改变量而脱离持久卷。
       ARKADE_DATA_DIR: /opt/arkade/agent
       ARKADE_SOCKET: /var/run/docker.sock
-      ARKADE_RUNTIME_KIND: ${ARKADE_RUNTIME_KIND:-auto}
-      ARKADE_HEARTBEAT_SEC: ${ARKADE_HEARTBEAT_SEC:-15}
-      ARKADE_LOG_LEVEL: ${ARKADE_AGENT_LOG_LEVEL:-info}
-      ARKADE_LOG_FORMAT: ${ARKADE_AGENT_LOG_FORMAT:-text}
+      ARKADE_RUNTIME_KIND: auto
+      ARKADE_HEARTBEAT_SEC: 15
+      ARKADE_LOG_LEVEL: info
+      ARKADE_LOG_FORMAT: text
     volumes:
       - agent-data:/opt/arkade/agent
       # 等价于宿主机高权限；Hub 永远不挂载此套接字。
-      - ${ARKADE_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
+      - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - arkade
 
 volumes:
   agent-data:
-    name: ${ARKADE_AGENT_VOLUME:-arkade-agent-data}
+    name: arkade-agent-data
 
 networks:
   arkade:
-    name: ${ARKADE_AGENT_NETWORK:-arkade-agent-net}
+    name: arkade-agent-net

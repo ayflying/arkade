@@ -63,7 +63,7 @@ arkade/
 
 ## 容器部署
 
-提供三套编排，部署参数统一使用 `.env`，不再要求挂载 TOML。Hub 与 Agent 始终是独立容器，只有 Agent 挂载宿主 Docker socket。
+提供三套仅使用 `image` 的编排，不包含 `build`；普通参数直接写在编排中，只有密码、令牌使用 `.env`，不再要求挂载 TOML。Hub 与 Agent 始终是独立容器，只有 Agent 挂载宿主 Docker socket。
 
 - [仅 Hub](deploy/docker/hub-compose.yml)：中央控制端。
 - [仅 Agent](deploy/docker/agent-compose.yml)：部署在受管服务器。

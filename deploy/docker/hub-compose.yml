@@ -4,28 +4,23 @@ name: arkade-hub
 
 services:
   hub:
-    image: ${ARKADE_HUB_IMAGE:-ghcr.io/ayflying/arkade-hub:latest}
-    build:
-      context: ../..
-      dockerfile: hub/Dockerfile
-      args:
-        VERSION: ${ARKADE_VERSION:-0.1.0}
+    image: ghcr.io/ayflying/arkade-hub:latest
     container_name: arkade-hub
     restart: unless-stopped
     ports:
-      - "${ARKADE_HUB_BIND_IP:-0.0.0.0}:${ARKADE_HUB_PORT:-8080}:8080"
+      - "0.0.0.0:8080:8080"
     environment:
-      # 固定的容器内端口/路径与健康检查、数据卷保持一致；宿主参数在 .env 中配置。
+      # 固定的容器内端口/路径与健康检查、数据卷保持一致；普通配置直接修改本文件。
       ARKADE_LISTEN: 0.0.0.0:8080
       ARKADE_DB_PATH: /data/hub.db
       ARKADE_WEB_DIST: /app/web/dist
-      ARKADE_INITIAL_USER: ${ARKADE_INITIAL_USER:-admin}
+      ARKADE_INITIAL_USER: admin
       ARKADE_INITIAL_PASS: ${ARKADE_INITIAL_PASS:?请在 .env 设置管理员初始密码}
       ARKADE_AGENT_TOKEN: ${ARKADE_AGENT_TOKEN:?请在 .env 设置 Hub 准入令牌}
-      ARKADE_BASE_URL: ${ARKADE_BASE_URL:-http://127.0.0.1:8080}
-      ARKADE_LOG_LEVEL: ${ARKADE_HUB_LOG_LEVEL:-info}
+      ARKADE_BASE_URL: http://127.0.0.1:8080
+      ARKADE_LOG_LEVEL: info
       # 数据库内的网页会话策略优先；此项仅供内部旧配置回退。
-      ARKADE_SESSION_TTL: ${ARKADE_SESSION_TTL:-24h}
+      ARKADE_SESSION_TTL: 24h
     volumes:
       - hub-data:/data
     healthcheck:
@@ -39,8 +34,8 @@ services:
 
 volumes:
   hub-data:
-    name: ${ARKADE_HUB_VOLUME:-arkade-hub-data}
+    name: arkade-hub-data
 
 networks:
   arkade:
-    name: ${ARKADE_HUB_NETWORK:-arkade-hub-net}
+    name: arkade-hub-net
