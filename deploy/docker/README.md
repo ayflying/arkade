@@ -73,23 +73,18 @@ Agent 的 Docker socket 权限等价于宿主高权限，仅部署到可信服�
 
 将 combined-compose.yml 保存为服务器的 compose.yml，将 combined.env.example 保存为同目录 .env；其中 **Hub 准入令牌 `ARKADE_AGENT_TOKEN` 和本机 Agent 专属密钥 `ARKADE_LOCAL_AGENT_TOKEN` 必须分开**。
 
-首次部署不能事先拿到网页生成的专属密钥，因此分两步启动：
+首次部署在 `.env` 一次填好 PostgreSQL 密码、Hub 初始密码、准入令牌，以及独立随机生成的 `ARKADE_LOCAL_AGENT_TOKEN`（至少16位，建议 `openssl rand -hex 24`）。不需要先去网页添加服务器或复制密钥：
 
 ```sh
 chmod 600 .env
-# 在 .env 填好 PostgreSQL 密码、Hub 密码、准入令牌，ARKADE_LOCAL_AGENT_TOKEN 暂留空。
 docker compose --env-file .env -f compose.yml pull
-docker compose --env-file .env -f compose.yml up -d hub
-```
-
-登录 Hub，添加本机服务器，把生成的专属密钥写入 `.env` 的 `ARKADE_LOCAL_AGENT_TOKEN`。再启动整个项目：
-
-```sh
 docker compose --env-file .env -f compose.yml up -d
 docker compose --env-file .env -f compose.yml ps
 ```
 
-Agent 等 Hub 健康后启动，通过 Compose 服务名连接，不需要填写宿主地址。专属密钥留空时 Agent 会拒绝启动，不会自动使用共享准入令牌降级注册。先起 Hub 的命令不启动 Agent。
+Hub 自动预建名为 **本机** 的服务器（内部身份 `agent-local`）并绑定专属密钥；Agent 等 Hub 健康后通过 `ws://hub:8080/agent/connect` 自动连接。Hub 不挂载 Docker socket，只有 Agent 获得宿主操作权限。凭据不可留空或复用全局准入令牌。
+
+重启保持同一专属密钥，不会重复注册、覆盖网页改名或重新启用被禁用的服务器。网页重置密钥后应同步更新 `.env`；旧密钥不会被启动流程重新激活。若已有同名或身份/密钥冲突，Hub 拒绝覆盖，先核对现有记录。此配置声明式管理本机记录：删除后再次启动会重新预建；若不再管理本机，先移除 Hub 的 `ARKADE_LOCAL_AGENT_TOKEN` 配置并停止同机 Agent。持有该专属密钥者可冒充该 Agent，因此只将它交给这两个可信容器。
 
 只改 Agent 密钥或参数时：
 

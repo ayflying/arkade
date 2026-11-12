@@ -48,7 +48,11 @@ def check_hub(config):
     assert env["ARKADE_WEB_DIST"] == "/app/web/dist"
     assert env["ARKADE_INITIAL_PASS"] == "test-admin-not-a-real-password"
     assert env["ARKADE_AGENT_TOKEN"] == "test-hub-admission-token"
-    assert "ARKADE_LOCAL_AGENT_TOKEN" not in env
+    if "agent" in config["services"]:
+        assert env["ARKADE_LOCAL_AGENT_TOKEN"] == "test-local-dedicated-token"
+        assert env["ARKADE_LOCAL_AGENT_TOKEN"] != env["ARKADE_AGENT_TOKEN"]
+    else:
+        assert "ARKADE_LOCAL_AGENT_TOKEN" not in env
     assert not any("sock" in volume["target"] or "toml" in volume["target"]
                    for volume in hub["volumes"])
     assert config["volumes"]["hub-data"]["name"] == "arkade-hub-files-pg"
@@ -93,13 +97,11 @@ def main():
         check_agent(combined, values["ARKADE_LOCAL_AGENT_TOKEN"], "ws://hub:8080/agent/connect")
         assert combined["services"]["agent"]["depends_on"]["hub"]["condition"] == "service_healthy"
 
-        # 首次启动只起 Hub，无需预先取得 Agent 专属密钥。
+        # 合并部署一步启动：两端使用同一专属密钥，默认名称为本机。
+        assert combined["services"]["agent"]["environment"]["ARKADE_AGENT_NAME"] == "本机"
+        assert combined["services"]["hub"]["environment"]["ARKADE_LOCAL_AGENT_TOKEN"] == combined["services"]["agent"]["environment"]["ARKADE_AGENT_TOKEN"]
         save({k: v for k, v in values.items() if k != "ARKADE_LOCAL_AGENT_TOKEN"})
-        bootstrap = render("combined-compose.yml", envfile, services=("hub",))
-        assert set(bootstrap["services"]) == {"hub", "postgres"}
-        check_hub(bootstrap)
-        no_token = render("combined-compose.yml", envfile)
-        assert no_token["services"]["agent"]["environment"]["ARKADE_AGENT_TOKEN"] == ""
+        render("combined-compose.yml", envfile, valid=False)
 
         for filename, missing in (("hub-compose.yml", "ARKADE_DB_PASSWORD"),
                                   ("hub-compose.yml", "ARKADE_INITIAL_PASS"),

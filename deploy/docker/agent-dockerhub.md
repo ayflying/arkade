@@ -31,7 +31,7 @@ docker compose --env-file .env ps
 - 容器自身健康不代表已成功连接 Hub，应从 Hub 页面核对在线状态。
 - Podman 套接字、权限和 Compose 兼容性需要按实际宿主验证。
 
-需要同机部署 Hub、Agent 与 PostgreSQL，参见 [合并编排](https://github.com/ayflying/arkade/blob/master/deploy/docker/combined-compose.yml) 与 [对应凭据样例](https://github.com/ayflying/arkade/blob/master/deploy/docker/combined.env.example)。
+需要同机部署 Hub、Agent 与 PostgreSQL，合并编排会自动添加名为“本机”的服务器并自动连接，无需网页添加或复制密钥；只需在凭据文件预设独立随机的本机专属密钥。参见 [合并编排](https://github.com/ayflying/arkade/blob/master/deploy/docker/combined-compose.yml) 与 [对应凭据样例](https://github.com/ayflying/arkade/blob/master/deploy/docker/combined.env.example)。
 
 ## 标签与架构
 

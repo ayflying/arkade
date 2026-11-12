@@ -41,6 +41,7 @@ type DatabaseConfig struct {
 type AuthConfig struct {
 	SessionTTL                time.Duration `toml:"session_ttl"`                  // 登录会话有效期
 	AgentToken                string        `toml:"agent_token"`                  // 首期 Agent 接入的预共享 Token（简化版）
+	LocalAgentToken           string        `toml:"local_agent_token"`            // 可选同机 Agent 专属凭据，仅首次启动预建，不自动轮换
 	InitialUser               string        `toml:"initial_user"`                 // 首次启动时创建的管理员用户名
 	InitialPass               string        `toml:"initial_pass"`                 // 首次启动时创建的管理员密码
 	SettingsKeyFile           string        `toml:"settings_key_file"`            // OIDC 密钥加密主密钥文件；独立于数据库连接
@@ -97,6 +98,9 @@ func Load(path string) (Config, error) {
 func applyEnv(cfg *Config) {
 	if v := os.Getenv("ARKADE_AGENT_TOKEN"); v != "" {
 		cfg.Auth.AgentToken = v
+	}
+	if v := os.Getenv("ARKADE_LOCAL_AGENT_TOKEN"); v != "" {
+		cfg.Auth.LocalAgentToken = v
 	}
 	if v := os.Getenv("ARKADE_INITIAL_PASS"); v != "" {
 		cfg.Auth.InitialPass = v
@@ -183,6 +187,14 @@ func (c Config) Validate() error {
 	}
 	if len(c.Auth.AgentToken) > 0 && len(c.Auth.AgentToken) < 16 {
 		errs = append(errs, errors.New("agent_token 至少 16 位，过短容易被爆破"))
+	}
+	if c.Auth.LocalAgentToken != "" {
+		if len(c.Auth.LocalAgentToken) < 16 {
+			errs = append(errs, errors.New("local_agent_token 至少 16 位"))
+		}
+		if c.Auth.LocalAgentToken == c.Auth.AgentToken {
+			errs = append(errs, errors.New("local_agent_token 必须不同于共享 agent_token"))
+		}
 	}
 	return errors.Join(errs...)
 }

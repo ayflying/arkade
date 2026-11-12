@@ -61,49 +61,53 @@ func NewAgentID() (string, error) {
 // 而手动预登记要求归一化名称不重复。约束因此只加在
 // “本次预登记不得产生新重名”这一业务入口。
 func (d *DB) CreatePreprovisionedAgent(ctx context.Context, rec AgentRecord, tokenHash string, at time.Time) error {
+	return d.TxModel(ctx, func(ctx context.Context, tx gdb.TX) error {
+		return createPreprovisionedAgentTx(ctx, tx, rec, tokenHash, at)
+	})
+}
+
+// createPreprovisionedAgentTx 复用同一条原子预建路径，调用方必须已持有 TxModel 事务锁。
+func createPreprovisionedAgentTx(ctx context.Context, tx gdb.TX, rec AgentRecord, tokenHash string, at time.Time) error {
 	labelsRaw, err := json.Marshal(rec.Labels)
 	if err != nil {
 		return gerror.Wrap(err, "序列化 Agent 标签失败")
 	}
+	// 事务内判重（规范化后比较，见 normalizAgentName）。
+	dup, err := agentNameExistsTx(ctx, tx, rec.Name, "")
+	if err != nil {
+		return err
+	}
+	if dup {
+		return ErrAgentNameTaken
+	}
 
-	return d.TxModel(ctx, func(ctx context.Context, tx gdb.TX) error {
-		// 事务内判重（规范化后比较，见 normalizAgentName）。
-		dup, err := agentNameExistsTx(ctx, tx, rec.Name, "")
-		if err != nil {
-			return err
-		}
-		if dup {
-			return ErrAgentNameTaken
-		}
+	if _, err := tx.Model(dao.Agents.Table()).Ctx(ctx).Data(do.Agents{
+		Id:             rec.ID,
+		Name:           rec.Name,
+		DisplayName:    rec.DisplayName,
+		Note:           rec.Note,
+		Status:         StatusPending,
+		Version:        "",
+		Runtime:        "",
+		RuntimeVersion: "",
+		LastSeen:       0,
+		Labels:         string(labelsRaw),
+		CreatedAt:      rec.CreatedAt,
+		UpdatedAt:      rec.UpdatedAt,
+		Disabled:       0,
+		Preprovisioned: 1,
+	}).Insert(); err != nil {
+		return gerror.Wrap(err, "写入预建服务器失败")
+	}
 
-		if _, err := tx.Model(dao.Agents.Table()).Ctx(ctx).Data(do.Agents{
-			Id:             rec.ID,
-			Name:           rec.Name,
-			DisplayName:    rec.DisplayName,
-			Note:           rec.Note,
-			Status:         StatusPending,
-			Version:        "",
-			Runtime:        "",
-			RuntimeVersion: "",
-			LastSeen:       0,
-			Labels:         string(labelsRaw),
-			CreatedAt:      rec.CreatedAt,
-			UpdatedAt:      rec.UpdatedAt,
-			Disabled:       0,
-			Preprovisioned: 1,
-		}).Insert(); err != nil {
-			return gerror.Wrap(err, "写入预建服务器失败")
-		}
-
-		if _, err := tx.Model(dao.AgentTokens.Table()).Ctx(ctx).Data(do.AgentTokens{
-			TokenHash: tokenHash,
-			AgentId:   rec.ID,
-			CreatedAt: at.Unix(),
-		}).Insert(); err != nil {
-			return gerror.Wrap(err, "写入接入凭据失败")
-		}
-		return nil
-	})
+	if _, err := tx.Model(dao.AgentTokens.Table()).Ctx(ctx).Data(do.AgentTokens{
+		TokenHash: tokenHash,
+		AgentId:   rec.ID,
+		CreatedAt: at.Unix(),
+	}).Insert(); err != nil {
+		return gerror.Wrap(err, "写入接入凭据失败")
+	}
+	return nil
 }
 
 // ResetAgentTokenHash 替换某条记录的凭据摘要。

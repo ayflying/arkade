@@ -25,7 +25,7 @@ docker compose --env-file .env -f compose.yml up -d hub
 curl -fsS http://127.0.0.1:8080/healthz
 ```
 
-合并编排先起 Hub（会自动启动依赖 PG），在网页添加本机服务器，取得专属密钥写入 `.env` 的 `ARKADE_LOCAL_AGENT_TOKEN`，再 `up -d` 启动 Agent。Agent 专属密钥与 Hub 准入令牌不可混用。
+合并编排在 `.env` 预设独立随机的 `ARKADE_LOCAL_AGENT_TOKEN`（至少16位），直接 `up -d` 启动全部服务。Hub 自动创建“本机”并绑定该专属密钥，Agent 等 Hub 健康后自动连接，无须网页添加或复制密钥。Agent 专属密钥与 Hub 准入令牌不可混用；重启保留密钥，已有身份或密钥冲突不自动覆盖。
 
 新库启动自动执行版本化 PostgreSQL 建表迁移。dirty、脚本校验和不符、结构漂移或未知更高版本应拒绝启动，禁止自动 force 跳过。已经有未受版本管理业务表的数据库不可冒充新库使用。
 

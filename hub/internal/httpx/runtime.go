@@ -49,6 +49,18 @@ func NewApp(ctx context.Context, cfg config.Config, log *slog.Logger, version st
 		return nil, err
 	}
 
+	// 必须在组装路由、启动后台任务和监听端口之前完成，失败时不对外服务。
+	if cfg.Auth.LocalAgentToken != "" {
+		if len(cfg.Auth.LocalAgentToken) < 16 || cfg.Auth.LocalAgentToken == cfg.Auth.AgentToken {
+			_ = db.Close()
+			return nil, fmt.Errorf("同机 Agent 凭据至少 16 位且必须不同于共享凭据")
+		}
+		if err := db.EnsureLocalAgent(ctx, agentlink.HashEnrollmentToken(cfg.Auth.LocalAgentToken)); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("初始化同机 Agent 失败: %w", err)
+		}
+	}
+
 	authSvc := auth.NewService(db, cfg.Auth.SessionTTL)
 	identityServices, err := newIdentityServices(ctx, db, authSvc, cfg, log)
 	if err != nil {

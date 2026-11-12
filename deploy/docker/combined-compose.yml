@@ -25,6 +25,8 @@ services:
       ARKADE_INITIAL_USER: admin
       ARKADE_INITIAL_PASS: ${ARKADE_INITIAL_PASS:?请在 .env 设置管理员初始密码}
       ARKADE_AGENT_TOKEN: ${ARKADE_AGENT_TOKEN:?请在 .env 设置 Hub 准入令牌}
+      # 同机 Agent 自动预建为“本机”；只共享其专属密钥，不复用 Hub 准入令牌。
+      ARKADE_LOCAL_AGENT_TOKEN: ${ARKADE_LOCAL_AGENT_TOKEN:?请在 .env 设置至少16位的本机专属随机密钥}
       ARKADE_BASE_URL: http://127.0.0.1:8080
       ARKADE_LOG_LEVEL: info
       # 数据库内的网页会话策略优先；此项仅供内部旧配置回退。
@@ -48,10 +50,10 @@ services:
       hub:
         condition: service_healthy
     environment:
-      ARKADE_AGENT_TOKEN: ${ARKADE_LOCAL_AGENT_TOKEN:-}
+      ARKADE_AGENT_TOKEN: ${ARKADE_LOCAL_AGENT_TOKEN:?请在 .env 设置至少16位的本机专属随机密钥}
       # 同网络通过服务名连接，不能使用指向 Agent 自身的 127.0.0.1。
       ARKADE_HUB_URL: ws://hub:8080/agent/connect
-      ARKADE_AGENT_NAME: arkade-node
+      ARKADE_AGENT_NAME: 本机
       ARKADE_DATA_DIR: /opt/arkade/agent
       ARKADE_SOCKET: /var/run/docker.sock
       ARKADE_RUNTIME_KIND: auto
