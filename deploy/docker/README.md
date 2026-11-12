@@ -10,7 +10,7 @@
 
 每种部署只复制对应样例为自己的 `.env`，不要拼接三份样例或覆盖已有凭据。
 
-合并编排复用独立 Hub 的定义，服务间使用 `ws://hub:8080/agent/connect`。只有 Agent 挂载 Docker socket，Hub 不接触宿主 Docker。三套是替代方案，不要同时启动同名容器。合并部署并不意味着把两个进程塞进一个容器。
+三套编排各自包含完整服务配置，不使用 extends 引用其他编排。合并编排直接声明 Hub 和 Agent 的镜像，服务间使用 `ws://hub:8080/agent/connect`。只有 Agent 挂载 Docker socket，Hub 不接触宿主 Docker。三套是替代方案，不要同时启动同名容器。合并部署并不意味着把两个进程塞进一个容器。
 
 ## 配置约定
 

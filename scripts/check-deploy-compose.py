@@ -101,6 +101,7 @@ def main():
             source = (DEPLOY / filename).read_text(encoding="utf-8")
             names = set(re.findall(r"\$\{([A-Z_]+)", source))
             assert names <= allowed, f"{filename}: 普通配置不得使用变量插值"
+            assert not re.search(r"^\s*(extends|include):", source, re.MULTILINE), "编排必须独立完整"
             assert not any("build" in service for service in config["services"].values())
             for name, service in config["services"].items():
                 assert service["image"] == f"ghcr.io/ayflying/arkade-{name}:latest"

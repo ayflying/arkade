@@ -1,12 +1,35 @@
 # Hub + Agent 同机部署：一个 Compose 项目，两个独立容器。
-# Hub 复用独立编排；Agent 使用单独的专属密钥，不能复用 Hub 准入令牌。
+# 本文件包含完整配置，无需其他编排；Agent 专属密钥不能复用 Hub 准入令牌。
 name: arkade
 
 services:
   hub:
-    extends:
-      file: hub-compose.yml
-      service: hub
+    image: ghcr.io/ayflying/arkade-hub:latest
+    container_name: arkade-hub
+    restart: unless-stopped
+    ports:
+      - "0.0.0.0:8080:8080"
+    environment:
+      ARKADE_LISTEN: 0.0.0.0:8080
+      ARKADE_DB_PATH: /data/hub.db
+      ARKADE_WEB_DIST: /app/web/dist
+      ARKADE_INITIAL_USER: admin
+      ARKADE_INITIAL_PASS: ${ARKADE_INITIAL_PASS:?请在 .env 设置管理员初始密码}
+      ARKADE_AGENT_TOKEN: ${ARKADE_AGENT_TOKEN:?请在 .env 设置 Hub 准入令牌}
+      ARKADE_BASE_URL: http://127.0.0.1:8080
+      ARKADE_LOG_LEVEL: info
+      # 数据库内的网页会话策略优先；此项仅供内部旧配置回退。
+      ARKADE_SESSION_TTL: 24h
+    volumes:
+      - hub-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      retries: 5
+    networks:
+      - arkade
 
   agent:
     image: ghcr.io/ayflying/arkade-agent:latest
