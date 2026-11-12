@@ -4,7 +4,7 @@ name: arkade-hub
 
 services:
   hub:
-    image: ghcr.io/ayflying/arkade-hub:latest
+    image: ayflying/arkade-hub:latest
     container_name: arkade-hub
     restart: unless-stopped
     depends_on:

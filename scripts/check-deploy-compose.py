@@ -121,7 +121,7 @@ def main():
             assert not re.search(r"^\s*(extends|include):", source, re.MULTILINE), "编排必须独立完整"
             assert not any("build" in service for service in config["services"].values())
             for name, service in config["services"].items():
-                assert service["image"] == ("postgres:17-alpine" if name == "postgres" else f"ghcr.io/ayflying/arkade-{name}:latest")
+                assert service["image"] == ("postgres:17-alpine" if name == "postgres" else f"ayflying/arkade-{name}:latest")
         examples = {
             "hub.env.example": ("hub-compose.yml", {"ARKADE_INITIAL_PASS", "ARKADE_AGENT_TOKEN", "ARKADE_DB_PASSWORD"}),
             "agent.env.example": ("agent-compose.yml", {"ARKADE_AGENT_TOKEN"}),

@@ -4,7 +4,7 @@ name: arkade-agent
 
 services:
   agent:
-    image: ghcr.io/ayflying/arkade-agent:latest
+    image: ayflying/arkade-agent:latest
     container_name: arkade-agent
     restart: unless-stopped
     environment:

@@ -4,7 +4,7 @@ name: arkade
 
 services:
   hub:
-    image: ghcr.io/ayflying/arkade-hub:latest
+    image: ayflying/arkade-hub:latest
     container_name: arkade-hub
     restart: unless-stopped
     depends_on:
@@ -41,7 +41,7 @@ services:
       - arkade
 
   agent:
-    image: ghcr.io/ayflying/arkade-agent:latest
+    image: ayflying/arkade-agent:latest
     container_name: arkade-agent
     restart: unless-stopped
     depends_on:
