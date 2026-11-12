@@ -24,8 +24,9 @@ services:
       ARKADE_WEB_DIST: /app/web/dist
       ARKADE_INITIAL_USER: admin
       ARKADE_INITIAL_PASS: ${ARKADE_INITIAL_PASS:?请在 .env 设置管理员初始密码}
-      ARKADE_AGENT_TOKEN: ${ARKADE_AGENT_TOKEN:?请在 .env 设置 Hub 准入令牌}
-      # 同机 Agent 自动预建为“本机”；只共享其专属密钥，不复用 Hub 准入令牌。
+      # 合并部署关闭全局共享准入，只启用下面的本机专属凭据。
+      ARKADE_AGENT_TOKEN: ""
+      # 同机 Agent 自动预建为“本机”；两端只需同一把专属密钥。
       ARKADE_LOCAL_AGENT_TOKEN: ${ARKADE_LOCAL_AGENT_TOKEN:?请在 .env 设置至少16位的本机专属随机密钥}
       ARKADE_BASE_URL: http://127.0.0.1:8080
       ARKADE_LOG_LEVEL: info

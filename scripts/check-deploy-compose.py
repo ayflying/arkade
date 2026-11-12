@@ -47,7 +47,7 @@ def check_hub(config):
     assert config["volumes"]["postgres-data"]["name"] == "arkade-postgres-data"
     assert env["ARKADE_WEB_DIST"] == "/app/web/dist"
     assert env["ARKADE_INITIAL_PASS"] == "test-admin-not-a-real-password"
-    assert env["ARKADE_AGENT_TOKEN"] == "test-hub-admission-token"
+    assert env["ARKADE_AGENT_TOKEN"] == ("" if "agent" in config["services"] else "test-hub-admission-token")
     if "agent" in config["services"]:
         assert env["ARKADE_LOCAL_AGENT_TOKEN"] == "test-local-dedicated-token"
         assert env["ARKADE_LOCAL_AGENT_TOKEN"] != env["ARKADE_AGENT_TOKEN"]
@@ -127,7 +127,7 @@ def main():
         examples = {
             "hub.env.example": ("hub-compose.yml", {"ARKADE_INITIAL_PASS", "ARKADE_AGENT_TOKEN", "ARKADE_DB_PASSWORD"}),
             "agent.env.example": ("agent-compose.yml", {"ARKADE_AGENT_TOKEN"}),
-            "combined.env.example": ("combined-compose.yml", allowed),
+            "combined.env.example": ("combined-compose.yml", allowed - {"ARKADE_AGENT_TOKEN"}),
         }
         assert {path.name for path in DEPLOY.glob("*.env.example")} == set(examples)
         assert not (DEPLOY / ".env.example").exists(), "不得保留混用的通用样例"

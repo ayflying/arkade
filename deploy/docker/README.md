@@ -71,9 +71,9 @@ Agent 的 Docker socket 权限等价于宿主高权限，仅部署到可信服�
 
 ## 3. Hub + Agent 合并部署
 
-将 combined-compose.yml 保存为服务器的 compose.yml，将 combined.env.example 保存为同目录 .env；其中 **Hub 准入令牌 `ARKADE_AGENT_TOKEN` 和本机 Agent 专属密钥 `ARKADE_LOCAL_AGENT_TOKEN` 必须分开**。
+将 combined-compose.yml 保存为服务器的 compose.yml，将 combined.env.example 保存为同目录 .env；**合并部署只配置一把 `ARKADE_LOCAL_AGENT_TOKEN`，不需要 `ARKADE_AGENT_TOKEN`，全局共享准入默认关闭**。
 
-首次部署在 `.env` 一次填好 PostgreSQL 密码、Hub 初始密码、准入令牌，以及独立随机生成的 `ARKADE_LOCAL_AGENT_TOKEN`（至少16位，建议 `openssl rand -hex 24`）。不需要先去网页添加服务器或复制密钥：
+首次部署在 `.env` 一次填好 PostgreSQL 密码、Hub 初始密码，以及随机生成的 `ARKADE_LOCAL_AGENT_TOKEN`（至少16位，建议 `openssl rand -hex 24`）。不需要先去网页添加服务器或复制密钥：
 
 ```sh
 chmod 600 .env
