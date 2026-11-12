@@ -15,15 +15,17 @@ import (
 	"github.com/gogf/gf/v2/net/ghttp"
 	"log/slog"
 	"strconv"
+	"time"
 )
 
 type Deps struct {
-	DB        *store.DB
-	Ops       *agentlink.Ops
-	Session   controller.SessionAccessor
-	Log       *slog.Logger
-	Migrate   *stackmigrate.Manager
-	AutoState func(agent, name string) (status, reason string, recorded bool)
+	SuppressMonitor func(agentID, containerID string, duration time.Duration)
+	DB              *store.DB
+	Ops             *agentlink.Ops
+	Session         controller.SessionAccessor
+	Log             *slog.Logger
+	Migrate         *stackmigrate.Manager
+	AutoState       func(agent, name string) (status, reason string, recorded bool)
 }
 type Controller struct {
 	d        Deps

@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sort"
+	"time"
 )
 
 func operationPermission(action string, save bool) user.Permission {
@@ -135,6 +136,10 @@ func (c *Controller) StartOperation(ctx context.Context, r *api.StartOperationRe
 			payload.Config = rec.Content
 			payload.Env = rec.EnvContent
 			payload.ExpectHash = rec.ConfigHash
+		}
+		// 编排会重建多个容器，短暂抑制该服务器容器告警，不抑制服务器失联。
+		if c.d.SuppressMonitor != nil && (p.Action == "up" || p.Action == "down" || p.Action == "stop" || p.Action == "restart" || p.Action == "remove") {
+			c.d.SuppressMonitor(r.AgentID, "*", 5*time.Minute)
 		}
 		result, ce := c.d.Ops.ComposeOperationStart(ctx, r.AgentID, payload)
 		if ce != nil {

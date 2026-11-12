@@ -17,6 +17,7 @@ import (
 	"arkade/hub/internal/auth"
 	"arkade/hub/internal/config"
 	"arkade/hub/internal/imagetask"
+	"arkade/hub/internal/monitor"
 	"arkade/hub/internal/service/auditretention"
 	"arkade/hub/internal/service/stackmigration"
 	"arkade/hub/internal/stackmigrate"
@@ -92,11 +93,29 @@ func NewApp(ctx context.Context, cfg config.Config, log *slog.Logger, version st
 	migrations := stackmigrate.New(stackmigration.New(stackmigration.Deps{
 		DB: db, Ops: ops, Registry: reg, Images: imageBackend,
 	}))
+	// 监控复用独立持久化主密钥，不保存明文通道凭据。
+	monitorKey, err := loadSettingsKey(cfg.Auth.SettingsKeyFile)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	monitorService, err := monitor.NewService(db, monitorKey, nil)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if _, err := monitorService.Get(ctx); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	monitorEngine := monitor.NewEngine(db, &monitorSource{db: db, registry: reg}, monitorService.Config, monitorService.Notify, log)
 	autoAdopt := newAutoAdopter(db, ops, reg.OnlineIDs)
 	connections := &connectionTracker{}
 	var backgroundClose []func(context.Context) error
 	router := NewRouter(Deps{
 		RegisterBackgroundClose: func(close func(context.Context) error) { backgroundClose = append(backgroundClose, close) },
+		MonitorService:          monitorService,
+		MonitorEngine:           monitorEngine,
 		AutoAdopt:               autoAdopt,
 		ImageTasks:              imageTasks,
 		StackMigrate:            migrations,
@@ -117,6 +136,9 @@ func NewApp(ctx context.Context, cfg config.Config, log *slog.Logger, version st
 
 	retention := auditretention.New(context.Background(), db, log)
 	backgroundClose = append(backgroundClose, retention.Close)
+	monitorEngine.Start(context.Background())
+	backgroundClose = append(backgroundClose, monitorEngine.Shutdown)
+	backgroundClose = append(backgroundClose, startMonitorRetention(db, log))
 
 	// GoFrame 的 session/request 清理依赖 Start 初始化，不能只把未启动
 	// 的 Server 塞进另一个 http.Server；生产监听与关闭都使用框架生命周期。

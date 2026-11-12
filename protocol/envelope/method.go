@@ -28,6 +28,9 @@ const (
 	MethodContainerLogs    = "container.logs"    // 拉取日志（有限行数，避免撑爆连接）
 	MethodContainerInspect = "container.inspect" // 容器详情（只读，白名单字段）
 
+	// 容器监控：只读的一次性采集。
+	MethodContainerMonitorSnapshot = "container.monitor.snapshot"
+
 	// 运行时探测
 	MethodRuntimeInfo = "runtime.info" // 上报运行时类型与版本（docker / podman）
 

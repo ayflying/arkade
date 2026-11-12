@@ -23,7 +23,8 @@ func TestRuntimeWatcherCloseHookPrecedesStorageAndRetries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(app.backgroundClose) != 2 {
+	// 编排watcher、审计清理、监控引擎、监控历史清理均须在存储关闭前停止。
+	if len(app.backgroundClose) != 4 {
 		t.Fatalf("route controller close hook missing: %d", len(app.backgroundClose))
 	}
 	original := app.backgroundClose[0]

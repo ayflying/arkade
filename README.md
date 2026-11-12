@@ -47,6 +47,7 @@ Arkade（中文名：容器方舟）是一个用于管理多台服务器上容�
 - [03 技术选型](docs/03-tech-stack.md) — Go + Vue 的取舍与落地约定
 - [04 路线图](docs/04-roadmap.md) — 分期计划与验收口径
 - [05 已决策项](docs/05-decisions.md) — 已拍板的技术与范围决策（开发以此为准）
+- [20 容器监控与通知](docs/20-container-monitoring.md) — 后台启用步骤、钉钉/SMTP、告警边界与主密钥备份
 
 ## 目录结构
 

@@ -30,6 +30,9 @@ func businessTables() []string {
 		dao.Sessions.Table(),
 		dao.UserGroups.Table(),
 		dao.SystemSettings.Table(),
+		dao.MonitorConfig.Table(),
+		dao.MonitorIncidents.Table(),
+		dao.MonitorDeliveries.Table(),
 		dao.OidcProviders.Table(),
 		dao.UserIdentities.Table(),
 	}

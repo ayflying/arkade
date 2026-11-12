@@ -32,6 +32,16 @@ func newIdentityServices(ctx context.Context, db *store.DB, authSvc *auth.Servic
 			}
 		}
 	}
+	// 通知通道同样使用此主密钥；禁止密钥丢失后自动生成导致凭据不可恢复。
+	if _, err := os.Lstat(keyPath); os.IsNotExist(err) {
+		monitorConfig, loadErr := db.GetMonitorConfig(ctx)
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		if monitorConfig.SecretsCiphertext != "" {
+			return nil, gerror.New("已存在加密监控通知配置但主密钥缺失，请恢复原密钥")
+		}
+	}
 	key, err := loadSettingsKey(keyPath)
 	if err != nil {
 		return nil, err

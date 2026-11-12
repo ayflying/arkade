@@ -3,6 +3,7 @@ package resources
 
 import (
 	"log/slog"
+	"time"
 
 	"arkade/hub/internal/agentlink"
 	"arkade/hub/internal/controller"
@@ -10,10 +11,11 @@ import (
 )
 
 type Deps struct {
-	DB      *store.DB
-	Ops     *agentlink.Ops
-	Session controller.SessionAccessor
-	Log     *slog.Logger
+	SuppressMonitor func(agentID, containerID string, duration time.Duration)
+	DB              *store.DB
+	Ops             *agentlink.Ops
+	Session         controller.SessionAccessor
+	Log             *slog.Logger
 }
 type Controller struct {
 	deps   Deps

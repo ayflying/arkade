@@ -45,7 +45,7 @@ func TestForwardOnlyGuard(t *testing.T) {
 	}
 	var version int
 	var dirty bool
-	if err = conn.QueryRowContext(context.Background(), "SELECT version,dirty FROM "+MigrationsTable).Scan(&version, &dirty); err != nil || version != 1 || dirty {
+	if err = conn.QueryRowContext(context.Background(), "SELECT version,dirty FROM "+MigrationsTable).Scan(&version, &dirty); err != nil || version != 2 || dirty {
 		t.Fatalf("down modified cursor: %d %v %v", version, dirty, err)
 	}
 }

@@ -3,6 +3,7 @@ package resources
 import (
 	"context"
 	"strings"
+	"time"
 
 	api "arkade/hub/api/resources/v1"
 	"arkade/hub/internal/controller"
@@ -24,6 +25,9 @@ func (c *Controller) ContainerStop(ctx context.Context, req *api.ContainerStopRe
 	if err := c.access.Require(ctx, req.AgentID, user.PermOperate); err != nil {
 		return nil, err
 	}
+	if c.deps.SuppressMonitor != nil {
+		c.deps.SuppressMonitor(req.AgentID, req.ContainerID, 5*time.Minute)
+	}
 	out, err := c.deps.Ops.StopContainer(ctx, req.AgentID, req.ContainerID)
 	if err != nil {
 		return nil, controller.ConnectionError(err)
@@ -36,6 +40,9 @@ func (c *Controller) ContainerRestart(ctx context.Context, req *api.ContainerRes
 	}
 	if strings.TrimSpace(req.ContainerID) == "" {
 		return nil, controller.Failure("bad_request", "容器 ID 不能为空")
+	}
+	if c.deps.SuppressMonitor != nil {
+		c.deps.SuppressMonitor(req.AgentID, req.ContainerID, 5*time.Minute)
 	}
 	out, err := c.deps.Ops.RestartContainer(ctx, req.AgentID, req.ContainerID)
 	if err != nil {
@@ -57,6 +64,9 @@ func (c *Controller) ContainerRemove(ctx context.Context, req *api.ContainerRemo
 	volumes, ok := parseBoolQuery(req.RemoveVolumes)
 	if !ok {
 		return nil, controller.Failure("bad_request", "remove_volumes 只能是 true/false/1/0")
+	}
+	if c.deps.SuppressMonitor != nil {
+		c.deps.SuppressMonitor(req.AgentID, req.ContainerID, 5*time.Minute)
 	}
 	out, err := c.deps.Ops.RemoveContainer(ctx, req.AgentID, req.ContainerID, force, volumes)
 	if err != nil {

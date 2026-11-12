@@ -47,20 +47,23 @@ import (
 	"arkade/hub/internal/auth"
 	"arkade/hub/internal/controller"
 	"arkade/hub/internal/imagetask"
+	"arkade/hub/internal/monitor"
 	"arkade/hub/internal/stackmigrate"
 	"arkade/hub/internal/store"
 )
 
 // Deps 是路由装配所需依赖，集中传入便于测试替换。
 type Deps struct {
-	AutoAdopt  *autoAdopter
-	ImageTasks *imagetask.Manager
-	Log        *slog.Logger
-	DB         *store.DB
-	Auth       *auth.Service
-	Identity   *identityServices
-	Registry   *agentlink.Registry
-	Ops        *agentlink.Ops
+	MonitorService *monitor.Service
+	MonitorEngine  *monitor.Engine
+	AutoAdopt      *autoAdopter
+	ImageTasks     *imagetask.Manager
+	Log            *slog.Logger
+	DB             *store.DB
+	Auth           *auth.Service
+	Identity       *identityServices
+	Registry       *agentlink.Registry
+	Ops            *agentlink.Ops
 	// StackMigrate 是跨服务器迁移编排器。
 	//
 	// 为 nil 时不注册 migrate 路由（返回 500 说明"未启用"，

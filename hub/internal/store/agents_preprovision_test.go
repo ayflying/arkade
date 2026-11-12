@@ -385,7 +385,7 @@ func TestMigrationVersionCurrent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v != 1 {
-		t.Errorf("迁移版本应为 1，实际 %d", v)
+	if v != 2 {
+		t.Errorf("迁移版本应为 2，实际 %d", v)
 	}
 }
