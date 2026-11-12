@@ -43,6 +43,10 @@ jobs:
         module: [protocol, agent, hub]
     steps:
       - uses: actions/checkout@v4
+      # checkout 使用临时 HOME 配置信任目录；后续容器步骤须显式保留，
+      # 否则 go build 的 VCS stamping 被 Git 所有权检查阻断。
+      - name: Trust checkout directory for Go VCS metadata
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Test and vet
         working-directory: ${{ matrix.module }}
         run: |
