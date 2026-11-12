@@ -1,60 +1,34 @@
-# Arkade 被管节点编排（只跑 Agent，不含 Hub）
-#
-# 【镜像来源】直接拉 CI 构建并推送到 GitHub Container Registry 的镜像：
-#   ghcr.io/ayflying/arkade-agent:latest
-#   来源工作流 .github/workflows/images.yml（master 推送发 latest + sha-<提交号>）。
-#   生产建议固定摘要或 sha- 标签，不要跟 latest 漂移：
-#     image: ghcr.io/ayflying/arkade-agent@sha256:<digest>
-#   本地构建：docker build -f agent/Dockerfile -t arkade-agent:debug . 后
-#   把 image 改成 arkade-agent:debug（本文件不带 build 段，Agent 镜像在仓库里构建）。
-#
-# 【安全边界】Agent 必须有宿主 Docker 套接字才能操作本机容器（等价宿主机 root），
-#   所以本文件**只能部署在你信任的被管服务器上**；
-#   主节点用的 Hub 编排（hub-compose.yml）不含任何套接字，两者不要混在一份文件里。
-#
-# 【编排规范】同 Hub 编排：只有凭据与「这台机器独有」的项从 .env 读取，
-#   其余普通参数（名字、日志级别、心跳等）直接写值。
-#
-# 用法：把 agent-compose.yml、agent.config.toml、agent.env.example（改名为 .env）
-#   放进被管服务器上的一个独立目录，填好密钥与 Hub 地址后 pull + up -d。
-#   详见 deploy/docker/README.md。
-#
-# 注意：compose 会自动读取本项目目录的 .env，也就是这里 agent.env.example 复制出的那份。
-
+# Agent 独立部署；只将执行面连接到可信宿主机的 Docker socket。
+# 在部署目录显式使用 --env-file .env；不读取或挂载 TOML。
 name: arkade-agent
 
 services:
   agent:
-    # CI 发布的 Agent 镜像：内置 docker-cli 与 compose 插件，多架构 amd64/arm64。
-    image: ghcr.io/ayflying/arkade-agent:latest
+    image: ${ARKADE_AGENT_IMAGE:-ghcr.io/ayflying/arkade-agent:latest}
     container_name: arkade-agent
     restart: unless-stopped
-    env_file:
-      - .env
     environment:
-      # ---- 必填凭据：网页「添加服务器 / 重置密钥」生成的专属密钥（只展示一次）----
-      ARKADE_AGENT_TOKEN: ${ARKADE_AGENT_TOKEN:?请填写添加服务器时生成的专属接入密钥}
-      # ---- 必填参数：每台机器都不一样，仍需在 .env 里指定 ----
-      # 生产建议 wss://你的域名/agent/connect；内网测试可用 ws://Hub地址:端口/agent/connect。
-      # 跨主机不要写 127.0.0.1（会指向 Agent 自己）或 hub 服务名（仅 Hub 编排网络内可用）。
-      ARKADE_HUB_URL: ${ARKADE_AGENT_HUB_URL:?请填写可从此服务器访问的Hub WebSocket地址}
-      # ---- 普通参数：直接写值 ----
-      ARKADE_AGENT_NAME: arkade-node
+      ARKADE_AGENT_TOKEN: ${ARKADE_AGENT_TOKEN:?请在 .env 填写网页生成的 Agent 专属密钥}
+      ARKADE_HUB_URL: ${ARKADE_AGENT_HUB_URL:?请在 .env 填写此节点可达的 Hub WebSocket 地址}
+      ARKADE_AGENT_NAME: ${ARKADE_AGENT_NAME:-arkade-node}
+      # 内部数据路径固定，避免仅改变量而脱离持久卷。
       ARKADE_DATA_DIR: /opt/arkade/agent
-      # 留空表示自动发现（$DOCKER_HOST → docker.sock → podman.sock）
-      ARKADE_SOCKET: ""
-      ARKADE_RUNTIME_KIND: auto
-      ARKADE_HEARTBEAT_SEC: "15"
-      ARKADE_LOG_LEVEL: info
-      ARKADE_LOG_FORMAT: text
+      ARKADE_SOCKET: /var/run/docker.sock
+      ARKADE_RUNTIME_KIND: ${ARKADE_RUNTIME_KIND:-auto}
+      ARKADE_HEARTBEAT_SEC: ${ARKADE_HEARTBEAT_SEC:-15}
+      ARKADE_LOG_LEVEL: ${ARKADE_AGENT_LOG_LEVEL:-info}
+      ARKADE_LOG_FORMAT: ${ARKADE_AGENT_LOG_FORMAT:-text}
     volumes:
       - agent-data:/opt/arkade/agent
-      # CLI要求配置文件存在；其中不保存密钥，实际值来自上方environment。
-      - ./agent.config.toml:/opt/arkade/agent/agent.toml:ro
-      # Docker socket 赋予宿主机高权限，仅部署到可信的受管服务器。
-      # 套接字不在默认位置时，改这一行（例如 /run/podman/podman.sock）。
-      - /var/run/docker.sock:/var/run/docker.sock
+      # 等价于宿主机高权限；Hub 永远不挂载此套接字。
+      - ${ARKADE_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
+    networks:
+      - arkade
 
 volumes:
   agent-data:
-    name: arkade-agent-data
+    name: ${ARKADE_AGENT_VOLUME:-arkade-agent-data}
+
+networks:
+  arkade:
+    name: ${ARKADE_AGENT_NETWORK:-arkade-agent-net}

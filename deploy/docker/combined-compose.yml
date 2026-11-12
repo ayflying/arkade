@@ -1,0 +1,43 @@
+# Hub + Agent 同机部署：一个 Compose 项目，两个独立容器。
+# Hub 复用独立编排；Agent 使用单独的专属密钥，不能复用 Hub 准入令牌。
+name: arkade
+
+services:
+  hub:
+    extends:
+      file: hub-compose.yml
+      service: hub
+
+  agent:
+    image: ${ARKADE_AGENT_IMAGE:-ghcr.io/ayflying/arkade-agent:latest}
+    container_name: arkade-agent
+    restart: unless-stopped
+    depends_on:
+      hub:
+        condition: service_healthy
+    environment:
+      ARKADE_AGENT_TOKEN: ${ARKADE_LOCAL_AGENT_TOKEN:-}
+      # 同网络通过服务名连接，不能使用指向 Agent 自身的 127.0.0.1。
+      ARKADE_HUB_URL: ws://hub:8080/agent/connect
+      ARKADE_AGENT_NAME: ${ARKADE_AGENT_NAME:-arkade-node}
+      ARKADE_DATA_DIR: /opt/arkade/agent
+      ARKADE_SOCKET: /var/run/docker.sock
+      ARKADE_RUNTIME_KIND: ${ARKADE_RUNTIME_KIND:-auto}
+      ARKADE_HEARTBEAT_SEC: ${ARKADE_HEARTBEAT_SEC:-15}
+      ARKADE_LOG_LEVEL: ${ARKADE_AGENT_LOG_LEVEL:-info}
+      ARKADE_LOG_FORMAT: ${ARKADE_AGENT_LOG_FORMAT:-text}
+    volumes:
+      - agent-data:/opt/arkade/agent
+      - ${ARKADE_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
+    networks:
+      - arkade
+
+volumes:
+  hub-data:
+    name: ${ARKADE_HUB_VOLUME:-arkade-hub-data}
+  agent-data:
+    name: ${ARKADE_AGENT_VOLUME:-arkade-agent-data}
+
+networks:
+  arkade:
+    name: ${ARKADE_HUB_NETWORK:-arkade-hub-net}

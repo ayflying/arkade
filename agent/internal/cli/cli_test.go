@@ -42,15 +42,41 @@ func TestMainVersion(t *testing.T) {
 	}
 }
 
-// TestRunRequiresConfigFile run 子命令必须显式指定 -c：
-// 服务模式没有配置文件就等于没有 Hub 地址与令牌，猜默认值只会掩盖配置错误。
-func TestRunRequiresConfigFile(t *testing.T) {
+// 不传 -c 应进入配置校验，而不是用法错误；缺少凭据仍必须拒绝启动。
+func TestRunWithoutConfigRequiresToken(t *testing.T) {
+	t.Setenv("ARKADE_AGENT_TOKEN", "")
+	t.Setenv("ARKADE_HUB_URL", "ws://hub:8080/agent/connect")
 	var out, errOut bytes.Buffer
-	if code := Main([]string{"run"}, &out, &errOut); code != exitUsage {
-		t.Fatalf("退出码 = %d，期望 %d", code, exitUsage)
+	if code := Main([]string{"run"}, &out, &errOut); code != exitFail {
+		t.Fatalf("退出码 = %d，期望 %d", code, exitFail)
 	}
-	if !strings.Contains(errOut.String(), "-c") {
-		t.Fatalf("应提示需要 -c: %q", errOut.String())
+	if !strings.Contains(errOut.String(), "token 不能为空") {
+		t.Fatalf("应提示缺少 token: %q", errOut.String())
+	}
+}
+
+// 环境配置必须在 run 的实际入口生效；用非法 URL 在联网与文件副作用之前停止。
+func TestRunWithoutConfigAppliesEnv(t *testing.T) {
+	t.Setenv("ARKADE_AGENT_TOKEN", "env-token")
+	t.Setenv("ARKADE_HUB_URL", "http://env-hub:8080/agent/connect")
+	var out, errOut bytes.Buffer
+	if code := Main([]string{"run"}, &out, &errOut); code != exitFail {
+		t.Fatalf("退出码 = %d，期望 %d", code, exitFail)
+	}
+	if !strings.Contains(errOut.String(), "ws://") || strings.Contains(errOut.String(), "token 不能为空") {
+		t.Fatalf("应校验环境变量提供的 URL 与 token: %q", errOut.String())
+	}
+}
+
+func TestRunExplicitMissingConfigFails(t *testing.T) {
+	t.Setenv("ARKADE_AGENT_TOKEN", "env-token")
+	t.Setenv("ARKADE_HUB_URL", "ws://hub:8080/agent/connect")
+	var out, errOut bytes.Buffer
+	if code := Main([]string{"run", "-c", t.TempDir() + "/missing.toml"}, &out, &errOut); code != exitFail {
+		t.Fatalf("退出码 = %d，期望 %d", code, exitFail)
+	}
+	if !strings.Contains(errOut.String(), "配置文件不存在") {
+		t.Fatalf("显式 -c 缺失应报错，不能退回环境配置: %q", errOut.String())
 	}
 }
 

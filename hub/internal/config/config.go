@@ -68,19 +68,18 @@ func Default() Config {
 	}
 }
 
-// Load 从指定文件加载配置。文件不存在时返回明确错误，不做静默兜底——
-// 静默使用默认配置导致「改了配置却没生效」是排查成本极高的问题。
+// Load 按默认值 → 可选 TOML → 环境变量的顺序加载配置。
+// 显式指定的文件不存在或非法时返回错误，不静默退回默认配置。
 func Load(path string) (Config, error) {
 	cfg := Default()
-	if path == "" {
-		return cfg, nil
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return cfg, fmt.Errorf("读取配置文件失败: %w", err)
-	}
-	if err := decodeTOML(raw, &cfg); err != nil {
-		return cfg, fmt.Errorf("解析配置文件失败: %w", err)
+	if path != "" {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return cfg, fmt.Errorf("读取配置文件失败: %w", err)
+		}
+		if err := decodeTOML(raw, &cfg); err != nil {
+			return cfg, fmt.Errorf("解析配置文件失败: %w", err)
+		}
 	}
 	applyEnv(&cfg)
 	return cfg, nil

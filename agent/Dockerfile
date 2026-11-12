@@ -90,4 +90,5 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD pgrep -f arkade-agent >/dev/null && docker compose version >/dev/null 2>&1 || exit 1
 
 ENTRYPOINT ["/app/arkade-agent"]
-CMD ["run", "-c", "/opt/arkade/agent/agent.toml"]
+# 默认使用环境变量；需要 TOML 时可覆盖为 run -c <path>。
+CMD ["run"]

@@ -60,7 +60,7 @@ COPY --from=gopkg /out/arkade-hub /app/arkade-hub
 COPY --from=gopkg /out/arkade-dbtool /app/arkade-dbtool
 COPY --from=webbuild /src/web/dist /app/web/dist
 
-# 数据库与配置目录，挂卷持久化
+# 数据库目录，挂卷持久化；数据库与前端路径由编排环境变量指定
 VOLUME ["/data"]
 
 USER arkade
@@ -72,4 +72,5 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
     CMD wget -qO- http://127.0.0.1:8080/healthz >/dev/null || exit 1
 
 ENTRYPOINT ["/app/arkade-hub"]
-CMD ["-c", "/data/config.toml"]
+# 默认使用环境变量；需要 TOML 时可覆盖为 -c <path>。
+CMD []

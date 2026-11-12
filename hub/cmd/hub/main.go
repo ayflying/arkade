@@ -33,7 +33,7 @@ func main() {
 
 func run() error {
 	var (
-		configPath = flag.String("c", "config.toml", "配置文件路径")
+		configPath = flag.String("c", "", "配置文件路径（可选，省略时使用默认值与环境变量）")
 		logLevel   = flag.String("log-level", "info", "日志级别: debug/info/warn/error")
 		showVer    = flag.Bool("version", false, "打印版本号后退出")
 		initCfg    = flag.Bool("init-config", false, "生成配置模板到指定路径后退出")
@@ -48,7 +48,11 @@ func run() error {
 	logger := newLogger(resolveLogLevel(*logLevel))
 
 	if *initCfg {
-		return writeTemplate(*configPath, logger)
+		path := *configPath
+		if path == "" {
+			path = "config.toml"
+		}
+		return writeTemplate(path, logger)
 	}
 
 	cfg, err := config.Load(*configPath)

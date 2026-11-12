@@ -23,13 +23,8 @@ import (
 func cmdRun(args []string, stderr io.Writer) int {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	cfgPath := fs.String("c", "", "配置文件路径（必填）")
+	cfgPath := fs.String("c", "", "配置文件路径（可选，省略时使用默认值与环境变量）")
 	if err := fs.Parse(args); err != nil {
-		return exitUsage
-	}
-
-	if *cfgPath == "" {
-		fmt.Fprintln(stderr, "错误: run 子命令必须用 -c 指定配置文件，例如: arkade-agent run -c /etc/arkade/agent.toml")
 		return exitUsage
 	}
 

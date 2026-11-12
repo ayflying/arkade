@@ -41,7 +41,7 @@ const (
 const usage = `arkade-agent —— Arkade 被管服务器上的代理程序
 
 用法：
-  arkade-agent run   -c <config.toml>     以服务模式运行（主动连回 Hub）
+  arkade-agent run   [-c <config.toml>]   以服务模式运行（主动连回 Hub）
   arkade-agent ps    [-c <config.toml>]   本地列出容器（不连 Hub）
   arkade-agent start <id|name>            本地启动容器
   arkade-agent stop  <id|name> [--force]  本地停止容器
@@ -51,7 +51,8 @@ const usage = `arkade-agent —— Arkade 被管服务器上的代理程序
 
 说明：
   本地子命令完全离线可用（决策 D-05），直接操作本机运行时；
-  -c 省略时使用默认值（数据目录 /opt/arkade/agent，运行时自动探测）。
+  -c 省略时使用默认值与环境变量（数据目录 /opt/arkade/agent，运行时自动探测）；
+  run 模式可通过 ARKADE_HUB_URL 与 ARKADE_AGENT_TOKEN 配置 Hub 地址与令牌。
 `
 
 // Main 是 CLI 的唯一入口，返回进程退出码。

@@ -61,7 +61,17 @@ arkade/
 └── deploy/            # 配置模板与 systemd 单元
 ```
 
-## 快速开始（阶段一）
+## 容器部署
+
+提供三套编排，部署参数统一使用 `.env`，不再要求挂载 TOML。Hub 与 Agent 始终是独立容器，只有 Agent 挂载宿主 Docker socket。
+
+- [仅 Hub](deploy/docker/hub-compose.yml)：中央控制端。
+- [仅 Agent](deploy/docker/agent-compose.yml)：部署在受管服务器。
+- [Hub + Agent 合并编排](deploy/docker/combined-compose.yml)：一台机器同时部署控制端和本机执行端。
+
+配置样例、首次创建 Agent 专属密钥的步骤及升级边界见 [容器部署说明](deploy/docker/README.md)。使用支持无 TOML 启动的新镜像，生产固定镜像版本，升级保留原数据卷并先备份。框架重构记录见 [GoFrame 迁移说明](docs/17-goframe-migration.md)，手动升级见 [部署与回退](docs/18-manual-goframe-deployment.md)。
+
+## 源码快速开始
 
 前置：Go 1.24+、Node 20+、pnpm。
 
