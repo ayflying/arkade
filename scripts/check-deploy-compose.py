@@ -15,9 +15,14 @@ def render(filename, envfile, valid=True, services=()):
     # 屏蔽调用者真实凭据与部署覆盖，确保结果可重复且不会泄露密钥。
     env = {key: value for key, value in os.environ.items()
            if not key.startswith(("ARKADE_", "COMPOSE_"))}
-    command = ["docker", "compose", "--env-file", str(envfile), "-f",
-               str(DEPLOY / filename), "config", "--format", "json", *services]
-    result = subprocess.run(command, env=env, capture_output=True, text=True)
+    # 每次只把一份编排与 .env 放到独立临时目录，证明服务器无需仓库或其他文件。
+    with tempfile.TemporaryDirectory(prefix="arkade-standalone-") as directory:
+        target = Path(directory)
+        (target / "compose.yml").write_text((DEPLOY / filename).read_text(encoding="utf-8"), encoding="utf-8")
+        (target / ".env").write_text(Path(envfile).read_text(encoding="utf-8"), encoding="utf-8")
+        command = ["docker", "compose", "--env-file", ".env", "-f",
+                   "compose.yml", "config", "--format", "json", *services]
+        result = subprocess.run(command, cwd=target, env=env, capture_output=True, text=True)
     if not valid:
         assert result.returncode != 0, f"{filename}: 缺少必填配置却解析成功"
         return None

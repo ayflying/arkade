@@ -8,7 +8,7 @@
 | [agent-compose.yml](agent-compose.yml) | [agent.env.example](agent.env.example) | 只部署 Agent，连接已有 Hub |
 | [combined-compose.yml](combined-compose.yml) | [combined.env.example](combined.env.example) | Hub + Agent 同机部署，两个独立容器 |
 
-每种部署只复制对应样例为自己的 `.env`，不要拼接三份样例或覆盖已有凭据。
+服务器不需要克隆仓库或保留 `deploy/docker` 目录。每种部署只拿对应的一份 YAML 和一份凭据样例，将其分别保存为服务器任意部署目录中的 `compose.yml` 和 `.env`，即可独立部署。不要拼接三份样例或覆盖已有凭据。下文命令均在这个服务器部署目录中执行。
 
 三套编排各自包含完整服务配置，不使用 extends 引用其他编排。合并编排直接声明 Hub 和 Agent 的镜像，服务间使用 `ws://hub:8080/agent/connect`。只有 Agent 挂载 Docker socket，Hub 不接触宿主 Docker。三套是替代方案，不要同时启动同名容器。合并部署并不意味着把两个进程塞进一个容器。
 
@@ -30,20 +30,19 @@ CI 在推送到 `master` 后构建 `ghcr.io/ayflying/arkade-hub`、`ghcr.io/ayfl
 
 ## 1. Hub 独立部署
 
-以下在仓库根目录执行；首次创建配置，已有 `.env` 不要覆盖：
+将 hub-compose.yml 保存为服务器的 compose.yml，将 hub.env.example 保存为同目录 .env；已有凭据不要覆盖：
 
 ```sh
-cp deploy/docker/hub.env.example .env
 chmod 600 .env
 # 编辑 .env：填写 ARKADE_INITIAL_PASS 和 ARKADE_AGENT_TOKEN。
-# 编辑 hub-compose.yml：核对 image、ports 和 ARKADE_BASE_URL。
-docker compose --env-file .env -f deploy/docker/hub-compose.yml pull
-docker compose --env-file .env -f deploy/docker/hub-compose.yml up -d
-docker compose --env-file .env -f deploy/docker/hub-compose.yml ps
+# 编辑 compose.yml：核对 image、ports 和 ARKADE_BASE_URL。
+docker compose --env-file .env -f compose.yml pull
+docker compose --env-file .env -f compose.yml up -d
+docker compose --env-file .env -f compose.yml ps
 curl -fsS http://127.0.0.1:8080/healthz
 ```
 
-默认浏览器地址 `http://服务器地址:8080`，改端口直接修改 Hub 编排中的 `ports` 和 `ARKADE_BASE_URL`。管理员初始密码至少 8 位，Hub 准入令牌至少 16 位。已有数据库不会因初始密码变量改变而重置账号。
+默认浏览器地址 `http://服务器地址:8080`，改端口直接修改 compose.yml 中的 `ports` 和 `ARKADE_BASE_URL`。管理员初始密码至少 8 位，Hub 准入令牌至少 16 位。已有数据库不会因初始密码变量改变而重置账号。
 
 编排不提供源码构建。开发者需要本地构建时，在仓库根目录单独执行，再直接修改编排中的 `image`：
 
@@ -53,19 +52,15 @@ docker build -f hub/Dockerfile -t arkade-hub:local .
 
 ## 2. Agent 独立部署
 
-先在 Hub 网页点击“添加服务器”，保存该服务器专属接入密钥。将下列两个样例复制到独立目录（不要复用并覆盖 Hub 的 `.env`）：
+先在 Hub 网页点击“添加服务器”，保存该服务器专属接入密钥。将 agent-compose.yml 保存为服务器的 compose.yml，将 agent.env.example 保存为同目录 .env（不要覆盖 Hub 的凭据）：
 
 ```sh
-mkdir -p agent-node
-cp deploy/docker/agent-compose.yml agent-node/
-cp deploy/docker/agent.env.example agent-node/.env
-cd agent-node
 chmod 600 .env
 # 编辑 .env：填写 ARKADE_AGENT_TOKEN。
-# 编辑 agent-compose.yml：将 ARKADE_HUB_URL 占位地址改为可达的 Hub 地址，并核对 image。
-docker compose --env-file .env -f agent-compose.yml pull
-docker compose --env-file .env -f agent-compose.yml up -d
-docker compose --env-file .env -f agent-compose.yml ps
+# 编辑 compose.yml：将 ARKADE_HUB_URL 占位地址改为可达的 Hub 地址，并核对 image。
+docker compose --env-file .env -f compose.yml pull
+docker compose --env-file .env -f compose.yml up -d
+docker compose --env-file .env -f compose.yml ps
 ```
 
 跨机器使用 `wss://域名/agent/connect`，内网可用 `ws://Hub地址:8080/agent/connect`。独立 Agent 容器的 `127.0.0.1` 是它自己，不能用来连接宿主 Hub；服务名 `hub` 也只在合并编排网络内有效。
@@ -74,23 +69,22 @@ Agent 的 Docker socket 权限等价于宿主高权限，仅部署到可信服�
 
 ## 3. Hub + Agent 合并部署
 
-在仓库根目录使用同一份 `.env`，其中 **Hub 准入令牌 `ARKADE_AGENT_TOKEN` 和本机 Agent 专属密钥 `ARKADE_LOCAL_AGENT_TOKEN` 必须分开**。
+将 combined-compose.yml 保存为服务器的 compose.yml，将 combined.env.example 保存为同目录 .env；其中 **Hub 准入令牌 `ARKADE_AGENT_TOKEN` 和本机 Agent 专属密钥 `ARKADE_LOCAL_AGENT_TOKEN` 必须分开**。
 
 首次部署不能事先拿到网页生成的专属密钥，因此分两步启动：
 
 ```sh
-cp deploy/docker/combined.env.example .env
 chmod 600 .env
 # 在 .env 填好 Hub 密码、准入令牌，ARKADE_LOCAL_AGENT_TOKEN 暂留空。
-docker compose --env-file .env -f deploy/docker/combined-compose.yml pull
-docker compose --env-file .env -f deploy/docker/combined-compose.yml up -d hub
+docker compose --env-file .env -f compose.yml pull
+docker compose --env-file .env -f compose.yml up -d hub
 ```
 
 登录 Hub，添加本机服务器，把生成的专属密钥写入 `.env` 的 `ARKADE_LOCAL_AGENT_TOKEN`。再启动整个项目：
 
 ```sh
-docker compose --env-file .env -f deploy/docker/combined-compose.yml up -d
-docker compose --env-file .env -f deploy/docker/combined-compose.yml ps
+docker compose --env-file .env -f compose.yml up -d
+docker compose --env-file .env -f compose.yml ps
 ```
 
 Agent 等 Hub 健康后启动，通过 Compose 服务名连接，不需要填写宿主地址。专属密钥留空时 Agent 会拒绝启动，不会自动使用共享准入令牌降级注册。先起 Hub 的命令不启动 Agent。
@@ -98,7 +92,7 @@ Agent 等 Hub 健康后启动，通过 Compose 服务名连接，不需要填写
 只改 Agent 密钥或参数时：
 
 ```sh
-docker compose --env-file .env -f deploy/docker/combined-compose.yml up -d --no-deps --force-recreate agent
+docker compose --env-file .env -f compose.yml up -d --no-deps --force-recreate agent
 ```
 
 ## 升级、备份与停止
