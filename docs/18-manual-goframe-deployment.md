@@ -19,7 +19,7 @@ docker build -f hub/Dockerfile --build-arg VERSION="$VERSION" -t "arkade-hub:$VE
 
 ```sh
 # 仅首次创建；已有凭据文件不要覆盖。
-cp deploy/docker/.env.example .env
+cp deploy/docker/hub.env.example .env
 chmod 600 .env
 ```
 

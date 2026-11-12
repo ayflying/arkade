@@ -104,11 +104,27 @@ def main():
             assert not any("build" in service for service in config["services"].values())
             for name, service in config["services"].items():
                 assert service["image"] == f"ghcr.io/ayflying/arkade-{name}:latest"
-        for filename in (".env.example", "agent.env.example"):
+        examples = {
+            "hub.env.example": ("hub-compose.yml", {"ARKADE_INITIAL_PASS", "ARKADE_AGENT_TOKEN"}),
+            "agent.env.example": ("agent-compose.yml", {"ARKADE_AGENT_TOKEN"}),
+            "combined.env.example": ("combined-compose.yml", allowed),
+        }
+        assert {path.name for path in DEPLOY.glob("*.env.example")} == set(examples)
+        assert not (DEPLOY / ".env.example").exists(), "不得保留混用的通用样例"
+        for filename, (compose, expected) in examples.items():
             source = (DEPLOY / filename).read_text(encoding="utf-8")
             keys = {line.split("=", 1)[0] for line in source.splitlines()
                     if line.strip() and not line.startswith("#")}
-            assert keys <= allowed, f"{filename}: 样例只能包含凭据"
+            assert keys == expected, f"{filename}: 凭据必须与对应编排精确匹配"
+            # 按每份真实样例的键单独注入虚构值，确保不依赖其他编排的凭据。
+            save({key: values[key] for key in keys})
+            parsed = render(compose, envfile)
+            if "hub" in parsed["services"]:
+                check_hub(parsed)
+            if "agent" in parsed["services"]:
+                combined_mode = compose == "combined-compose.yml"
+                check_agent(parsed, values["ARKADE_LOCAL_AGENT_TOKEN" if combined_mode else "ARKADE_AGENT_TOKEN"],
+                            "ws://hub:8080/agent/connect" if combined_mode else "ws://请填写Hub地址:8080/agent/connect")
     print("三套编排解析、密钥隔离、数据卷、健康依赖、首次启动及仅凭据变量/无 build 检查通过（未启动容器）。")
 
 

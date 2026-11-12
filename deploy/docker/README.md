@@ -2,11 +2,13 @@
 
 ## 选择部署方式
 
-| 编排 | 场景 | 容器 |
+| 编排 | 独立凭据样例 | 场景 |
 | --- | --- | --- |
-| [hub-compose.yml](hub-compose.yml) | 只部署中央控制端 | Hub |
-| [agent-compose.yml](agent-compose.yml) | 被管服务器，连接已有 Hub | Agent |
-| [combined-compose.yml](combined-compose.yml) | 同机部署 Hub 并管理本机容器 | Hub + Agent，两个独立容器 |
+| [hub-compose.yml](hub-compose.yml) | [hub.env.example](hub.env.example) | 只部署 Hub |
+| [agent-compose.yml](agent-compose.yml) | [agent.env.example](agent.env.example) | 只部署 Agent，连接已有 Hub |
+| [combined-compose.yml](combined-compose.yml) | [combined.env.example](combined.env.example) | Hub + Agent 同机部署，两个独立容器 |
+
+每种部署只复制对应样例为自己的 `.env`，不要拼接三份样例或覆盖已有凭据。
 
 合并编排复用独立 Hub 的定义，服务间使用 `ws://hub:8080/agent/connect`。只有 Agent 挂载 Docker socket，Hub 不接触宿主 Docker。三套是替代方案，不要同时启动同名容器。合并部署并不意味着把两个进程塞进一个容器。
 
@@ -31,7 +33,7 @@ CI 在推送到 `master` 后构建 `ghcr.io/ayflying/arkade-hub`、`ghcr.io/ayfl
 以下在仓库根目录执行；首次创建配置，已有 `.env` 不要覆盖：
 
 ```sh
-cp deploy/docker/.env.example .env
+cp deploy/docker/hub.env.example .env
 chmod 600 .env
 # 编辑 .env：填写 ARKADE_INITIAL_PASS 和 ARKADE_AGENT_TOKEN。
 # 编辑 hub-compose.yml：核对 image、ports 和 ARKADE_BASE_URL。
@@ -77,7 +79,7 @@ Agent 的 Docker socket 权限等价于宿主高权限，仅部署到可信服�
 首次部署不能事先拿到网页生成的专属密钥，因此分两步启动：
 
 ```sh
-cp deploy/docker/.env.example .env
+cp deploy/docker/combined.env.example .env
 chmod 600 .env
 # 在 .env 填好 Hub 密码、准入令牌，ARKADE_LOCAL_AGENT_TOKEN 暂留空。
 docker compose --env-file .env -f deploy/docker/combined-compose.yml pull
