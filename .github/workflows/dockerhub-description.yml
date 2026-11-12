@@ -1,0 +1,37 @@
+name: Sync Docker Hub descriptions
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - deploy/docker/hub-dockerhub.md
+      - deploy/docker/agent-dockerhub.md
+      - .github/workflows/dockerhub-description.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dockerhub-description-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  descriptions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [hub, agent]
+    steps:
+      - uses: actions/checkout@v4
+      # 与镜像推送复用同一账号/令牌，只更新展示内容，不重新构建镜像。
+      - name: Update Docker Hub overview and GitHub source links
+        uses: peter-evans/dockerhub-description@v4
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME || secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: ${{ vars.DOCKERHUB_NAMESPACE || vars.DOCKERHUB_USERNAME || secrets.DOCKERHUB_USERNAME }}/arkade-${{ matrix.image }}
+          short-description: Arkade ${{ matrix.image }} - github.com/ayflying/arkade
+          readme-filepath: deploy/docker/${{ matrix.image }}-dockerhub.md
