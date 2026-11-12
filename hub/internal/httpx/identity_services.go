@@ -21,9 +21,6 @@ type identityServices struct {
 
 func newIdentityServices(ctx context.Context, db *store.DB, authSvc *auth.Service, cfg config.Config, log *slog.Logger) (*identityServices, error) {
 	keyPath := cfg.Auth.SettingsKeyFile
-	if keyPath == "" {
-		keyPath = cfg.Database.Path + ".settings.key"
-	}
 	if _, err := os.Lstat(keyPath); os.IsNotExist(err) {
 		providers, loadErr := db.ListOIDCProviders(ctx)
 		if loadErr != nil {
@@ -35,7 +32,7 @@ func newIdentityServices(ctx context.Context, db *store.DB, authSvc *auth.Servic
 			}
 		}
 	}
-	key, err := loadSettingsKey(cfg.Database.Path, cfg.Auth.SettingsKeyFile)
+	key, err := loadSettingsKey(keyPath)
 	if err != nil {
 		return nil, err
 	}

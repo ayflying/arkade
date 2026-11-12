@@ -106,7 +106,7 @@ func TestComposeOperationCreateAtomicRollback(t *testing.T) {
 	req.SaveContent = strptr("secret compose")
 	req.ConfigHash = "digest"
 	// Inject an operation insert failure after the stack insert. Both must roll back.
-	_, err := rawDBOf(t, db).ExecContext(ctx, `CREATE TRIGGER reject_operation BEFORE INSERT ON compose_operation_requests BEGIN SELECT RAISE(ABORT, 'injected failure'); END`)
+	_, err := rawDBOf(t, db).ExecContext(ctx, `CREATE FUNCTION reject_operation_fn() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected failure'; END $$; CREATE TRIGGER reject_operation BEFORE INSERT ON compose_operation_requests FOR EACH ROW EXECUTE FUNCTION reject_operation_fn()`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestComposeOperationCreateAtomicRollback(t *testing.T) {
 	if _, err = db.GetComposeStack(ctx, "a", "web"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("orphan stack: %v", err)
 	}
-	_, err = rawDBOf(t, db).ExecContext(ctx, `DROP TRIGGER reject_operation`)
+	_, err = rawDBOf(t, db).ExecContext(ctx, `DROP TRIGGER reject_operation ON compose_operation_requests; DROP FUNCTION reject_operation_fn()`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +189,7 @@ func TestComposeOperationRetentionAndCap(t *testing.T) {
 	req := operationRequest()
 	op, _ := prepareTestOperation(t, db, req)
 	old := time.Now().Add(-25 * time.Hour).Unix()
-	_, _ = rawDBOf(t, db).ExecContext(ctx, `UPDATE compose_operation_requests SET created_at = ?`, old)
+	_, _ = rawDBOf(t, db).ExecContext(ctx, `UPDATE compose_operation_requests SET created_at = $1`, old)
 	req.RequestID = "second"
 	prepareTestOperation(t, db, req)
 	var count int

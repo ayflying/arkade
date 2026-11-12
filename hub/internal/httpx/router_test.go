@@ -6,13 +6,13 @@ package httpx
 // 而不是断言内部函数返回值——接口契约才是前端真正依赖的东西。
 
 import (
+	"arkade/hub/internal/testdb"
 	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -62,8 +62,8 @@ type testEnv struct {
 	migrateMgr *stackmigrate.Manager
 }
 
-// newTestEnv 搭建一套真实依赖（真实 SQLite 临时文件），只有地址是虚拟的。
-// 不 mock store 的原因：迁移脚本、单写连接、WAL 这些恰恰是最容易出错的地方。
+// newTestEnv 搭建一套真实依赖（真实 PostgreSQL 独立数据库），只有地址是虚拟的。
+// 不 mock store 的原因：初始化 schema、连接与事务恰恰是最容易出错的地方。
 func newTestEnv(t *testing.T) *testEnv {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
@@ -77,10 +77,9 @@ func newTestEnv(t *testing.T) *testEnv {
 func newTestEnvWithLogger(t *testing.T, log *slog.Logger) *testEnv {
 	t.Helper()
 
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "test.db")
+	dsn := testdb.New(t)
 
-	db, err := store.Open(newTestContext(), dbPath)
+	db, err := store.Open(newTestContext(), dsn)
 	if err != nil {
 		t.Fatalf("打开测试数据库失败: %v", err)
 	}
@@ -133,13 +132,12 @@ func newTestEnvWithLogger(t *testing.T, log *slog.Logger) *testEnv {
 
 	// Agent 连接要**包一层 tracker**：WebSocket 是 hijack 的连接，
 	// http.Server.Shutdown **不会**等它结束。不显式 join 的话，
-	// 测试结束时 handler 可能仍在跑并持有 DB，Windows 上表现为
-	// TempDir 的 test.db 删不掉。
+	// 测试结束时 handler 可能仍在跑并持有 DB，导致测试数据库无法释放。
 	//
 	// 不用 registry 代替：握手完成前连接还没登记进 registry，
 	// 只关 registry 会漏掉那些连接。
 	tracker := &connectionTracker{}
-	identity := testIdentityServices(t, db, authSvc, dbPath, log)
+	identity := testIdentityServices(t, db, authSvc, log)
 	router := NewRouter(Deps{
 		Identity:     identity,
 		Log:          log,
@@ -176,7 +174,7 @@ func newTestEnvWithLogger(t *testing.T, log *slog.Logger) *testEnv {
 	// 先关掉 hijack 连接再走 server Shutdown 是合理的：这些连接
 	// 本来就不归 net/http 管，Shutdown 不会等它们。若反过来在
 	// Shutdown 前什么都不做，仍在跑的 handler 会持有 DB，
-	// Windows 上表现为 TempDir 的 test.db 删不掉。
+	// 导致测试数据库仍有活跃连接。
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()

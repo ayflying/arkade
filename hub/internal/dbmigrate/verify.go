@@ -1,126 +1,94 @@
 package dbmigrate
 
-// verify.go：结构漂移检测。
-//
-// ============================ 这个方法在做什么 ============================
-// 判断"库里的表结构，是否与迁移序列在该版本应有的结构一致"。
-//
-// 做法：在内存里（不落盘）用迁移脚本从零重建一份期望结构，
-// 然后与真实库逐表、逐索引、逐触发器比对。
-//
-// 为什么这样比：库可能经历过手工修表、版本升级、拷贝恢复。
-// 它的版本号说"我到 v10 了"，但实际结构可能是 v8 的样子，或者被人加过一列。
-// 只信版本号是不够的——**结构才是事实**。
-//
-// ============================ 排除哪些对象 ============================
-// 只比业务结构，排除：
-//   - schema_migrations（旧体系记录表）
-//   - arkade_migrate_versions（新体系游标表）
-//   - sqlite_ 前缀（引擎内部表与自动索引）
-//
-// 排除按 **tbl_name 归属**判断，不是按名字前缀——因为具名约束生成的索引
-// （例如 schema_migrations 的 version_unique）不带 sqlite_ 前缀。
-
 import (
 	"context"
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 
-	// 内存库也走同一驱动，保证 DDL 解释一致。
-	_ "github.com/gogf/gf/contrib/drivers/sqlite/v2"
-
-	gdbdriver "github.com/gogf/gf/v2/database/gdb"
+	"github.com/gogf/gf/v2/errors/gerror"
 )
 
-// verifySchemaAt 用迁移序列重建到 upto 版本的期望结构，与真实库比对。
-//
-// 返回 nil 表示一致；否则返回包含具体差异的错误。
-func verifySchemaAt(ctx context.Context, actual *sql.DB, upto int) error {
-	if upto <= 0 {
-		return nil
-	}
-
-	want, err := buildExpectedSchema(ctx, upto)
+// verifySchema 在同一 PG 的临时 schema 中重放已执行迁移，只读比较列、
+// 约束、索引和触发器的规范化元数据。事务始终回滚，不保留临时对象；
+// 不维护第二份手写 schema，也不解析或拆分 SQL。
+func verifySchema(ctx context.Context, conn *sql.Conn, files []migration, upto int) error {
+	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return gerror.Wrap(err, "begin schema verification")
 	}
-
-	got, err := readSchema(ctx, actual)
-	if err != nil {
-		return err
+	defer tx.Rollback()
+	schema := fmt.Sprintf("arkade_verify_%d", time.Now().UnixNano())
+	if _, err = tx.ExecContext(ctx, `CREATE SCHEMA "`+schema+`"`); err != nil {
+		return gerror.Wrap(err, "create rollback-only verification schema")
 	}
-
-	diffs := diffSchema(want, got, fmt.Sprintf("按迁移序列重建的 v%d 库", upto), "实际库")
-	if len(diffs) == 0 {
-		return nil
-	}
-
-	const maxShow = 10
-	var b strings.Builder
-	fmt.Fprintf(&b, "库结构与迁移序列 v%d 不一致（发现 %d 处差异），拒绝启动：\n", upto, len(diffs))
-	for i, d := range diffs {
-		if i >= maxShow {
-			fmt.Fprintf(&b, "  ...还有 %d 处未显示\n", len(diffs)-maxShow)
-			break
-		}
-		fmt.Fprintf(&b, "  - %s\n", d)
-	}
-	b.WriteString("这可能是因为该库被手工改过结构，或由不同版本的迁移建立。\n")
-	b.WriteString("程序不会自动修复：请人工确认差异后再决定如何处理。")
-	return fmt.Errorf("%s", b.String())
-}
-
-// verifyLegacySchema 是旧的入口名（保留给接管场景调用）。
-func verifyLegacySchema(ctx context.Context, actual *sql.DB, applied []legacyApplied) error {
-	if len(applied) == 0 {
-		return nil
-	}
-	return verifySchemaAt(ctx, actual, applied[len(applied)-1].version)
-}
-
-// buildExpectedSchema 在内存库中按迁移序列重建到 upto 版本，返回其 schema。
-//
-// ============================ 为什么整脚本一次执行 ============================
-// 驱动支持多语句 Exec（已实测）。整脚本一次喂进去有两个好处：
-//  1. 不需要自造 SQL 切分器（那种解析器必然漏掉字符串/触发器里的分号）；
-//  2. 重建路径与 golang-migrate 执行真实迁移的路径**完全一致**，
-//     避免"比对用的结构"与"迁移出来的结构"因为执行方式不同而产生假差异。
-func buildExpectedSchema(ctx context.Context, upto int) ([]schemaObject, error) {
-	// 内存库必须限制为单连接：每个 :memory: 连接都是**独立的空库**，
-	// 池里若有多条连接，建表和读 schema 可能落在不同库上，结果永远为空。
-	node := gdbdriver.ConfigNode{
-		Type:                 "sqlite",
-		Name:                 ":memory:",
-		Extra:                "journal_mode=MEMORY&foreign_keys=1",
-		MaxOpenConnCount:     1,
-		MaxIdleConnCount:     1,
-		TimeMaintainDisabled: true,
-	}
-	gdbInst, err := gdbdriver.New(node)
-	if err != nil {
-		return nil, fmt.Errorf("建立内存库失败: %w", err)
-	}
-	defer func() { _ = gdbInst.Close(context.Background()) }()
-
-	db, err := gdbInst.Master()
-	if err != nil {
-		return nil, fmt.Errorf("取得内存库连接失败: %w", err)
-	}
-
-	files, err := legacyUpFiles(upto)
-	if err != nil {
-		return nil, err
+	if _, err = tx.ExecContext(ctx, `SET LOCAL search_path TO "`+schema+`", pg_catalog`); err != nil {
+		return gerror.Wrap(err, "set verification schema")
 	}
 	for _, f := range files {
-		// 整脚本一次执行，与迁移路径一致。
-		if _, err := db.ExecContext(ctx, f.body); err != nil {
-			// 这里失败说明**代码里的迁移序列自身有问题**（不是库的问题）。
-			// 必须明确区分，否则会误导排查方向。
-			return nil, fmt.Errorf(
-				"迁移序列自检失败：v%d 在空库上执行报错: %w", f.version, err)
+		if f.version > upto {
+			break
+		}
+		if _, err = tx.ExecContext(ctx, f.body); err != nil {
+			return gerror.Wrapf(err, "rebuild expected schema at v%d", f.version)
 		}
 	}
-
-	return readSchema(ctx, db)
+	want, err := schemaSnapshot(ctx, tx, schema)
+	if err != nil {
+		return err
+	}
+	got, err := schemaSnapshot(ctx, tx, "public")
+	if err != nil {
+		return err
+	}
+	if strings.Join(want, "\n") != strings.Join(got, "\n") {
+		for i := 0; i < len(want) && i < len(got); i++ {
+			if want[i] != got[i] {
+				return gerror.Newf("database schema drift at v%d: expected %s; got %s", upto, want[i], got[i])
+			}
+		}
+		return gerror.Newf("database schema drift at v%d: expected %d objects; got %d", upto, len(want), len(got))
+	}
+	return nil
+}
+func schemaSnapshot(ctx context.Context, tx *sql.Tx, schema string) ([]string, error) {
+	rows, err := tx.QueryContext(ctx, `
+ SELECT item FROM (
+ SELECT 'table|'||c.relname||'|'||c.relkind::text AS item
+ FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+ WHERE n.nspname=$1 AND c.relname<>$2 AND c.relkind IN ('r','p','v','m','S','f')
+ UNION ALL
+ SELECT 'column|'||c.relname||'|'||a.attnum||'|'||a.attname||'|'||format_type(a.atttypid,a.atttypmod)||'|'||a.attnotnull||'|'||COALESCE(pg_get_expr(d.adbin,d.adrelid),'')
+ FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_attribute a ON a.attrelid=c.oid
+ LEFT JOIN pg_attrdef d ON d.adrelid=c.oid AND d.adnum=a.attnum
+ WHERE n.nspname=$1 AND c.relname<>$2 AND c.relkind IN ('r','p','v','m','f') AND a.attnum>0 AND NOT a.attisdropped
+ UNION ALL
+ SELECT 'constraint|'||c.relname||'|'||con.conname||'|'||pg_get_constraintdef(con.oid,true)
+ FROM pg_constraint con JOIN pg_class c ON c.oid=con.conrelid JOIN pg_namespace n ON n.oid=c.relnamespace
+ WHERE n.nspname=$1 AND c.relname<>$2
+ UNION ALL
+ SELECT 'index|'||t.relname||'|'||i.relname||'|'||pg_get_indexdef(i.oid)
+ FROM pg_index x JOIN pg_class i ON i.oid=x.indexrelid JOIN pg_class t ON t.oid=x.indrelid JOIN pg_namespace n ON n.oid=t.relnamespace
+ WHERE n.nspname=$1 AND t.relname<>$2
+ UNION ALL
+ SELECT 'trigger|'||c.relname||'|'||t.tgname||'|'||pg_get_triggerdef(t.oid)
+ FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace
+ WHERE n.nspname=$1 AND c.relname<>$2 AND NOT t.tgisinternal
+ ) s ORDER BY item`, schema, MigrationsTable)
+	if err != nil {
+		return nil, gerror.Wrap(err, "read PostgreSQL schema metadata")
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var item string
+		if err = rows.Scan(&item); err != nil {
+			return nil, gerror.Wrap(err, "scan schema metadata")
+		}
+		item = strings.ReplaceAll(item, `"`+schema+`".`, "")
+		item = strings.ReplaceAll(item, schema+".", "")
+		out = append(out, item)
+	}
+	return out, gerror.Wrap(rows.Err(), "read schema metadata")
 }

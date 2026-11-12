@@ -1,14 +1,11 @@
 package store
 
-// errors.go 定义仓储层的哨兵错误，并对驱动错误做统一归一化。
-//
-// 为什么要归一化：上层（httpx）需要把「重名」「记录不存在」「外键冲突」映射成
-// 409 / 404 / 400，如果让上层直接断言 modernc 驱动的错误码，等于把 SQLite 细节
-// 泄漏到业务层，未来换 PostgreSQL 时所有判断都要重写。这里只认一次。
+// PostgreSQL SQLSTATE errors are normalized once at the repository boundary.
 
 import (
 	"errors"
-	"strings"
+
+	"github.com/lib/pq"
 
 	"github.com/gogf/gf/v2/errors/gerror"
 )
@@ -28,27 +25,36 @@ var ErrDuplicate = ErrConflict
 
 // normalizeExecError 把驱动返回的错误转换成仓储层哨兵错误。
 //
-// 唯一约束用错误文本识别（"UNIQUE constraint failed"）：SQLite 这段文案
-// 多年未变，比断言驱动的错误码类型更稳定，也不绑定具体驱动版本。
+// 仅唯一约束 SQLSTATE 23505 映射为重复记录；外键、非空、CHECK 和事务故障
+// 可能代表程序错误或需要重试，保留原始错误链，不能伪装成「记录已存在」。
 func normalizeExecError(err error, dueTo string) error {
 	if err == nil {
 		return nil
 	}
-	if isUniqueViolation(err) {
+	switch sqlState(err) {
+	case "23505":
+		return gerror.Wrap(ErrConflict, dueTo)
+	}
+	if errors.Is(err, ErrConflict) {
 		return gerror.Wrap(ErrConflict, dueTo)
 	}
 	return gerror.Wrapf(err, "%s失败", dueTo)
 }
 
+// sqlState recognizes structured PostgreSQL errors through GoFrame wrapping.
+func sqlState(err error) string {
+	var pg *pq.Error
+	if errors.As(err, &pg) {
+		return string(pg.Code)
+	}
+	var state interface{ SQLState() string }
+	if errors.As(err, &state) {
+		return state.SQLState()
+	}
+	return ""
+}
+
 // isUniqueViolation 判断错误是否由唯一约束触发。
 func isUniqueViolation(err error) bool {
-	msg := err.Error()
-	if strings.Contains(msg, "UNIQUE constraint failed") {
-		return true
-	}
-	// SQLITE_CONSTRAINT_UNIQUE(2067) / SQLITE_CONSTRAINT_PRIMARYKEY(1555)
-	if strings.Contains(msg, "constraint failed (2067)") || strings.Contains(msg, "constraint failed (1555)") {
-		return true
-	}
-	return errors.Is(err, ErrConflict)
+	return sqlState(err) == "23505" || errors.Is(err, ErrConflict)
 }

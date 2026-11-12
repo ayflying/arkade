@@ -3,9 +3,9 @@ package oidclogin
 import (
 	"arkade/hub/internal/auth"
 	"arkade/hub/internal/store"
+	"arkade/hub/internal/testdb"
 	"arkade/hub/internal/user"
 	"net/url"
-	"path/filepath"
 	"testing"
 	"time"
 )
@@ -13,7 +13,7 @@ import (
 func integration(t *testing.T) (*Service, *fakeOIDC, *store.DB) {
 	t.Helper()
 	s, f, c := fixture(t)
-	db, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "oidc.db"))
+	db, err := store.Open(t.Context(), testdb.New(t))
 	if err != nil {
 		t.Fatal(err)
 	}

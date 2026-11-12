@@ -56,10 +56,10 @@ func NewAgentID() (string, error) {
 // 又因为 preprovisioned=1 而拒绝共享 token，变成谁也连不上的死记录。
 //
 // 同名检查也在事务内：先查后插在同一事务里，才能挡住并发创建。
-// 注意 SQLite 的写事务是串行的，因此这里的检查是可靠的；
-// 注意**不给 agents.name 加全局唯一约束**——历史部署里存在
-// 同名主机名的记录，加约束会让迁移直接失败。所以约束只加在
-// "本次操作不得产生新重名"这一层。
+// TxModel 的 PostgreSQL transaction advisory lock 保护先查后插；
+// 不给 agents.name 加全局唯一约束：自动发现的主机名可能重复，
+// 而手动预登记要求归一化名称不重复。约束因此只加在
+// “本次预登记不得产生新重名”这一业务入口。
 func (d *DB) CreatePreprovisionedAgent(ctx context.Context, rec AgentRecord, tokenHash string, at time.Time) error {
 	labelsRaw, err := json.Marshal(rec.Labels)
 	if err != nil {
@@ -151,7 +151,7 @@ func (d *DB) ResetAgentTokenHash(ctx context.Context, agentID, tokenHash string,
 // 应该在 UI 层就被拦住，而不是等到两条几乎一样的记录并排出现才发现。
 //
 // ============================ 为什么这里仍需全表比对 ============================
-// 归一化（去空白 + 折叠空白 + 小写）是在 Go 里做的，SQLite 的
+// 归一化（去空白 + 折叠空白 + 小写）是在 Go 里做的，SQL 的
 // LOWER/TRIM 不能完全复现"折叠连续空白"，所以不能把条件下推到 SQL。
 // 记录数是"服务器数量"级别（几十到几百），全表读一遍可接受。
 func agentNameExistsTx(ctx context.Context, tx gdb.TX, name, excludeID string) (bool, error) {

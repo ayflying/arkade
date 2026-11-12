@@ -125,7 +125,7 @@ func TestCreatePreprovisionedAgentDuplicateName(t *testing.T) {
 // TestCreatePreprovisionedAgentConcurrentSameName 验证并发建同名只会成功一次。
 //
 // "先查再插"若无事务保护，两个并发请求会同时看到"不存在"而各插一条，
-// 于是界面上出现两个完全一样的名字。SQLite 的写事务是串行的，
+// 于是界面上出现两个完全一样的名字。TxModel 持有 PostgreSQL 事务锁，
 // 配合事务内的检查，这条必须是"一成一败"。
 func TestCreatePreprovisionedAgentConcurrentSameName(t *testing.T) {
 	db := newTestDB(t)
@@ -188,7 +188,7 @@ func TestResetAgentTokenHashReplaces(t *testing.T) {
 	// 否则重置后新旧两把都能用，撤销就是假的。
 	var n int
 	if err := rawDBOf(t, db).QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM agent_tokens WHERE agent_id = ?`, rec.ID).Scan(&n); err != nil {
+		`SELECT COUNT(*) FROM agent_tokens WHERE agent_id = $1`, rec.ID).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	if n != 1 {
@@ -254,7 +254,7 @@ func TestHasAgentToken(t *testing.T) {
 	if _, err := rawDBOf(t, db).ExecContext(ctx,
 		`INSERT INTO agents (id, name, status, version, runtime, runtime_version, last_seen,
 		 labels, created_at, updated_at, display_name, note, disabled)
-		 VALUES (?, ?, 'offline', '', '', '', 0, '{}', ?, ?, ?, '', 0)`,
+		 VALUES ($1, $2, 'offline', '', '', '', 0, '{}', $3, $4, $5, '', 0)`,
 		plain.ID, plain.Name, now, now, plain.DisplayName); err != nil {
 		t.Fatal(err)
 	}
@@ -301,7 +301,7 @@ func TestPlaintextTokenNotStoredAnywhere(t *testing.T) {
 
 	var tables []string
 	rows, err := rawDBOf(t, db).QueryContext(ctx,
-		`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`)
+		`SELECT tablename FROM pg_tables WHERE schemaname='public'`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -385,7 +385,7 @@ func TestMigrationVersionCurrent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v != 11 {
-		t.Errorf("迁移版本应为 11，实际 %d", v)
+	if v != 1 {
+		t.Errorf("迁移版本应为 1，实际 %d", v)
 	}
 }

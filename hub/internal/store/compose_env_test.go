@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"errors"
-	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
@@ -73,6 +72,25 @@ func TestUpdateComposeProjectOptimisticEnv(t *testing.T) {
 	}
 }
 
+// TestComposeEnvDefault verifies fresh v1 defaults without historical migration fixtures.
+func TestComposeEnvDefault(t *testing.T) {
+	db := newTestDB(t)
+	_, err := rawDBOf(t, db).Exec(`INSERT INTO compose_stacks(id,agent_id,name,content,config_hash,created_at,updated_at) VALUES ('default','a','web','compose','hash',1,1)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var env string
+	if err = rawDBOf(t, db).QueryRow(`SELECT env_content FROM compose_stacks WHERE id='default'`).Scan(&env); err != nil {
+		t.Fatal(err)
+	}
+	if env != "" {
+		t.Fatalf("default env=%q", env)
+	}
+	if _, err = rawDBOf(t, db).Exec(`UPDATE compose_stacks SET env_content=NULL WHERE id='default'`); sqlState(err) != "23502" {
+		t.Fatalf("env must be NOT NULL: %v", err)
+	}
+}
+
 func TestUpdateComposeStackPreservesEnv(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
@@ -92,58 +110,5 @@ func TestUpdateComposeStackPreservesEnv(t *testing.T) {
 	got, err := db.GetComposeStack(ctx, "a1", "web")
 	if err != nil || !reflect.DeepEqual(got, updated) {
 		t.Fatalf("legacy stale update changed row: %+v err=%v", got, err)
-	}
-}
-
-func TestComposeEnvV7Migration(t *testing.T) {
-	ctx := context.Background()
-	// 本测试验证 legacy 迁移器（migrate/applyMigration，仅测试保留）产出的行内容。
-	// 必须从一个**未迁移**的库开始，所以不能用 Open（它会先跑完 dbmigrate）。
-	// 这里用裸连接自建库，再包一个只带 gdb 引用的实例供 legacy 迁移器使用。
-	path := filepath.Join(t.TempDir(), "legacy_env.db")
-	inst, err := openGDB(path)
-	if err != nil {
-		t.Fatalf("打开库失败: %v", err)
-	}
-	db := &DB{gdb: inst}
-	defer inst.Close(context.Background())
-	raw := rawDBOf(t, db)
-	if _, err := raw.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at INTEGER NOT NULL)`); err != nil {
-		t.Fatal(err)
-	}
-	for _, m := range migrations {
-		if m.version < 7 {
-			if err := db.applyMigration(ctx, m); err != nil {
-				t.Fatal(err)
-			}
-		}
-	}
-	// A pre-v7 row must migrate with an empty non-null environment.
-	if _, err := raw.ExecContext(ctx, `INSERT INTO compose_stacks (id, agent_id, name, content, config_hash, created_at, updated_at) VALUES ('old', 'a1', 'web', 'old-compose', 'old-hash', 1, 1)`); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.migrate(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.migrate(ctx); err != nil {
-		t.Fatalf("migration is not idempotent: %v", err)
-	}
-	// 这里直接用原生 SQL 读，不走 GetComposeStack：本测试验证的是 legacy
-	// 迁移器产出的行内容，而本文件的 DB 是手工构造的（只有 db，没有 gdb），
-	// 无法走 ORM 路径。用 SQL 读反而更贴近"迁移后磁盘上到底是什么"。
-	var (
-		content, env, hash string
-		version            int64
-	)
-	if err := raw.QueryRowContext(ctx,
-		`SELECT content, env_content, config_hash, version FROM compose_stacks WHERE agent_id = ? AND name = ?`,
-		"a1", "web").Scan(&content, &env, &hash, &version); err != nil {
-		t.Fatalf("读取迁移后的行失败: %v", err)
-	}
-	if env != "" || content != "old-compose" || version != 1 {
-		t.Fatalf("migrated row: content=%q env=%q hash=%q version=%d", content, env, hash, version)
-	}
-	if _, err := raw.ExecContext(ctx, `UPDATE compose_stacks SET env_content = NULL WHERE id = 'old'`); err == nil {
-		t.Fatal("env_content must be NOT NULL")
 	}
 }

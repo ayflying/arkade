@@ -14,7 +14,7 @@ package store
 // 也就是说：**调用 Ctx() 一定会先碰全局默认 DB**，handlers 只是后置修饰。
 // 想让 DAO 走一个独立的 gdb 实例，靠 Handler 是做不到的。
 //
-// 我们的需求恰恰是"多库隔离"——测试要能同时开多个独立的 SQLite 库，
+// 我们的需求恰恰是"多库隔离"——测试要能同时开多个独立的 PostgreSQL 库，
 // 各自的 store.DB 互不干扰。若用全局默认 DB，两个测试库会打架。
 //
 // ============================ 采用的方案 ============================
@@ -34,9 +34,9 @@ package store
 //      两个不同实例之间互不干扰。
 
 import (
+	"arkade/hub/internal/testdb"
 	"context"
 	"fmt"
-	"path/filepath"
 	"testing"
 
 	"arkade/hub/internal/dao"
@@ -70,23 +70,22 @@ func TestDaoMetadataIsSideEffectFree(t *testing.T) {
 // TestSameDaoTableBindsToIndependentInstances 同一 DAO 可绑定到不同实例。
 //
 // ============================ 这条证明多库隔离 ============================
-// 两个独立的仓库文件、两个独立的 store.DB，用**同一个** DAO 的表名元数据，
+// 两个独立的 PostgreSQL 数据库、两个独立的 store.DB，用**同一个** DAO 的表名元数据，
 // 分别写入不同数据，互相不可见。
 //
-// 这正是测试需要的能力：每个测试用 t.TempDir() 里的独立库，
+// 这正是测试需要的能力：每个测试用 testdb.New(t) 创建的独立库，
 // 不应该因为共享全局默认 DB 而互相污染。
 func TestSameDaoTableBindsToIndependentInstances(t *testing.T) {
 	ctx := context.Background()
-	dir := t.TempDir()
 
 	// 两个完全独立的库。
-	dbA, err := Open(ctx, filepath.Join(dir, "a.db"))
+	dbA, err := Open(ctx, testdb.New(t))
 	if err != nil {
 		t.Fatalf("打开库 A 失败: %v", err)
 	}
 	defer func() { _ = dbA.Close() }()
 
-	dbB, err := Open(ctx, filepath.Join(dir, "b.db"))
+	dbB, err := Open(ctx, testdb.New(t))
 	if err != nil {
 		t.Fatalf("打开库 B 失败: %v", err)
 	}
@@ -100,7 +99,7 @@ func TestSameDaoTableBindsToIndependentInstances(t *testing.T) {
 		t.Helper()
 		_, err := db.gdb.Exec(ctx, fmt.Sprintf(
 			`INSERT INTO %s(%s, %s, %s, %s, %s, %s, %s)
-			 VALUES(?,?,?,?,?,unixepoch(),unixepoch())`,
+			 VALUES(?,?,?,?,?,EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)::BIGINT,EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)::BIGINT)`,
 			table, cols.Id, cols.Username, cols.DisplayName, cols.PasswordHash,
 			cols.Role, cols.CreatedAt, cols.UpdatedAt),
 			id, name, name, "h", "admin")
@@ -145,7 +144,7 @@ func TestSameDaoTableBindsToIndependentInstances(t *testing.T) {
 // 若 Model 走的是另一个 gdb 实例，事务就成了摆设。
 func TestDaoTransactionUsesSameInstance(t *testing.T) {
 	ctx := context.Background()
-	db, err := Open(ctx, filepath.Join(t.TempDir(), "tx.db"))
+	db, err := Open(ctx, testdb.New(t))
 	if err != nil {
 		t.Fatalf("打开库失败: %v", err)
 	}
@@ -159,7 +158,7 @@ func TestDaoTransactionUsesSameInstance(t *testing.T) {
 	err = db.gdb.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		_, ierr := tx.Exec(fmt.Sprintf(
 			`INSERT INTO %s(%s, %s, %s, %s, %s, %s, %s)
-			 VALUES(?,?,?,?,?,unixepoch(),unixepoch())`,
+			 VALUES(?,?,?,?,?,EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)::BIGINT,EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)::BIGINT)`,
 			table, cols.Id, cols.Username, cols.DisplayName, cols.PasswordHash,
 			cols.Role, cols.CreatedAt, cols.UpdatedAt),
 			"u1", "alice", "Alice", "h", "admin")

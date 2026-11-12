@@ -1,12 +1,12 @@
 package settings
 
 import (
+	"arkade/hub/internal/testdb"
 	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -35,7 +35,7 @@ func body(text string) context.Context {
 }
 func TestSettingsControllerSecretAndPublicBoundary(t *testing.T) {
 	ctx := context.Background()
-	db, err := store.Open(ctx, filepath.Join(t.TempDir(), "settings.db"))
+	db, err := store.Open(ctx, testdb.New(t))
 	if err != nil {
 		t.Fatal(err)
 	}

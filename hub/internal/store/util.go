@@ -14,7 +14,7 @@ func unixToTime(sec int64) time.Time {
 // timeToUnix 把时间转成数据库存储用的 Unix 秒。
 func timeToUnix(t time.Time) int64 { return t.UTC().Unix() }
 
-// boolToInt 把布尔值转成 SQLite 的 0/1，SQLite 没有原生布尔类型。
+// boolToInt preserves the business schema integer flag representation (0/1).
 func boolToInt(b bool) int {
 	if b {
 		return 1

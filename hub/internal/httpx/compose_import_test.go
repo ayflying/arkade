@@ -1,6 +1,6 @@
 package httpx
 
-// Import tests use a real HTTP server, SQLite and WebSocket Agent. In particular,
+// Import tests use a real HTTP server, PostgreSQL and WebSocket Agent. In particular,
 // observing every RPC guards against accidentally starting/stopping production services.
 import (
 	"context"
@@ -41,10 +41,10 @@ func startImportAgent(t *testing.T, e *testEnv, reply func(envelope.Envelope, in
 	tracker := &connectionTracker{}
 	router := NewRouter(Deps{
 		Log: log, DB: e.db, Auth: e.auth, Registry: reg,
-		Ops:           agentlink.NewOps(reg),
-		AgentConn:     tracker.wrap(http.HandlerFunc(server.HandleConnect)),
-		HubVersion:    "test",
-		StackMigrate:  e.migrateMgr,
+		Ops:          agentlink.NewOps(reg),
+		AgentConn:    tracker.wrap(http.HandlerFunc(server.HandleConnect)),
+		HubVersion:   "test",
+		StackMigrate: e.migrateMgr,
 	})
 	srv := newTestServer(t, router)
 	client, ack := dialAsAgent(t, srv, composeTestAgentToken)

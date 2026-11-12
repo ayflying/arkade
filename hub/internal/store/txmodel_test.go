@@ -1,28 +1,15 @@
 package store
 
-// txmodel_test.go：验证 TxModel 在单写连接下不死的语义。
-//
-// ============================ 为什么要专门测 ============================
-// 连接池 MaxOpen=1（SQLite 单写者），所以「在事务外再取一条连接」
-// 会直接死锁——不是报错，是挂住。这类问题在测试里表现为超时，
-// 在生产里表现为服务卡死，都很难定位。
-//
-// 本章钉住两点：
-//   1. 事务内的 gdb.Model 必须走事务自己的连接（否则死锁）；
-//   2. 回滚后数据不残留（证明真的在事务里）。
-//
-// 如果将来有人把 d.gdb.Model(...) 误写进 TxModel 的回调里（而不是用 tx.Model），
-// 第一个测试会以超时方式失败——这正是想要的信号。
+// Transaction visibility, rollback, sentinel and panic regression tests.
 
 import (
+	"arkade/hub/internal/testdb"
 	"context"
 	"errors"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/gogf/gf/v2/database/gdb"
-	"github.com/gogf/gf/v2/frame/g"
 
 	"arkade/hub/internal/dao"
 	"arkade/hub/internal/model/do"
@@ -31,24 +18,17 @@ import (
 // TestTxModelUsesTransactionConnection 事务内用 tx.Model 不应死锁。
 func TestTxModelUsesTransactionConnection(t *testing.T) {
 	ctx := context.Background()
-	db, err := Open(ctx, filepath.Join(t.TempDir(), "txm.db"))
+	db, err := Open(ctx, testdb.New(t))
 	if err != nil {
 		t.Fatalf("打开库失败: %v", err)
 	}
 	defer func() { _ = db.Close() }()
 
-	cols := dao.Groups.Columns()
-
 	// 用一个显式超时兜住：若真的死锁，测试会超时失败而不是永远挂着。
 	done := make(chan error, 1)
 	go func() {
 		done <- db.TxModel(ctx, func(ctx context.Context, tx gdb.TX) error {
-			_, ierr := tx.Model(dao.Groups.Table()).Ctx(ctx).Insert(g.Map{
-				cols.Id:          "g1",
-				cols.Name:        "组一",
-				cols.Description: "",
-				cols.CreatedAt:   1,
-			})
+			_, ierr := tx.Model(dao.Groups.Table()).Ctx(ctx).Data(do.Groups{Id: "g1", Name: "组一", CreatedAt: 1}).Insert()
 			if ierr != nil {
 				return ierr
 			}
@@ -86,21 +66,16 @@ func TestTxModelUsesTransactionConnection(t *testing.T) {
 // TestTxModelRollsBackOnError 回调返回错误必须回滚。
 func TestTxModelRollsBackOnError(t *testing.T) {
 	ctx := context.Background()
-	db, err := Open(ctx, filepath.Join(t.TempDir(), "txm2.db"))
+	db, err := Open(ctx, testdb.New(t))
 	if err != nil {
 		t.Fatalf("打开库失败: %v", err)
 	}
 	defer func() { _ = db.Close() }()
 
-	cols := dao.Groups.Columns()
 	wantErr := errors.New("故意失败")
 
 	err = db.TxModel(ctx, func(ctx context.Context, tx gdb.TX) error {
-		_, ierr := tx.Model(dao.Groups.Table()).Ctx(ctx).Insert(g.Map{
-			cols.Id:        "g1",
-			cols.Name:      "组一",
-			cols.CreatedAt: 1,
-		})
+		_, ierr := tx.Model(dao.Groups.Table()).Ctx(ctx).Data(do.Groups{Id: "g1", Name: "组一", CreatedAt: 1}).Insert()
 		if ierr != nil {
 			return ierr
 		}
@@ -127,7 +102,7 @@ func TestTxModelRollsBackOnError(t *testing.T) {
 // 但若用不带的 %v 就断了），404 会变成 500。
 func TestTxModelPreservesSentinelErrors(t *testing.T) {
 	ctx := context.Background()
-	db, err := Open(ctx, filepath.Join(t.TempDir(), "txm3.db"))
+	db, err := Open(ctx, testdb.New(t))
 	if err != nil {
 		t.Fatalf("打开库失败: %v", err)
 	}
@@ -151,7 +126,7 @@ func TestTxModelPreservesSentinelErrors(t *testing.T) {
 // 本测试确认在当前 gf 版本上这个保证成立。
 func TestTxModelRollsBackOnPanic(t *testing.T) {
 	ctx := context.Background()
-	db, err := Open(ctx, filepath.Join(t.TempDir(), "txmp.db"))
+	db, err := Open(ctx, testdb.New(t))
 	if err != nil {
 		t.Fatalf("打开库失败: %v", err)
 	}

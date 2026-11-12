@@ -143,8 +143,9 @@ base_url = "http://127.0.0.1:8080"
 timeout = "30s"
 
 [database]
-# 首期使用 SQLite 单实例，文件所在目录不存在会自动创建
-path = "./data/hub.db"
+# PostgreSQL DSN（也可设置 ARKADE_DB_DSN）；不内置数据库密码。
+# 容器编排可用 ARKADE_DB_HOST/PORT/USER/NAME/PASSWORD/SSLMODE 安全组合连接 URL。
+dsn = "host=localhost port=5432 user=arkade dbname=arkade sslmode=disable"
 
 [auth]
 # 登录会话有效期
@@ -154,9 +155,9 @@ agent_token = "请替换为至少16位的随机字符串"
 # 首次启动时创建的管理员账号；密码至少 8 位，也可用环境变量 ARKADE_INITIAL_PASS
 initial_user = "admin"
 initial_pass = "请替换为至少8位的管理员密码"
-# OIDC 客户端密钥的加密主密钥文件，空则自动生成在数据库旁的 .settings.key。
+# OIDC 客户端密钥的加密主密钥文件，独立于 PostgreSQL 数据库连接。
 # 备份/迁移必须同时保留数据库和密钥文件；不要提交此文件到版本库。
-settings_key_file = ""
+settings_key_file = "./data/settings.key"
 # 仅本地假 OIDC 测试可开启；生产保持 false，OIDC Issuer 必须 HTTPS。
 allow_insecure_oidc_loopback = false
 

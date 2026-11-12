@@ -150,7 +150,7 @@ func (d *DB) UpdateGroup(ctx context.Context, id string, upd GroupUpdate) error 
 // DeleteGroup 删除用户组。
 //
 // 与外键级联的关系同 DeleteUser：显式清理 user_groups 与 group_agents，
-// 不依赖连接级 PRAGMA 一定生效。删除组不会删除其成员用户——
+// PostgreSQL 同时强制外键。删除组不会删除其成员用户——
 // 组只是授权载体，用户是独立实体。
 func (d *DB) DeleteGroup(ctx context.Context, id string) error {
 	return d.TxModel(ctx, func(ctx context.Context, tx gdb.TX) error {
@@ -179,29 +179,31 @@ func (d *DB) DeleteGroup(ctx context.Context, id string) error {
 // 为什么幂等：整体设置成员的接口会反复下发同一份成员列表，
 // 把「已存在」当错误会让前端的重试逻辑变得极其啰嗦。
 func (d *DB) AddUserToGroup(ctx context.Context, userID, groupID string) error {
-	c := dao.UserGroups.Columns()
+	return d.TxModel(ctx, func(ctx context.Context, tx gdb.TX) error {
+		c := dao.UserGroups.Columns()
 
-	// 先查再插，而不是 INSERT OR IGNORE：
-	// 后者会把「主键冲突」和「外键失败」一起吞掉，
-	// 给不存在的用户/组加成员时会静默成功，留下一堆无处可查的意图。
-	exist, err := d.gdb.Model(dao.UserGroups.Table()).Ctx(ctx).
-		Where(c.UserId, userID).
-		Where(c.GroupId, groupID).
-		Count()
-	if err != nil {
-		return gerror.Wrap(err, "查询组成员关系失败")
-	}
-	if exist > 0 {
+		// 先查再插，而不是 INSERT OR IGNORE：
+		// 后者会把「主键冲突」和「外键失败」一起吞掉，
+		// 给不存在的用户/组加成员时会静默成功，留下一堆无处可查的意图。
+		exist, err := tx.Model(dao.UserGroups.Table()).Ctx(ctx).
+			Where(c.UserId, userID).
+			Where(c.GroupId, groupID).
+			Count()
+		if err != nil {
+			return gerror.Wrap(err, "查询组成员关系失败")
+		}
+		if exist > 0 {
+			return nil
+		}
+
+		if _, err := tx.Model(dao.UserGroups.Table()).Ctx(ctx).Data(do.UserGroups{
+			UserId:  userID,
+			GroupId: groupID,
+		}).Insert(); err != nil {
+			return normalizeExecError(err, "加入用户组")
+		}
 		return nil
-	}
-
-	if _, err := d.gdb.Model(dao.UserGroups.Table()).Ctx(ctx).Data(do.UserGroups{
-		UserId:  userID,
-		GroupId: groupID,
-	}).Insert(); err != nil {
-		return normalizeExecError(err, "加入用户组")
-	}
-	return nil
+	})
 }
 
 // RemoveUserFromGroup 把用户移出组。用户本就不在组里时视为成功。

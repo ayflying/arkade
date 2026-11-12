@@ -15,7 +15,7 @@ type OidcProviders struct {
 	Enabled            int    `json:"enabled"            orm:"enabled"              ` //
 	AutoRegister       int    `json:"autoRegister"       orm:"auto_register"        ` //
 	DefaultGroupId     string `json:"defaultGroupId"     orm:"default_group_id"     ` //
-	Version            int    `json:"version"            orm:"version"              ` //
-	CreatedAt          int    `json:"createdAt"          orm:"created_at"           ` //
-	UpdatedAt          int    `json:"updatedAt"          orm:"updated_at"           ` //
+	Version            int64  `json:"version"            orm:"version"              ` //
+	CreatedAt          int64  `json:"createdAt"          orm:"created_at"           ` //
+	UpdatedAt          int64  `json:"updatedAt"          orm:"updated_at"           ` //
 }

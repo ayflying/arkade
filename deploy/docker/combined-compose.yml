@@ -1,4 +1,4 @@
-# Hub + Agent 同机部署：一个 Compose 项目，两个独立容器。
+# Hub + Agent + PostgreSQL 同机部署：一个 Compose 项目，三个独立容器。
 # 本文件包含完整配置，无需其他编排；Agent 专属密钥不能复用 Hub 准入令牌。
 name: arkade
 
@@ -7,11 +7,20 @@ services:
     image: ghcr.io/ayflying/arkade-hub:latest
     container_name: arkade-hub
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "0.0.0.0:8080:8080"
     environment:
       ARKADE_LISTEN: 0.0.0.0:8080
-      ARKADE_DB_PATH: /data/hub.db
+      ARKADE_DB_HOST: postgres
+      ARKADE_DB_PORT: "5432"
+      ARKADE_DB_USER: arkade
+      ARKADE_DB_NAME: arkade
+      ARKADE_DB_PASSWORD: ${ARKADE_DB_PASSWORD:?请在 .env 设置 PostgreSQL 密码}
+      ARKADE_DB_SSLMODE: disable
+      ARKADE_SETTINGS_KEY_FILE: /data/settings.key
       ARKADE_WEB_DIST: /app/web/dist
       ARKADE_INITIAL_USER: admin
       ARKADE_INITIAL_PASS: ${ARKADE_INITIAL_PASS:?请在 .env 设置管理员初始密码}
@@ -55,9 +64,29 @@ services:
     networks:
       - arkade
 
+  postgres:
+    image: postgres:17-alpine
+    container_name: arkade-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: arkade
+      POSTGRES_DB: arkade
+      POSTGRES_PASSWORD: ${ARKADE_DB_PASSWORD:?请在 .env 设置 PostgreSQL 密码}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U arkade -d arkade"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - arkade
+
 volumes:
   hub-data:
-    name: arkade-hub-data
+    name: arkade-hub-files-pg
+  postgres-data:
+    name: arkade-postgres-data
   agent-data:
     name: arkade-agent-data
 

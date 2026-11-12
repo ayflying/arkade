@@ -1,18 +1,10 @@
 package store
 
-// pool_test.go：验证连接池在使用后不会遗留连接。
-//
-// ============================ 为什么需要这个测试 ============================
-// 连接池 MaxOpen=1。如果某个 API 走了*另一条*连接（而不是池里的唯一那条），
-// 或者取出的连接没有归还，Windows 上会表现为
-// "测试结束后 TempDir 里的 db 文件删不掉"——因为句柄还开着。
-//
-// 这类泄漏在 Linux 上症状轻微（可以删除正在使用的文件），
-// 所以只在 Linux 跑测试会漏掉。本章直接检查池状态。
+// PostgreSQL pool leak and close regression tests.
 
 import (
+	"arkade/hub/internal/testdb"
 	"context"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -26,7 +18,7 @@ import (
 // 读操作结束后 InUse 必须回到 0；否则说明有 rows 没关、或事务没结束。
 func TestPoolHasNoLeakedConnections(t *testing.T) {
 	ctx := context.Background()
-	db, err := Open(ctx, filepath.Join(t.TempDir(), "pool.db"))
+	db, err := Open(ctx, testdb.New(t))
 	if err != nil {
 		t.Fatalf("打开库失败: %v", err)
 	}
@@ -65,18 +57,10 @@ func TestPoolHasNoLeakedConnections(t *testing.T) {
 	}
 }
 
-// TestCloseReleasesFileHandle 关闭后库文件应可删除。
-//
-// ============================ 这条直接对应线上症状 ============================
-// Windows 上文件被占用就无法删除。若 Close 没有真正释放所有连接，
-// 测试用的 TempDir 清理会失败（"being used by another process"）。
-//
-// Linux 上删除正在使用的文件是允许的，所以这条**在 Linux 上不会失败**——
-// 它的价值在 Windows CI。
-func TestCloseReleasesFileHandle(t *testing.T) {
+// TestCloseReleasesConnections verifies server connection pool shutdown.
+func TestCloseReleasesConnections(t *testing.T) {
 	ctx := context.Background()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "close.db")
+	path := testdb.New(t)
 
 	db, err := Open(ctx, path)
 	if err != nil {

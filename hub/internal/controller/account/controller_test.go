@@ -4,13 +4,13 @@ import (
 	api "arkade/hub/api/account/v1"
 	"arkade/hub/internal/controller"
 	"arkade/hub/internal/store"
+	"arkade/hub/internal/testdb"
 	"arkade/hub/internal/user"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -27,7 +27,7 @@ func (*sessionStub) SetCookie(context.Context, string, time.Time)    {}
 func (*sessionStub) ClearCookie(context.Context)                     {}
 func TestGetFreshUserAndNoHashInView(t *testing.T) {
 	ctx := context.Background()
-	db, err := store.Open(ctx, filepath.Join(t.TempDir(), "account.db"))
+	db, err := store.Open(ctx, testdb.New(t))
 	if err != nil {
 		t.Fatal(err)
 	}

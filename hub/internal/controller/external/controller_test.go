@@ -1,13 +1,13 @@
 package external
 
 import (
+	"arkade/hub/internal/testdb"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -64,7 +64,7 @@ func (o *fakeOps) ComposeAdopt(_ context.Context, _ string, p envelope.ComposeAd
 
 func setup(t *testing.T) (*Controller, *store.DB, *fakeOps, *sessionStub) {
 	t.Helper()
-	db, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "external.db"))
+	db, err := store.Open(context.Background(), testdb.New(t))
 	if err != nil {
 		t.Fatal(err)
 	}

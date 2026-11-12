@@ -65,9 +65,11 @@ arkade/
 
 提供三套仅使用 `image` 的编排，不包含 `build`；普通参数直接写在编排中，只有密码、令牌使用 `.env`，不再要求挂载 TOML。Hub 与 Agent 始终是独立容器，只有 Agent 挂载宿主 Docker socket。
 
-- [仅 Hub](deploy/docker/hub-compose.yml)：中央控制端。
+- [Hub + PostgreSQL](deploy/docker/hub-compose.yml)：中央控制端及独立数据库。
 - [仅 Agent](deploy/docker/agent-compose.yml)：部署在受管服务器。
-- [Hub + Agent 合并编排](deploy/docker/combined-compose.yml)：一台机器同时部署控制端和本机执行端。
+- [Hub + Agent + PostgreSQL 合并编排](deploy/docker/combined-compose.yml)：同机三个独立容器。
+
+数据库仅支持 PostgreSQL，使用 GoFrame 官方驱动；本版本采用全新库，不导入或兼容 SQLite。数据库密码放对应凭据样例，PG 地址、用户名、库名直接写编排；PostgreSQL 数据与 Hub 的 OIDC 加密主密钥分别持久化。
 
 配置样例、首次创建 Agent 专属密钥的步骤及升级边界见 [容器部署说明](deploy/docker/README.md)。使用支持无 TOML 启动的新镜像，生产固定镜像版本，升级保留原数据卷并先备份。框架重构记录见 [GoFrame 迁移说明](docs/17-goframe-migration.md)，手动升级见 [部署与回退](docs/18-manual-goframe-deployment.md)。
 
@@ -106,7 +108,7 @@ Agent 离线时仍可本地管理（决策 D-05）：
 
 **阶段一骨架已打通**（Hub + Agent + 前端三层能连上、能看能管）：
 
-- Hub：登录鉴权（bcrypt + 会话 Cookie）、Agent 连接管理、容器操作下发、SQLite 迁移器、SPA 托管
+- Hub：登录鉴权（bcrypt + 会话 Cookie）、Agent 连接管理、容器操作下发、PostgreSQL 版本化建表迁移器、SPA 托管
 - Agent：Docker / Podman 运行时抽象、反向连接 + 指数退避重连、心跳、本地 CLI 离线自治
 - 前端：登录页、服务器列表、容器列表（启停二次确认 + 日志抽屉）
 - 端到端验证：真实 Hub 与真实 Agent 通过 WebSocket 完成握手、心跳保活、请求往返与离线拒绝

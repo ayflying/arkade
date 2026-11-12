@@ -23,6 +23,19 @@ jobs:
     # A clean container has no Docker CLI/daemon. Some existing tests require
     # Docker to be unavailable; compose lifecycle tests use their own fake CLI.
     container: golang:1.24-bookworm
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: arkade_test
+          POSTGRES_PASSWORD: arkade_ci_test_only
+          POSTGRES_DB: postgres
+        options: >-
+          --health-cmd "pg_isready -U arkade_test -d postgres"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      CGO_ENABLED: '0'
+      ARKADE_TEST_PG_DSN: postgres://arkade_test:arkade_ci_test_only@postgres:5432/postgres?sslmode=disable
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -33,23 +46,21 @@ jobs:
       - name: Test and vet
         working-directory: ${{ matrix.module }}
         run: |
-          go test ./... -count=1 -timeout=5m
+          go test ./... -count=1 -timeout=10m
           go vet ./...
-      - name: Guard SQLite driver registration and pure-Go build
+      - name: Guard PostgreSQL-only dependencies and pure-Go build
         if: matrix.module == 'hub'
         working-directory: hub
         env:
           CGO_ENABLED: '0'
         run: |
-          # The GoFrame SQLite driver owns the SQL driver name "sqlite".
-          # Importing either top-level modernc driver or migrate/database/sqlite
-          # registers the same name again and panics before main can run.
+          # Hub only supports PostgreSQL. Do not reintroduce SQLite as a test fallback.
           go list -deps -test ./... > /tmp/arkade-hub-deps.txt
-          if grep -Ex 'modernc.org/sqlite|github.com/golang-migrate/migrate/v4/database/sqlite' /tmp/arkade-hub-deps.txt; then
-            echo '发现重复注册 SQLite 的驱动包；仅保留 GoFrame 官方驱动。' >&2
+          if grep -E 'modernc.org/sqlite|github.com/(glebarez/go-sqlite|mattn/go-sqlite3|gogf/gf/contrib/drivers/sqlite)|migrate/v4/database/sqlite' /tmp/arkade-hub-deps.txt; then
+            echo '发现 SQLite 依赖；Hub 应仅使用 PostgreSQL。' >&2
             exit 1
           fi
-          go test ./... -count=1 -timeout=5m
+          go test ./... -count=1 -timeout=10m
           go build ./...
 
   web-tests:

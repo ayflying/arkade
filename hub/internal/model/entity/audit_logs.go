@@ -16,6 +16,6 @@ type AuditLogs struct {
 	Detail     string `json:"detail"     orm:"detail"      ` //
 	Result     string `json:"result"     orm:"result"      ` //
 	Error      string `json:"error"      orm:"error"       ` //
-	DurationMs int    `json:"durationMs" orm:"duration_ms" ` //
-	CreatedAt  int    `json:"createdAt"  orm:"created_at"  ` //
+	DurationMs int64  `json:"durationMs" orm:"duration_ms" ` //
+	CreatedAt  int64  `json:"createdAt"  orm:"created_at"  ` //
 }

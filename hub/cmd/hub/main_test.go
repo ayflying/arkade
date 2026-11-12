@@ -44,7 +44,12 @@ func TestInitConfigKeepsDefaultPath(t *testing.T) {
 	if err := runWithArgs(t, "-init-config"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat("config.toml"); err != nil {
+	raw, err := os.ReadFile("config.toml")
+	if err != nil {
 		t.Fatalf("未指定 -c 时仍应生成 config.toml: %v", err)
+	}
+	text := string(raw)
+	if !strings.Contains(text, `dsn = "host=localhost port=5432 user=arkade dbname=arkade sslmode=disable"`) || !strings.Contains(text, `settings_key_file = "./data/settings.key"`) || strings.Contains(text, "SQLite") || strings.Contains(text, "password=") {
+		t.Fatal("generated template must use password-free PostgreSQL DSN and an independent key file")
 	}
 }

@@ -5,7 +5,7 @@ package httpx
 // 拒绝矩阵见 enroll_deny_test.go，撤销竞态见 enroll_race_test.go。
 // 这里只放"应该成功"和"状态/凭据随生命周期变化"的用例。
 //
-// 全部走**真实 WebSocket + 真实 SQLite**，并与 API 共用同一个服务与同一份
+// 全部走**真实 WebSocket + 真实 PostgreSQL**，并与 API 共用同一个服务与同一份
 // registry/guard（与生产装配一致）。若是各建一套，测得再绿也不代表真实行为。
 
 import (

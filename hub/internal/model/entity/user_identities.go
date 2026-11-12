@@ -10,5 +10,5 @@ type UserIdentities struct {
 	UserId     string `json:"userId"     orm:"user_id"     ` //
 	ProviderId string `json:"providerId" orm:"provider_id" ` //
 	Subject    string `json:"subject"    orm:"subject"     ` //
-	CreatedAt  int    `json:"createdAt"  orm:"created_at"  ` //
+	CreatedAt  int64  `json:"createdAt"  orm:"created_at"  ` //
 }

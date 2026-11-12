@@ -6,6 +6,7 @@ package config
 // 静默使用默认值导致改了配置却不生效，是运维排查成本最高的一类问题。
 
 import (
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -93,7 +94,7 @@ addr = "127.0.0.1:12345"
 timeout = "10s"
 
 [database]
-path = "` + filepath.ToSlash(filepath.Join(dir, "d", "hub.db")) + `"
+dsn = "host=localhost user=arkade dbname=contract_test sslmode=disable"
 
 [auth]
 session_ttl = "1h"
@@ -126,13 +127,13 @@ initial_pass = "StrongPass123"
 	}
 }
 
-// TestEnsureDirs 验证数据库父目录会被自动创建。
+// TestEnsureDirs 验证设置密钥父目录会被自动创建。
 func TestEnsureDirs(t *testing.T) {
 	dir := t.TempDir()
 	nested := filepath.Join(dir, "a", "b", "c")
 
 	cfg := Default()
-	cfg.Database.Path = filepath.Join(nested, "hub.db")
+	cfg.Auth.SettingsKeyFile = filepath.Join(nested, "settings.key")
 
 	if err := cfg.EnsureDirs(); err != nil {
 		t.Fatalf("创建目录失败: %v", err)
@@ -185,7 +186,7 @@ func TestApplyEnv(t *testing.T) {
 	t.Setenv("ARKADE_AGENT_TOKEN", "env-token-0123456789")
 	t.Setenv("ARKADE_INITIAL_PASS", "EnvPass123!")
 	t.Setenv("ARKADE_INITIAL_USER", "envadmin")
-	t.Setenv("ARKADE_DB_PATH", "/tmp/env-hub.db")
+	t.Setenv("ARKADE_DB_DSN", "postgres://envuser@localhost/envdb?sslmode=disable")
 	t.Setenv("ARKADE_LISTEN", "0.0.0.0:9090")
 	t.Setenv("ARKADE_BASE_URL", "https://env.example.com")
 	t.Setenv("ARKADE_SESSION_TTL", "48h")
@@ -203,8 +204,8 @@ func TestApplyEnv(t *testing.T) {
 	if cfg.Auth.InitialUser != "envadmin" {
 		t.Errorf("InitialUser 未生效: %q", cfg.Auth.InitialUser)
 	}
-	if cfg.Database.Path != "/tmp/env-hub.db" {
-		t.Errorf("DB Path 未生效: %q", cfg.Database.Path)
+	if cfg.Database.DSN != "postgres://envuser@localhost/envdb?sslmode=disable" {
+		t.Errorf("DB DSN 未生效: %q", cfg.Database.DSN)
 	}
 	if cfg.Server.Addr != "0.0.0.0:9090" {
 		t.Errorf("监听地址未生效: %q", cfg.Server.Addr)
@@ -218,6 +219,52 @@ func TestApplyEnv(t *testing.T) {
 	}
 	if cfg.Web.Dist != "/tmp/env-web" {
 		t.Errorf("Web.Dist 未生效: %q", cfg.Web.Dist)
+	}
+}
+
+func TestDatabaseFieldEnvEscapesCredentialsAndDSNPrecedence(t *testing.T) {
+	const password = "p@ss:'\\word /?#%"
+	t.Setenv("ARKADE_DB_HOST", "::1")
+	t.Setenv("ARKADE_DB_PORT", "15432")
+	t.Setenv("ARKADE_DB_USER", "test@user")
+	t.Setenv("ARKADE_DB_NAME", "isolated_db")
+	t.Setenv("ARKADE_DB_PASSWORD", password)
+	t.Setenv("ARKADE_DB_SSLMODE", "require")
+	cfg := Default()
+	applyEnv(&cfg)
+	uri, err := url.Parse(cfg.Database.DSN)
+	if err != nil {
+		t.Fatal("generated invalid PostgreSQL URL")
+	}
+	gotPassword, _ := uri.User.Password()
+	if uri.Host != "[::1]:15432" || uri.User.Username() != "test@user" || gotPassword != password || uri.Path != "/isolated_db" || uri.Query().Get("sslmode") != "require" {
+		t.Fatal("database field environment failed to preserve connection parameters")
+	}
+	t.Setenv("ARKADE_DB_DSN", "host=explicit dbname=override")
+	applyEnv(&cfg)
+	if cfg.Database.DSN != "host=explicit dbname=override" {
+		t.Fatal("explicit DSN must win over split fields")
+	}
+}
+
+func TestPostgresAndSettingsKeyConfigurationContracts(t *testing.T) {
+	cfg := Default()
+	if cfg.Auth.SettingsKeyFile != "./data/settings.key" || strings.Contains(cfg.Database.DSN, "password=") {
+		t.Fatal("unsafe defaults")
+	}
+	cfg.Auth.InitialPass = "Password123!"
+	cfg.Database.DSN = " "
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "database.dsn") {
+		t.Fatal("empty DSN accepted")
+	}
+	if err := decodeTOML([]byte("[database]\npath = 'legacy.db'\n"), &cfg); err == nil {
+		t.Fatal("legacy SQLite path must not be silently accepted")
+	}
+	cfg = Default()
+	cfg.Auth.InitialPass = "Password123!"
+	cfg.Auth.SettingsKeyFile = ""
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("empty key path accepted")
 	}
 }
 

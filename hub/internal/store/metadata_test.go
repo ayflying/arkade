@@ -1,18 +1,10 @@
 package store
 
-// metadata_test.go 守住"冷元数据缓存下事务内 CRUD 不挂起"。
-//
-// 背景：gdb 在 Fields(...) 和 DO(struct) Insert/Update 时会取表结构，
-// 取结构走连接池而不是事务连接。本库 MaxOpenConns=1，若没有预热，
-// 事务占住唯一连接后再取结构就会永久等待——测试会挂起而不是报错，
-// 因此每个用例都必须带超时，让故障表现为失败而不是卡死。
-//
-// 注意：用 map[string]any 作为 Data 不会触发取结构（列名已显式给出），
-// 所以下面的用例**必须**用 DO struct 或 Fields，否则测不出问题。
+// Verify first-use DO/Fields operations after metadata warmup.
 
 import (
+	"arkade/hub/internal/testdb"
 	"context"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -46,7 +38,7 @@ func withTimeout(t *testing.T, label string, fn func() error) {
 // 且分散到多张表，确保 businessTables() 没有遗漏。
 func TestColdCacheTransactionCRUD(t *testing.T) {
 	ctx := context.Background()
-	d, err := Open(ctx, filepath.Join(t.TempDir(), "cold.db"))
+	d, err := Open(ctx, testdb.New(t))
 	if err != nil {
 		t.Fatalf("打开库失败: %v", err)
 	}

@@ -53,9 +53,9 @@ Casdoor 首期采用标准 OIDC，不包含 SAML、LDAP、用户组自动同步�
 
 ## 主密钥、升级与备份
 
-数据库通过 migration 11 增加设置、OIDC 提供方、身份绑定和首次改密字段，旧 SQL 未改。DAO/DO/entity 由项目 GF 生成器从实际迁移数据库生成，不手工维护。
+当前全新 PostgreSQL 数据库的 initial migration 已包含设置、OIDC 提供方、身份绑定和首次改密字段；此前 SQLite migration 11 是历史版本，本版不迁入旧数据。DAO/DO/entity 由项目 GF 生成器从实际迁移的 PostgreSQL 数据库生成，不手工维护。
 
-Client Secret 使用独立随机 32 字节主密钥进行 AES-256-GCM 加密，随机 nonce 并绑定提供方 ID。主密钥默认位于数据库路径加 `.settings.key`，可用下列部署项覆盖：
+Client Secret 使用独立随机 32 字节主密钥进行 AES-256-GCM 加密，随机 nonce 并绑定提供方 ID。主密钥默认位于 `./data/settings.key`，容器编排显式指定 `/data/settings.key`，与 PostgreSQL DSN 完全解耦，可用下列部署项覆盖：
 
 ```toml
 [auth]

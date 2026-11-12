@@ -1,16 +1,11 @@
 package store
 
-// ctx_test.go 守住两条与 ctx 有关的约束：
-//   - scanOne/scanAll 必须把 ctx 传到 m.Ctx(ctx)，否则取消信号丢失；
-//   - 事务内的 Model 查询必须留在事务连接上，不能回到连接池。
-//
-// 第二条是单连接池下的硬约束：一旦事务内的查询去池里取连接，
-// 池里唯一连接被事务占着，就会永久挂起。
+// Context cancellation and transaction-bound CRUD regression tests.
 
 import (
+	"arkade/hub/internal/testdb"
 	"context"
 	"errors"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -26,7 +21,7 @@ import (
 // ctx 完全被忽略，查询会照常执行并成功返回——这里就抓得到。
 func TestScanRespectsCanceledContext(t *testing.T) {
 	ctx := context.Background()
-	d, err := Open(ctx, filepath.Join(t.TempDir(), "ctx.db"))
+	d, err := Open(ctx, testdb.New(t))
 	if err != nil {
 		t.Fatalf("打开库失败: %v", err)
 	}
@@ -70,11 +65,11 @@ func isCancelErr(err error) bool {
 
 // TestTxCRUDStaysOnTransactionConnection 事务内 CRUD 不回到连接池。
 //
-// 单连接池下，若事务内的查询另取连接，就会与事务争抢唯一连接而挂起。
+// 事务 CRUD 必须保持事务连接绑定，且服从调用方超时。
 // 每个操作都带超时，让"挂起"表现为失败。
 func TestTxCRUDStaysOnTransactionConnection(t *testing.T) {
 	ctx := context.Background()
-	d, err := Open(ctx, filepath.Join(t.TempDir(), "txconn.db"))
+	d, err := Open(ctx, testdb.New(t))
 	if err != nil {
 		t.Fatalf("打开库失败: %v", err)
 	}

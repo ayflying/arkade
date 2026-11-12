@@ -13,13 +13,13 @@
 package httpx
 
 import (
+	"arkade/hub/internal/testdb"
 	"context"
 	"crypto/rand"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -57,10 +57,9 @@ func newOIDCTestEnv(t *testing.T) *oidcTestEnv {
 	t.Helper()
 
 	ctx := context.Background()
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "oidc.db")
+	dsn := testdb.New(t)
 
-	db, err := store.Open(ctx, dbPath)
+	db, err := store.Open(ctx, dsn)
 	if err != nil {
 		t.Fatalf("打开测试数据库失败: %v", err)
 	}

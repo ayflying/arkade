@@ -1,12 +1,12 @@
 package groups
 
 import (
+	"arkade/hub/internal/testdb"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -29,7 +29,7 @@ func (*sessionStub) ClearCookie(context.Context)                     {}
 
 func setup(t *testing.T) (*Controller, *store.DB, *sessionStub) {
 	t.Helper()
-	db, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "groups.db"))
+	db, err := store.Open(context.Background(), testdb.New(t))
 	if err != nil {
 		t.Fatal(err)
 	}

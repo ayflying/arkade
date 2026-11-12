@@ -11,10 +11,10 @@ type SystemSettings struct {
 	LoginNotice         string `json:"loginNotice"         orm:"login_notice"          ` //
 	RegistrationEnabled int    `json:"registrationEnabled" orm:"registration_enabled"  ` //
 	RegistrationGroupId string `json:"registrationGroupId" orm:"registration_group_id" ` //
-	SessionTtlSeconds   int    `json:"sessionTtlSeconds"   orm:"session_ttl_seconds"   ` //
+	SessionTtlSeconds   int64  `json:"sessionTtlSeconds"   orm:"session_ttl_seconds"   ` //
 	PasswordMinLength   int    `json:"passwordMinLength"   orm:"password_min_length"   ` //
 	LoginMaxAttempts    int    `json:"loginMaxAttempts"    orm:"login_max_attempts"    ` //
-	LoginWindowSeconds  int    `json:"loginWindowSeconds"  orm:"login_window_seconds"  ` //
+	LoginWindowSeconds  int64  `json:"loginWindowSeconds"  orm:"login_window_seconds"  ` //
 	AuditRetentionDays  int    `json:"auditRetentionDays"  orm:"audit_retention_days"  ` //
-	Version             int    `json:"version"             orm:"version"               ` //
+	Version             int64  `json:"version"             orm:"version"               ` //
 }

@@ -1,4 +1,6 @@
-# Hub 分阶段迁移到 GoFrame
+# Hub 分阶段迁移到 GoFrame（历史记录）
+
+> 2026-11-12 数据库决策已更新为全新 PostgreSQL，SQLite 驱动、旧库接管与 dbtool 已移除。下文是此前 GoFrame 重构阶段的历史证据，不是当前部署步骤；当前运行方式以 [PG 部署与备份](18-manual-goframe-deployment.md) 和 [D-03](05-decisions.md) 为准，不执行下文 SQLite 命令。
 
 ## 已确认的技术路线
 

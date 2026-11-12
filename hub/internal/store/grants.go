@@ -29,37 +29,39 @@ func grantFromEntity(e entity.GroupAgents) user.GroupGrant {
 
 // SetGroupGrant 设置（新增或覆盖）某个组对某台服务器的权限档位。
 func (d *DB) SetGroupGrant(ctx context.Context, groupID, agentID string, perm user.Permission) error {
-	c := dao.GroupAgents.Columns()
+	return d.TxModel(ctx, func(ctx context.Context, tx gdb.TX) error {
+		c := dao.GroupAgents.Columns()
 
-	// 用「先查后改」而不是 INSERT OR REPLACE：后者会重建整行
-	// （触发级联删除副作用），与项目的迁移可移植性要求冲突。
-	n, err := d.gdb.Model(dao.GroupAgents.Table()).Ctx(ctx).
-		Where(c.GroupId, groupID).
-		Where(c.AgentId, agentID).
-		Count()
-	if err != nil {
-		return gerror.Wrap(err, "查询组授权失败")
-	}
-
-	if n > 0 {
-		if _, err := d.gdb.Model(dao.GroupAgents.Table()).Ctx(ctx).
+		// 用「先查后改」而不是 INSERT OR REPLACE：后者会重建整行
+		// （触发级联删除副作用），与项目的迁移可移植性要求冲突。
+		n, err := tx.Model(dao.GroupAgents.Table()).Ctx(ctx).
 			Where(c.GroupId, groupID).
 			Where(c.AgentId, agentID).
-			Data(do.GroupAgents{Permission: perm.String()}).
-			Update(); err != nil {
-			return gerror.Wrap(err, "更新组授权失败")
+			Count()
+		if err != nil {
+			return gerror.Wrap(err, "查询组授权失败")
+		}
+
+		if n > 0 {
+			if _, err := tx.Model(dao.GroupAgents.Table()).Ctx(ctx).
+				Where(c.GroupId, groupID).
+				Where(c.AgentId, agentID).
+				Data(do.GroupAgents{Permission: perm.String()}).
+				Update(); err != nil {
+				return gerror.Wrap(err, "更新组授权失败")
+			}
+			return nil
+		}
+
+		if _, err := tx.Model(dao.GroupAgents.Table()).Ctx(ctx).Data(do.GroupAgents{
+			GroupId:    groupID,
+			AgentId:    agentID,
+			Permission: perm.String(),
+		}).Insert(); err != nil {
+			return normalizeExecError(err, "设置组授权")
 		}
 		return nil
-	}
-
-	if _, err := d.gdb.Model(dao.GroupAgents.Table()).Ctx(ctx).Data(do.GroupAgents{
-		GroupId:    groupID,
-		AgentId:    agentID,
-		Permission: perm.String(),
-	}).Insert(); err != nil {
-		return normalizeExecError(err, "设置组授权")
-	}
-	return nil
+	})
 }
 
 // DeleteGroupGrant 删除某个组对某台服务器的授权。不存在时视为成功（幂等）。

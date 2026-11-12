@@ -1,114 +1,81 @@
-# GoFrame 完整迁移后的手动部署
+# GoFrame + PostgreSQL 新部署与备份
 
-本文仅供操作员手动执行。源码迁移测试已通过，不等于对应镜像已发布或远端已升级。
+## 当前数据库边界
 
-## 1. 确认版本
+本版本仅支持 PostgreSQL，采用 GoFrame 官方 `pgsql/v2` 驱动。按用户决定使用全新数据库，不导入旧 SQLite，不提供 SQLite 兼容模式，原 SQLite 专用 `arkade-dbtool` 已移除。旧数据文件和旧运行实例不会被新版自动删除或接管。
 
-先将完成迁移的本地 master 推送到自己的远端，服务器更新后运行 `git log -1 --oneline`。不要把 GHCR 的 latest 当成本阶段版本；此前曾因 GitHub 凭据失效推送失败。
+本地代码/测试通过不等于 GHCR 或远端已经更新。部署必须确认 Hub 镜像包含 PostgreSQL 改造，生产建议直接在编排中固定镜像标签或摘要，不跟随未知 `latest`。
 
-以下命令均在 Linux 服务器的仓库根目录执行。仅更新 Hub，不应重启业务容器。当前部署提供 Hub、Agent、Hub+Agent 三套编排，普通运行参数直接写编排，仅密码和令牌放 `.env`，三套编排只使用 image、不包含 build，不再依赖挂载 TOML；参见 [容器部署说明](../deploy/docker/README.md)。无 TOML 编排必须使用包含环境变量启动修复的新镜像；不能给旧镜像直接移除配置挂载。跨服务器迁移功能需同时核对相关 Agent 版本。
+## 服务器独立部署
 
-## 2. 新装：构建自己的固定标签
+服务器不需要源码仓库：从 [部署目录](../deploy/docker/README.md) 选择一份完整编排和对应凭据样例，分别保存为 `compose.yml`、`.env`。
+
+- Hub 独立编排：Hub + PostgreSQL 两个容器。
+- Agent 独立编排：一个 Agent，连接已有 Hub。
+- 合并编排：Hub + Agent + PostgreSQL 三个容器。
+
+普通参数直接写编排，仅密码和令牌用变量；不包含 build、extends 或外部 TOML 挂载。PostgreSQL 不暴露宿主 5432 端口。Hub 文件卷保存 `/data/settings.key`，PG 独立卷保存业务数据。
 
 ```sh
-VERSION="gf-$(git rev-parse --short HEAD)"
-docker build -f hub/Dockerfile --build-arg VERSION="$VERSION" -t "arkade-hub:$VERSION" .
-```
-
-构建包含前端类型检查、前端产物、Linux 静态 Hub 和数据库工具。
-
-```sh
-# 仅首次创建；已有凭据文件不要覆盖。
-cp deploy/docker/hub.env.example .env
 chmod 600 .env
-```
-
-编辑根目录 `.env`：管理员初始密码至少 8 位；准入令牌至少 16 位，可用 `openssl rand -hex 24` 生成。已有数据库不会因初始密码配置而重置账号。
-
-写一个只覆盖镜像的本地文件，保持原有配置结构：
-
-```sh
-cat > deploy/docker/hub-local.yml <<EOF
-services:
-  hub:
-    image: arkade-hub:$VERSION
-EOF
-
-docker compose --project-directory "$PWD" --env-file .env \
-  -f deploy/docker/hub-compose.yml -f deploy/docker/hub-local.yml \
-  up -d --no-build --pull never hub
-```
-
-显式指定项目目录与凭据文件，避免 Compose 不同调用目录影响 `${...}` 插值。
-
-```sh
-docker logs --tail 100 arkade-hub
+# 填数据库密码、管理员初始密码、Hub准入令牌。
+docker compose --env-file .env -f compose.yml config --quiet
+docker compose --env-file .env -f compose.yml pull
+docker compose --env-file .env -f compose.yml up -d hub
 curl -fsS http://127.0.0.1:8080/healthz
 ```
 
-健康响应应含预期版本、数据库健康、在线数。首次 Agent 数为 0 正常。登录后通过页面新增服务器并取得各机器专属接入密钥；不要把共享令牌当成专属令牌。
+合并编排先起 Hub（会自动启动依赖 PG），在网页添加本机服务器，取得专属密钥写入 `.env` 的 `ARKADE_LOCAL_AGENT_TOKEN`，再 `up -d` 启动 Agent。Agent 专属密钥与 Hub 准入令牌不可混用。
 
-## 3. 升级：禁止直接换数据卷
+新库启动自动执行版本化 PostgreSQL 建表迁移。dirty、脚本校验和不符、结构漂移或未知更高版本应拒绝启动，禁止自动 force 跳过。已经有未受版本管理业务表的数据库不可冒充新库使用。
 
-先检查原容器镜像、卷、配置和 Compose 归属：
+## PostgreSQL 备份和独立恢复演练
 
-```sh
-docker inspect 原Hub容器 --format '{{.Config.Image}}'
-docker inspect 原Hub容器 --format '{{json .Mounts}}'
-docker inspect 原Hub容器 --format '{{json .Config.Labels}}'
-```
-
-保留原端口、卷、配置、网络别名和凭据。旧测试服是 `arkade-hub-demo`、18080 端口及 `arkade-demo-hub-data` 卷；它与标准编排的 `arkade-hub-data` 不是同一份数据。不能直接套新装步骤而误用空卷。
-
-### 先备份
-
-以下数据库路径仅适用于确认原库确为 `/data/hub.db` 的环境：
+在安全目录执行，备份文件含账号密码哈希和业务凭据密文，限制文件权限。以下命令通过容器内部本地连接备份，不把密码放命令行，不公开数据库端口。
 
 ```sh
-OLD=原Hub容器
-BACKUP="hub-before-gf-$(date +%Y%m%d-%H%M%S).db"
-
-docker run --rm --user 0 --volumes-from "$OLD" \
-  --entrypoint /app/arkade-dbtool "arkade-hub:$VERSION" \
-  backup -source /data/hub.db -destination "/data/$BACKUP"
-
-docker run --rm --user 0 --volumes-from "$OLD" \
-  --entrypoint /app/arkade-dbtool "arkade-hub:$VERSION" \
-  check -source "/data/$BACKUP"
-
-mkdir -p backups
-chmod 700 backups
-docker cp "$OLD:/data/$BACKUP" "backups/$BACKUP"
-chmod 600 "backups/$BACKUP"
+umask 077
+docker compose --env-file .env -f compose.yml exec -T postgres \
+  pg_dump -U arkade -d arkade -Fc > arkade-backup.dump
 ```
 
-两步工具必须返回 `ok`。不得直接复制运行中的 SQLite 主文件而忽略 WAL；备份不启动第二个 Hub，也不迁移源数据库。
-
-### 更新原有编排
-
-在原有编排中仅将 Hub 镜像改为刚构建的固定标签，然后使用原来的 project name、Compose 文件和服务名更新：
+OIDC 主密钥必须和数据库一起备份：
 
 ```sh
-docker compose -p 原项目名 -f 原编排文件.yml \
-  up -d --no-deps --no-build --pull never 原Hub服务名
+docker cp arkade-hub:/data/settings.key ./settings.key.backup
+chmod 600 settings.key.backup
 ```
 
-原测试服上曾手动保留旧容器并替换 Hub，不一定能由原 Compose 直接接管；应按 inspect 得到的真实归属处理，先不要盲目执行 `up`。
+不能只有 PG 备份而没有主密钥，否则第三方登录的 Client Secret 无法解密。备份后应在隔离环境/新数据库进行恢复演练，不覆盖活动业务库：
 
-不要执行 `down -v`，不要删除源卷，不要重建 Agent/业务容器。
+```sh
+docker compose --env-file .env -f compose.yml exec -T postgres \
+  createdb -U arkade arkade_restore_check
+docker compose --env-file .env -f compose.yml exec -T postgres \
+  pg_restore -U arkade -d arkade_restore_check --exit-on-error < arkade-backup.dump
+```
 
-## 4. 验收和回退
+恢复演练还需用相同版本 Hub 和备份密钥指向恢复库验证登录、权限和编排读取；`pg_restore` 成功不等于业务验收完成。不要让演练 Hub 连接生产 Agent。
 
-- 健康版本正确，无 dirty、checksum、结构不匹配或迁移失败。
-- 原账号、用户组和授权仍在，Agent 重新在线。
-- 服务器、容器、资源、镜像任务和编排页面能读取；审计有新操作记录。
-- 原业务容器 ID、启动时间、重启次数不变。
-- 日志无 `panic serving`、`superfluous response.WriteHeader`。
+## 更新与回退
 
-Hub 启动自动运行数据库迁移，不需手动执行 SQL，禁止为绕过失败而 force 版本。
+- 新库不含旧账号、旧服务器或旧编排，重新初始化管理员并登记 Agent；不宣称保留 SQLite 数据。
+- PG 数据卷 `arkade-postgres-data` 与 Hub 文件卷 `arkade-hub-files-pg` 必须保留，升级前备份两者。
+- `.env` 中数据库密码在空卷初始化时设置角色密码，修改已有库密码须先数据库改密并同步 Hub；仅改 `.env` 不会自动修改既有角色。
+- 更新时直接修改编排的 image，用原 project name、卷和凭据执行目标服务更新；不使用 `down -v`，不重启无关业务容器。
+- 回退需要旧镜像及对应版本 PG 备份和密钥配套，不能假定旧版本能读取新结构；在独立库恢复，保留失败现场。
+- 原 SQLite 版本只能独立保管和运行；不能将其数据库文件挂入新 PG 版 Hub。
 
-失败时停止新 Hub，保留新库和日志。数据库 restore 只能输出到**新文件**，校验后调整配置指向恢复库；不要覆盖活动主文件或带旧 WAL 的同一路径。旧镜像需要与升级前备份配套恢复，不默认保证可直接读取已升级库。
+## 开发与 CI
 
-## 5. 能力边界
+真实数据库回归需要管理测试库的独立 PostgreSQL 实例，通过 `ARKADE_TEST_PG_DSN` 指定。测试每例创建隔离库，结束删除；缺环境变量会明确失败，不使用 SQLite 或静默跳过。
 
-全部 HTTP 和数据访问架构已迁移到 GoFrame；跨服务器 Compose 迁移也已接入生产启动装配并完成隔离 Docker 双引擎验收，不需要臆造 enable 开关。迁移仍要求两端 manage，配置和镜像必迁，卷及目标启动默认关闭，源不停止/删除，目标同名项目或已有卷拒绝覆盖。目标目录外的 bind mount、匿名卷、CPU 平台转换不在承诺范围，运行中数据库卷不是一致性快照。详见 [能力及验收边界](19-compose-migration-completion.md)。本轮没有替换既有测试服；启用新迁移协议需要同时更新 Hub 和相关 Agent，不能只升级 Hub 后假定旧 Agent 支持。
+```sh
+# 仅隔离测试环境，禁止指向业务数据库账号。
+export ARKADE_TEST_PG_DSN='postgres://arkade_test:测试密码@127.0.0.1:15432/postgres?sslmode=disable'
+cd hub
+go test ./... -count=1
+go vet ./...
+```
+
+CI 启动 PostgreSQL 服务运行真实数据库测试。镜像仍为纯 Go 构建，不需要 CGO。此文档不证明某台服务器已经部署。

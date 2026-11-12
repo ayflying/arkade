@@ -1,5 +1,5 @@
-# Hub 独立部署；在仓库根目录显式使用 --env-file .env。
-# 新镜像支持纯环境变量启动，不再挂载 TOML。升级前备份数据库并固定镜像版本。
+# Hub + PostgreSQL 独立部署；服务器仅需本文件和 .env。
+# 仅用于全新 PostgreSQL，不读取旧 SQLite；使用支持 PG 的新 Hub 镜像。
 name: arkade-hub
 
 services:
@@ -7,12 +7,21 @@ services:
     image: ghcr.io/ayflying/arkade-hub:latest
     container_name: arkade-hub
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "0.0.0.0:8080:8080"
     environment:
       # 固定的容器内端口/路径与健康检查、数据卷保持一致；普通配置直接修改本文件。
       ARKADE_LISTEN: 0.0.0.0:8080
-      ARKADE_DB_PATH: /data/hub.db
+      ARKADE_DB_HOST: postgres
+      ARKADE_DB_PORT: "5432"
+      ARKADE_DB_USER: arkade
+      ARKADE_DB_NAME: arkade
+      ARKADE_DB_PASSWORD: ${ARKADE_DB_PASSWORD:?请在 .env 设置 PostgreSQL 密码}
+      ARKADE_DB_SSLMODE: disable
+      ARKADE_SETTINGS_KEY_FILE: /data/settings.key
       ARKADE_WEB_DIST: /app/web/dist
       ARKADE_INITIAL_USER: admin
       ARKADE_INITIAL_PASS: ${ARKADE_INITIAL_PASS:?请在 .env 设置管理员初始密码}
@@ -32,9 +41,29 @@ services:
     networks:
       - arkade
 
+  postgres:
+    image: postgres:17-alpine
+    container_name: arkade-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: arkade
+      POSTGRES_DB: arkade
+      POSTGRES_PASSWORD: ${ARKADE_DB_PASSWORD:?请在 .env 设置 PostgreSQL 密码}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U arkade -d arkade"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - arkade
+
 volumes:
   hub-data:
-    name: arkade-hub-data
+    name: arkade-hub-files-pg
+  postgres-data:
+    name: arkade-postgres-data
 
 networks:
   arkade:

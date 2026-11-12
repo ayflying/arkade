@@ -16,32 +16,30 @@ import (
 	"time"
 
 	"arkade/hub/internal/config"
-	"arkade/hub/internal/dbbackup"
+	"arkade/hub/internal/testdb"
 )
 
-func TestRuntimeSnapshotRestoreStartsWithExistingAccount(t *testing.T) {
+func TestRuntimePostgresReconnectStartsWithExistingAccount(t *testing.T) {
 	ctx := context.Background()
 	cfg := config.Default()
-	cfg.Database.Path = filepath.Join(t.TempDir(), "original.db")
+	cfg.Database.DSN = testdb.New(t)
+	cfg.Auth.SettingsKeyFile = filepath.Join(t.TempDir(), "settings.key")
 	cfg.Auth.AgentToken = "restore-test-token"
 	cfg.Auth.InitialPass = "RestoreTestPass123!"
 	cfg.Web.Dist = ""
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	original, err := NewApp(ctx, cfg, log, "snapshot-test")
+	original, err := NewApp(ctx, cfg, log, "postgres-initial-start")
 	if err != nil {
 		t.Fatal(err)
 	}
-	restored := filepath.Join(t.TempDir(), "restored.db")
-	err = dbbackup.Snapshot(ctx, cfg.Database.Path, restored)
-	closeErr := original.Shutdown(ctx)
-	if err != nil || closeErr != nil {
-		t.Fatalf("snapshot=%v close=%v", err, closeErr)
+	// PostgreSQL is a server database: restart with the same DSN, not a copied file.
+	if err := original.Shutdown(ctx); err != nil {
+		t.Fatalf("close original PostgreSQL connection: %v", err)
 	}
-	cfg.Database.Path = restored
 	cfg.Auth.InitialPass = "MustNotReplaceExistingPass123!"
-	app, err := NewApp(ctx, cfg, log, "restore-test")
+	app, err := NewApp(ctx, cfg, log, "postgres-reconnect")
 	if err != nil {
-		t.Fatalf("restore rejected by real migration/startup checks: %v", err)
+		t.Fatalf("PostgreSQL reconnect rejected by real schema/startup checks: %v", err)
 	}
 	t.Cleanup(func() { _ = app.Shutdown(ctx) })
 	app.server.SetAddr("127.0.0.1:0")
@@ -56,13 +54,14 @@ func TestRuntimeSnapshotRestoreStartsWithExistingAccount(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("restored account login status=%d body=%s", resp.StatusCode, body)
+		t.Fatalf("existing account login after PostgreSQL reconnect status=%d body=%s", resp.StatusCode, body)
 	}
 }
 
 func TestRuntimeAppHTTPContract(t *testing.T) {
 	cfg := config.Default()
-	cfg.Database.Path = filepath.Join(t.TempDir(), "runtime.db")
+	cfg.Database.DSN = testdb.New(t)
+	cfg.Auth.SettingsKeyFile = filepath.Join(t.TempDir(), "settings.key")
 	cfg.Auth.AgentToken = "runtime-test-agent-token-only"
 	cfg.Auth.InitialPass = "RuntimeTestPass123!"
 	cfg.Web.Dist = ""

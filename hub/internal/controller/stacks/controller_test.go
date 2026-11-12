@@ -7,6 +7,7 @@ import (
 	"arkade/hub/internal/httpwire"
 	comp "arkade/hub/internal/service/compose"
 	"arkade/hub/internal/store"
+	"arkade/hub/internal/testdb"
 	"arkade/hub/internal/user"
 	"context"
 	"encoding/json"
@@ -15,7 +16,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -29,7 +29,7 @@ func (*sessionStub) SetCookie(context.Context, string, time.Time)    {}
 func (*sessionStub) ClearCookie(context.Context)                     {}
 func setup(t *testing.T) (*Controller, *store.DB, *sessionStub) {
 	t.Helper()
-	db, e := store.Open(context.Background(), filepath.Join(t.TempDir(), "stack.db"))
+	db, e := store.Open(context.Background(), testdb.New(t))
 	if e != nil {
 		t.Fatal(e)
 	}

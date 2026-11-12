@@ -2,19 +2,9 @@ package store
 
 // lifecycle.go 提供"关闭时等待后台任务"的闸门。
 //
-// ============================ 要解决的具体故障 ============================
-// 审计清理（maybePruneAudit）会起一个 goroutine 去删过期行。如果 Close()
-// 不等它，就会出现：
-//
-//	1. Close() 调 gdb.Close()，把底层 sql.DB 关掉；
-//	2. 那个 goroutine 才跑到 d.gdb.Exec；
-//	3. gdb 发现 links 里没有连接（Close 只是删了 map 条目），
-//	   于是**重新建一条连接**指向同一个库文件；
-//	4. 库文件句柄重新被占用。
-//
-// 第 4 步在 Windows 上表现为"测试结束后 TempDir 删不掉"，
-// 而且此时 Stats().OpenConnections 早已是 0，
-// 只看即时统计的检查完全发现不了——必须等后台任务跑完再看。
+// Background ORM operations must finish before Close, otherwise GoFrame can
+// create a new PostgreSQL pool after the owned pool has already been closed.
+// Waiting for lifecycle tasks prevents those unowned server connections.
 //
 // ============================ 关闭协议 ============================
 //	mu     保护 closed 与 wg 的 Add 之间的一致性

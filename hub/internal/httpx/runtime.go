@@ -44,7 +44,7 @@ type App struct {
 
 // NewApp 构造 Hub。所有依赖在此一次性创建，失败时返回明确原因。
 func NewApp(ctx context.Context, cfg config.Config, log *slog.Logger, version string) (*App, error) {
-	db, err := store.Open(ctx, cfg.Database.Path)
+	db, err := store.Open(ctx, cfg.Database.DSN)
 	if err != nil {
 		return nil, err
 	}

@@ -203,7 +203,7 @@ func (d *DB) UpdateUser(ctx context.Context, id string, upd UserUpdate, updatedA
 	}
 	if !changed {
 		// 没有任何变更就不写库：空 UPDATE 会白白推进一个写事务，
-		// 在 SQLite 单写连接下等于无谓地串行化其他请求。
+		// 避免无谓地获取跨连接事务锁。
 		return nil
 	}
 	data.UpdatedAt = updatedAt
@@ -256,11 +256,7 @@ func (d *DB) UpdateUserPassword(ctx context.Context, id, passwordHash string, up
 
 // DeleteUser 删除用户。
 //
-// 关于级联删除：Open 时已通过 DSN 的 _pragma=foreign_keys(1) 为每条连接开启外键约束
-// （store.go 有说明），users 被 user_groups 与 sessions 以 ON DELETE CASCADE 引用，
-// 因此关联记录会自动清理。这里仍然显式删一次关联记录，原因是：
-//   - 外键开关是连接级状态，若将来有人改 DSN 或换驱动，级联会静默失效并留下孤儿行；
-//   - 显式删除是幂等的，与外键同时生效不会冲突，但能把「依赖隐式行为」变成「代码里写明的意图」。
+// PostgreSQL also enforces ON DELETE CASCADE; explicit cleanup documents intent.
 func (d *DB) DeleteUser(ctx context.Context, id string) error {
 	return d.TxModel(ctx, func(ctx context.Context, tx gdb.TX) error {
 		if err := protectLocalAdmin(ctx, tx, id, true); err != nil {

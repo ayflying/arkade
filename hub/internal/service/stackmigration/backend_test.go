@@ -1,9 +1,9 @@
 package stackmigration
 
 import (
+	"arkade/hub/internal/testdb"
 	"context"
 	"errors"
-	"path/filepath"
 	"testing"
 
 	"arkade/hub/internal/agentlink"
@@ -41,7 +41,7 @@ func (f *fakeOps) ComposeImport(_ context.Context, _ string, p envelope.ComposeI
 }
 func setup(t *testing.T) (*Backend, *fakeOps, context.Context) {
 	t.Helper()
-	db, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "migration.db"))
+	db, err := store.Open(context.Background(), testdb.New(t))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -10,11 +10,13 @@ import (
 
 	"arkade/hub/internal/config"
 	"arkade/hub/internal/stackmigrate"
+	"arkade/hub/internal/testdb"
 )
 
 func TestRuntimeWiresMigrationAndClosesBeforeStorage(t *testing.T) {
 	cfg := config.Default()
-	cfg.Database.Path = filepath.Join(t.TempDir(), "migration-runtime.db")
+	cfg.Database.DSN = testdb.New(t)
+	cfg.Auth.SettingsKeyFile = filepath.Join(t.TempDir(), "settings.key")
 	cfg.Auth.InitialPass = "RuntimeMigratePass123!"
 	cfg.Auth.AgentToken = "runtime-migration-test-token"
 	cfg.Web.Dist = ""

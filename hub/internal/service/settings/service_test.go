@@ -1,11 +1,11 @@
 package settings
 
 import (
+	"arkade/hub/internal/testdb"
 	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -15,7 +15,7 @@ import (
 
 func fixture(t *testing.T, options Options) (*Service, *store.DB) {
 	t.Helper()
-	db, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "settings.db"))
+	db, err := store.Open(context.Background(), testdb.New(t))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -12,10 +12,9 @@ import (
 
 // loadSettingsKey persists a separate random encryption key, never deriving it
 // from an Agent token or the database. Backups must preserve both DB and key.
-func loadSettingsKey(databasePath, configuredPath string) ([]byte, error) {
-	path := configuredPath
+func loadSettingsKey(path string) ([]byte, error) {
 	if path == "" {
-		path = databasePath + ".settings.key"
+		return nil, gerror.New("系统设置密钥文件路径不能为空")
 	}
 	read := func() ([]byte, error) {
 		info, err := os.Lstat(path)

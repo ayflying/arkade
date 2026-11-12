@@ -12,13 +12,15 @@ import (
 	"arkade/hub/internal/auth"
 	"arkade/hub/internal/config"
 	"arkade/hub/internal/store"
+	"arkade/hub/internal/testdb"
 )
 
 func TestIdentityServicesMissingKeyMustNotReplaceEncryptedConfiguration(t *testing.T) {
 	ctx := context.Background()
 	cfg := config.Default()
-	cfg.Database.Path = filepath.Join(t.TempDir(), "hub.db")
-	db, err := store.Open(ctx, cfg.Database.Path)
+	cfg.Database.DSN = testdb.New(t)
+	cfg.Auth.SettingsKeyFile = filepath.Join(t.TempDir(), "settings.key")
+	db, err := store.Open(ctx, cfg.Database.DSN)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +33,7 @@ func TestIdentityServicesMissingKeyMustNotReplaceEncryptedConfiguration(t *testi
 	if err == nil || !strings.Contains(err.Error(), "主密钥文件缺失") {
 		t.Fatalf("must require restoring key: %v", err)
 	}
-	if _, err := os.Stat(cfg.Database.Path + ".settings.key"); !os.IsNotExist(err) {
+	if _, err := os.Stat(cfg.Auth.SettingsKeyFile); !os.IsNotExist(err) {
 		t.Fatalf("generated replacement key: %v", err)
 	}
 }

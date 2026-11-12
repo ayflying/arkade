@@ -34,14 +34,24 @@ def render(filename, envfile, valid=True, services=()):
 def check_hub(config):
     hub = config["services"]["hub"]
     env = hub["environment"]
-    assert env["ARKADE_DB_PATH"] == "/data/hub.db"
+    assert "ARKADE_DB_PATH" not in env
+    assert env["ARKADE_DB_HOST"] == "postgres"
+    assert env["ARKADE_DB_PASSWORD"] == "test-pg-not-a-real-password"
+    assert env["ARKADE_SETTINGS_KEY_FILE"] == "/data/settings.key"
+    assert hub["depends_on"]["postgres"]["condition"] == "service_healthy"
+    pg = config["services"]["postgres"]
+    assert pg["environment"]["POSTGRES_PASSWORD"] == env["ARKADE_DB_PASSWORD"]
+    assert pg["environment"]["POSTGRES_DB"] == env["ARKADE_DB_NAME"]
+    assert not pg.get("ports"), "数据库不应暴露宿主端口"
+    assert pg["volumes"][0]["target"] == "/var/lib/postgresql/data"
+    assert config["volumes"]["postgres-data"]["name"] == "arkade-postgres-data"
     assert env["ARKADE_WEB_DIST"] == "/app/web/dist"
     assert env["ARKADE_INITIAL_PASS"] == "test-admin-not-a-real-password"
     assert env["ARKADE_AGENT_TOKEN"] == "test-hub-admission-token"
     assert "ARKADE_LOCAL_AGENT_TOKEN" not in env
     assert not any("sock" in volume["target"] or "toml" in volume["target"]
                    for volume in hub["volumes"])
-    assert config["volumes"]["hub-data"]["name"] == "arkade-hub-data"
+    assert config["volumes"]["hub-data"]["name"] == "arkade-hub-files-pg"
 
 
 def check_agent(config, token, url):
@@ -59,6 +69,7 @@ def check_agent(config, token, url):
 
 def main():
     values = {
+        "ARKADE_DB_PASSWORD": "test-pg-not-a-real-password",
         "ARKADE_INITIAL_PASS": "test-admin-not-a-real-password",
         "ARKADE_AGENT_TOKEN": "test-hub-admission-token",
         "ARKADE_LOCAL_AGENT_TOKEN": "test-local-dedicated-token",
@@ -71,13 +82,13 @@ def main():
 
         save(values)
         hub = render("hub-compose.yml", envfile)
-        assert set(hub["services"]) == {"hub"}
+        assert set(hub["services"]) == {"hub", "postgres"}
         check_hub(hub)
         agent = render("agent-compose.yml", envfile)
         assert set(agent["services"]) == {"agent"}
         check_agent(agent, values["ARKADE_AGENT_TOKEN"], "ws://请填写Hub地址:8080/agent/connect")
         combined = render("combined-compose.yml", envfile)
-        assert set(combined["services"]) == {"hub", "agent"}
+        assert set(combined["services"]) == {"hub", "agent", "postgres"}
         check_hub(combined)
         check_agent(combined, values["ARKADE_LOCAL_AGENT_TOKEN"], "ws://hub:8080/agent/connect")
         assert combined["services"]["agent"]["depends_on"]["hub"]["condition"] == "service_healthy"
@@ -85,12 +96,13 @@ def main():
         # 首次启动只起 Hub，无需预先取得 Agent 专属密钥。
         save({k: v for k, v in values.items() if k != "ARKADE_LOCAL_AGENT_TOKEN"})
         bootstrap = render("combined-compose.yml", envfile, services=("hub",))
-        assert set(bootstrap["services"]) == {"hub"}
+        assert set(bootstrap["services"]) == {"hub", "postgres"}
         check_hub(bootstrap)
         no_token = render("combined-compose.yml", envfile)
         assert no_token["services"]["agent"]["environment"]["ARKADE_AGENT_TOKEN"] == ""
 
-        for filename, missing in (("hub-compose.yml", "ARKADE_INITIAL_PASS"),
+        for filename, missing in (("hub-compose.yml", "ARKADE_DB_PASSWORD"),
+                                  ("hub-compose.yml", "ARKADE_INITIAL_PASS"),
                                   ("hub-compose.yml", "ARKADE_AGENT_TOKEN"),
                                   ("agent-compose.yml", "ARKADE_AGENT_TOKEN")):
             save({k: v for k, v in values.items() if k != missing})
@@ -100,7 +112,7 @@ def main():
         save(dict(values, ARKADE_HUB_IMAGE="unexpected:tag", ARKADE_HUB_PORT="18080",
                   ARKADE_HUB_VOLUME="unexpected-volume", ARKADE_AGENT_NAME="unexpected-node"))
         assert render("combined-compose.yml", envfile) == combined
-        allowed = {"ARKADE_INITIAL_PASS", "ARKADE_AGENT_TOKEN", "ARKADE_LOCAL_AGENT_TOKEN"}
+        allowed = {"ARKADE_INITIAL_PASS", "ARKADE_AGENT_TOKEN", "ARKADE_LOCAL_AGENT_TOKEN", "ARKADE_DB_PASSWORD"}
         for filename, config in (("hub-compose.yml", hub), ("agent-compose.yml", agent),
                                  ("combined-compose.yml", combined)):
             source = (DEPLOY / filename).read_text(encoding="utf-8")
@@ -109,9 +121,9 @@ def main():
             assert not re.search(r"^\s*(extends|include):", source, re.MULTILINE), "编排必须独立完整"
             assert not any("build" in service for service in config["services"].values())
             for name, service in config["services"].items():
-                assert service["image"] == f"ghcr.io/ayflying/arkade-{name}:latest"
+                assert service["image"] == ("postgres:17-alpine" if name == "postgres" else f"ghcr.io/ayflying/arkade-{name}:latest")
         examples = {
-            "hub.env.example": ("hub-compose.yml", {"ARKADE_INITIAL_PASS", "ARKADE_AGENT_TOKEN"}),
+            "hub.env.example": ("hub-compose.yml", {"ARKADE_INITIAL_PASS", "ARKADE_AGENT_TOKEN", "ARKADE_DB_PASSWORD"}),
             "agent.env.example": ("agent-compose.yml", {"ARKADE_AGENT_TOKEN"}),
             "combined.env.example": ("combined-compose.yml", allowed),
         }

@@ -11,9 +11,9 @@ type ComposeStacks struct {
 	Name       string `json:"name"       orm:"name"        ` //
 	Content    string `json:"content"    orm:"content"     ` //
 	ConfigHash string `json:"configHash" orm:"config_hash" ` //
-	Version    int    `json:"version"    orm:"version"     ` //
-	CreatedAt  int    `json:"createdAt"  orm:"created_at"  ` //
-	UpdatedAt  int    `json:"updatedAt"  orm:"updated_at"  ` //
-	SyncedAt   int    `json:"syncedAt"   orm:"synced_at"   ` //
+	Version    int64  `json:"version"    orm:"version"     ` //
+	CreatedAt  int64  `json:"createdAt"  orm:"created_at"  ` //
+	UpdatedAt  int64  `json:"updatedAt"  orm:"updated_at"  ` //
+	SyncedAt   int64  `json:"syncedAt"   orm:"synced_at"   ` //
 	EnvContent string `json:"envContent" orm:"env_content" ` //
 }

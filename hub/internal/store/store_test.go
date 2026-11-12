@@ -7,9 +7,9 @@ package store
 // 这些性质一旦破坏，上层所有接口都会跟着错，但表现会分散在很多用例里。
 
 import (
+	"arkade/hub/internal/testdb"
 	"context"
 	"errors"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -19,7 +19,7 @@ import (
 // newTestDB 打开一个临时库。
 func newTestDB(t *testing.T) *DB {
 	t.Helper()
-	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "store.db"))
+	db, err := Open(context.Background(), testdb.New(t))
 	if err != nil {
 		t.Fatalf("打开测试数据库失败: %v", err)
 	}
@@ -69,18 +69,15 @@ func TestCreateGroupConflict(t *testing.T) {
 	}
 }
 
-// TestForeignKeysEnabled 验证 DSN 里的 PRAGMA foreign_keys(1) 确实生效。
+// TestForeignKeysEnabled verifies server-enforced PostgreSQL foreign keys.
 //
 // 这条测试的价值：整个删除逻辑都依赖外键是否开启。若某天 DSN 被改动导致
 // 外键失效，级联删除会静默不生效并留下孤儿行——那种问题极难排查。
 func TestForeignKeysEnabled(t *testing.T) {
 	db := newTestDB(t)
-	var on int
-	if err := rawDBOf(t, db).QueryRowContext(context.Background(), `PRAGMA foreign_keys`).Scan(&on); err != nil {
-		t.Fatalf("读取 PRAGMA 失败: %v", err)
-	}
-	if on != 1 {
-		t.Fatalf("外键约束必须开启（PRAGMA foreign_keys = %d）", on)
+	_, err := rawDBOf(t, db).ExecContext(context.Background(), `INSERT INTO user_groups(user_id,group_id) VALUES ('missing','missing')`)
+	if sqlState(err) != "23503" {
+		t.Fatalf("foreign key must reject orphan with SQLSTATE 23503: %v", err)
 	}
 }
 

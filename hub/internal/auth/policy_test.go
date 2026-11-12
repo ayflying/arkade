@@ -2,10 +2,10 @@ package auth
 
 import (
 	"arkade/hub/internal/store"
+	"arkade/hub/internal/testdb"
 	"arkade/hub/internal/user"
 	"context"
 	"errors"
-	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -40,7 +40,7 @@ func TestLoginLimiterConcurrentAccountAndIP(t *testing.T) {
 }
 func authFixture(t *testing.T) (*Service, *store.DB, user.User) {
 	t.Helper()
-	db, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "auth.db"))
+	db, err := store.Open(context.Background(), testdb.New(t))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -5,12 +5,12 @@ import (
 	"arkade/hub/internal/agentlink"
 	"arkade/hub/internal/controller"
 	"arkade/hub/internal/store"
+	"arkade/hub/internal/testdb"
 	"arkade/hub/internal/user"
 	"context"
 	"errors"
 	"io"
 	"log/slog"
-	"path/filepath"
 	"testing"
 	"time"
 )
@@ -26,7 +26,7 @@ func (*sessionStub) SetCookie(context.Context, string, time.Time)    {}
 func (*sessionStub) ClearCookie(context.Context)                     {}
 func setup(t *testing.T) (*Controller, *store.DB, *sessionStub) {
 	t.Helper()
-	db, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "agents.db"))
+	db, err := store.Open(t.Context(), testdb.New(t))
 	if err != nil {
 		t.Fatal(err)
 	}

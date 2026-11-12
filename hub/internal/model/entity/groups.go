@@ -9,5 +9,5 @@ type Groups struct {
 	Id          string `json:"id"          orm:"id"          ` //
 	Name        string `json:"name"        orm:"name"        ` //
 	Description string `json:"description" orm:"description" ` //
-	CreatedAt   int    `json:"createdAt"   orm:"created_at"  ` //
+	CreatedAt   int64  `json:"createdAt"   orm:"created_at"  ` //
 }

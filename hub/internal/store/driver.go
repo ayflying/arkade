@@ -1,110 +1,138 @@
 package store
 
-// driver.go：SQLite 驱动注册与 gdb 实例构造。
-//
-// ============================ 唯一约束 ============================
-// 本项目里 **sqlite 驱动只能有一个注册源**。
-//
-// GoFrame 官方驱动注册 "sqlite"；modernc.org/sqlite 的顶层包也注册 "sqlite"。
-// 两者同时出现会在 **init 阶段** panic：
-//
-//	panic: sql: Register called twice for driver sqlite
-//
-// 该 panic 早于 main()、无法 recover、编译期看不出来。
-// 因此禁止在任何文件里 import modernc.org/sqlite 的顶层包
-// （modernc.org/sqlite/lib 作为间接底层依赖存在是正常的，
-// 它是 glebarez/go-sqlite 的实现，但**不注册驱动**）。
-
 import (
 	"context"
 	"database/sql"
-	"fmt"
+	"net/url"
+	"strings"
+	"time"
 
-	// 唯一注册源。同时向 database/sql 注册 "sqlite"，
-	// 并向 gdb 注册驱动类型（gdb.New 按 Type 查找）。
-	_ "github.com/gogf/gf/contrib/drivers/sqlite/v2"
-
+	_ "github.com/gogf/gf/contrib/drivers/pgsql/v2"
 	"github.com/gogf/gf/v2/database/gdb"
+	"github.com/gogf/gf/v2/errors/gerror"
 )
 
-// driverName 是 database/sql 里的驱动名，固定为 "sqlite"
-// （官方驱动 sqlite_open.go 内部写死 sql.Open("sqlite", source)）。
-const driverName = "sqlite"
+const driverName = "postgres"
 
-// pragmaExtra 是官方驱动接受的 pragma 配置，格式 key=value&key=value。
-//
-// 注意：官方驱动**不接受** database/sql 风格的 DSN 查询参数，
-// 按 "path?_pragma=..." 写会报 "invalid link configuration"。
-// 它只认 ConfigNode 的 Name(路径) + Extra(pragma)。
-//
-// PRAGMA 理由：
-//   - journal_mode(WAL)：读不阻塞写；
-//   - foreign_keys(1)：SQLite 默认不强制外键，必须每连接开启；
-//   - busy_timeout(5000)：拿不到写锁时等待而非立刻失败；
-//   - synchronous(NORMAL)：WAL 下推荐档位（FULL 每次提交 fsync，OFF 断电可能丢事务）。
-const pragmaExtra = "journal_mode=WAL&foreign_keys=1&busy_timeout=5000&synchronous=NORMAL"
-
-// openGDB 建立一个独立的 gdb 实例并返回它。
-//
-// ============================ 为什么返回 gdb 实例而不是 *sql.DB ============================
-// 后续 DAO 迁移需要 gdb 实例（生成 DAO 的方法要绑定到具体实例，
-// 多库测试才不会串库）。*sql.DB 只是它的 Master()，两者必须**同源同生命周期**，
-// 否则关掉 *sql.DB 之后 gdb 实例仍持有已关闭的池。
-//
-// 连接池参数在这里（open 阶段）就设好，不留"Open 之后再改"的窗口——
-// 那个窗口里若有连接被建出来，就会带着默认池参数。
-func openGDB(path string) (gdb.DB, error) {
-	node := gdb.ConfigNode{
-		Type:  "sqlite",
-		Name:  path,
-		Extra: pragmaExtra,
-
-		// 单连接是本项目的**简化并发策略**，不是 SQLite 的硬性要求：
-		// WAL 下读与写可并发，多连接也能工作，只是写与写之间仍需串行，
-		// 需要自己处理 busy/locked 重试。这里取 1 换取行为可预期。
-		// 字段名是 MaxOpenConnCount/MaxIdleConnCount（不是 MaxOpenConns）。
-		MaxOpenConnCount: 1,
-		MaxIdleConnCount: 1,
-
-		// 关闭 gdb 的自动时间维护：本库的时间列是 INTEGER Unix 秒，
-		// 由业务代码显式写入（timeToUnix），与 gdb 自动维护的 datetime 字符串不同格式。
-		// 两者混用会让同一列出现两种表示，排序与比较失真。
-		TimeMaintainDisabled: true,
-	}
-	gdbInst, err := gdb.New(node)
+// openGDB accepts PostgreSQL URL or libpq keyword DSNs, never local files.
+// Extra values are URL-encoded for GoFrame then libpq-quoted for the driver.
+func openGDB(dsn string) (gdb.DB, error) {
+	params, err := parseDSN(dsn)
 	if err != nil {
-		return nil, fmt.Errorf("打开数据库失败: %w", err)
+		return nil, err
 	}
-	return gdbInst, nil
+	// Schema is an application invariant, not a caller-controlled DSN option.
+	params.Set("search_path", "public")
+	for key, values := range params {
+		if len(values) != 1 {
+			return nil, gerror.Newf("PostgreSQL DSN 参数 %s 重复", key)
+		}
+		for _, c := range key {
+			if !(c >= 'a' && c <= 'z' || c == '_') {
+				return nil, gerror.New("PostgreSQL DSN 参数名无效")
+			}
+		}
+		params.Set(key, "'"+strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(values[0])+"'")
+	}
+	inst, err := gdb.New(gdb.ConfigNode{
+		Type: "pgsql", Host: "localhost", User: "postgres", Namespace: "public",
+		Extra: params.Encode(), MaxOpenConnCount: 20, MaxIdleConnCount: 10,
+		MaxConnLifeTime: 30 * time.Minute, TimeMaintainDisabled: true,
+	})
+	if err != nil {
+		return nil, gerror.New("打开 PostgreSQL 数据库失败（请检查数据库配置）")
+	}
+	return inst, nil
 }
 
-// masterOf 取 gdb 实例的底层 *sql.DB，失败时释放实例。
-//
-// 单独抽出来是因为"取 Master 失败"是一个容易漏掉的资源泄漏点：
-// gdb.New 已经建好实例与连接池，取不到 Master 时必须关掉它，
-// 否则临时目录里的库文件句柄会一直占着（Windows 上尤其明显，
-// 会导致 t.TempDir() 清理失败）。
-func masterOf(gdbInst gdb.DB) (*sql.DB, error) {
-	sqlDB, err := gdbInst.Master()
-	if err != nil {
-		closeGDB(gdbInst)
-		return nil, fmt.Errorf("取得数据库连接失败: %w", err)
+// parseDSN parses URL and libpq keyword DSNs without embedding secrets in errors.
+func parseDSN(dsn string) (url.Values, error) {
+	params := url.Values{}
+	invalid := func() (url.Values, error) {
+		return nil, gerror.New("无效 PostgreSQL DSN（需要 postgres URL 或 libpq keyword DSN）")
 	}
-	if sqlDB == nil {
-		closeGDB(gdbInst)
-		return nil, fmt.Errorf("打开数据库失败: 未取得有效连接")
+	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
+		u, err := url.Parse(dsn)
+		if err != nil || u.Hostname() == "" || strings.TrimPrefix(u.Path, "/") == "" {
+			return invalid()
+		}
+		params, err = url.ParseQuery(u.RawQuery)
+		if err != nil {
+			return invalid()
+		}
+		params.Set("host", u.Hostname())
+		if u.Port() != "" {
+			params.Set("port", u.Port())
+		}
+		params.Set("dbname", strings.TrimPrefix(u.Path, "/"))
+		if u.User != nil {
+			params.Set("user", u.User.Username())
+			if password, ok := u.User.Password(); ok {
+				params.Set("password", password)
+			}
+		}
+		return params, nil
 	}
-	return sqlDB, nil
+	for rest := strings.TrimSpace(dsn); rest != ""; {
+		i := strings.IndexByte(rest, '=')
+		if i <= 0 {
+			return invalid()
+		}
+		key := strings.TrimSpace(rest[:i])
+		rest = strings.TrimLeft(rest[i+1:], " \t\r\n")
+		var value strings.Builder
+		quoted := len(rest) > 0 && rest[0] == '\''
+		if quoted {
+			rest = rest[1:]
+		}
+		closed := !quoted
+		for len(rest) > 0 {
+			c := rest[0]
+			rest = rest[1:]
+			if c == '\\' {
+				if rest == "" {
+					return invalid()
+				}
+				value.WriteByte(rest[0])
+				rest = rest[1:]
+				continue
+			}
+			if quoted && c == '\'' {
+				closed = true
+				break
+			}
+			if !quoted && strings.ContainsRune(" \t\r\n", rune(c)) {
+				break
+			}
+			value.WriteByte(c)
+		}
+		if !closed || (quoted && rest != "" && !strings.ContainsRune(" \t\r\n", rune(rest[0]))) {
+			return invalid()
+		}
+		params.Set(key, value.String())
+		rest = strings.TrimSpace(rest)
+	}
+	if params.Get("dbname") == "" {
+		return invalid()
+	}
+	return params, nil
 }
 
-// closeGDB 关闭 gdb 实例。
-//
-// gdb.DB 只提供 Close(ctx)，且它关的就是底层的 *sql.DB。
-// 用 context.Background 而不是调用方的 ctx：关闭动作不应该
-// 因为业务请求被取消而半途而废（那会泄漏连接）。
-func closeGDB(gdbInst gdb.DB) {
-	if gdbInst == nil {
-		return
+func masterOf(inst gdb.DB) (*sql.DB, error) {
+	db, err := inst.Master()
+	if err != nil {
+		closeGDB(inst)
+		return nil, gerror.Wrap(err, "取得数据库连接失败")
 	}
-	_ = gdbInst.Close(context.Background())
+	if db == nil {
+		closeGDB(inst)
+		return nil, gerror.New("未取得有效数据库连接")
+	}
+	return db, nil
+}
+
+func closeGDB(inst gdb.DB) {
+	if inst != nil {
+		_ = inst.Close(context.Background())
+	}
 }

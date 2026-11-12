@@ -3,17 +3,17 @@ package account
 import (
 	"arkade/hub/internal/auth"
 	"arkade/hub/internal/store"
+	"arkade/hub/internal/testdb"
 	"arkade/hub/internal/user"
 	"context"
 	"errors"
-	"path/filepath"
 	"testing"
 	"time"
 )
 
 func fixture(t *testing.T) (*Service, *store.DB) {
 	t.Helper()
-	db, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "account.db"))
+	db, err := store.Open(context.Background(), testdb.New(t))
 	if err != nil {
 		t.Fatal(err)
 	}

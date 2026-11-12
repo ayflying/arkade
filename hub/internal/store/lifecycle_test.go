@@ -8,8 +8,8 @@ package store
 // 因此这里必须**等一段时间后**再查统计。
 
 import (
+	"arkade/hub/internal/testdb"
 	"context"
-	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -20,7 +20,7 @@ import (
 // TestCloseWaitsForBackgroundPrune 关闭时等待后台清理任务。
 func TestCloseWaitsForBackgroundPrune(t *testing.T) {
 	ctx := context.Background()
-	db, err := Open(ctx, filepath.Join(t.TempDir(), "life.db"))
+	db, err := Open(ctx, testdb.New(t))
 	if err != nil {
 		t.Fatalf("打开库失败: %v", err)
 	}
@@ -45,7 +45,7 @@ func TestCloseWaitsForBackgroundPrune(t *testing.T) {
 // TestBackgroundTaskRejectedAfterClose 关闭后再提交后台任务必须被拒绝。
 func TestBackgroundTaskRejectedAfterClose(t *testing.T) {
 	ctx := context.Background()
-	db, err := Open(ctx, filepath.Join(t.TempDir(), "gate.db"))
+	db, err := Open(ctx, testdb.New(t))
 	if err != nil {
 		t.Fatalf("打开库失败: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestBackgroundTaskRejectedAfterClose(t *testing.T) {
 // TestCloseIsIdempotent 重复关闭不应 panic 或报错。
 func TestCloseIsIdempotent(t *testing.T) {
 	ctx := context.Background()
-	db, err := Open(ctx, filepath.Join(t.TempDir(), "idem.db"))
+	db, err := Open(ctx, testdb.New(t))
 	if err != nil {
 		t.Fatalf("打开库失败: %v", err)
 	}

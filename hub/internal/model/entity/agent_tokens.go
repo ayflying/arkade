@@ -8,5 +8,5 @@ package entity
 type AgentTokens struct {
 	TokenHash string `json:"tokenHash" orm:"token_hash" ` //
 	AgentId   string `json:"agentId"   orm:"agent_id"   ` //
-	CreatedAt int    `json:"createdAt" orm:"created_at" ` //
+	CreatedAt int64  `json:"createdAt" orm:"created_at" ` //
 }

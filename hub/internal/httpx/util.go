@@ -9,8 +9,7 @@ import (
 
 // randomSuffix 生成 8 字节随机十六进制串，用于生成稳定的文本主键。
 //
-// 为什么不用自增：SQLite 自增语义是 SQLite 专有（AUTOINCREMENT），
-// 且迁移数据库时需要重建序列。用应用层生成的随机 ID 与数据库无关。
+// 应用层随机 ID 不依赖数据库序列，并允许在写入 PostgreSQL 前分配标识。
 func randomSuffix() string {
 	buf := make([]byte, 8)
 	if _, err := rand.Read(buf); err != nil {

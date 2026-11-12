@@ -1,11 +1,11 @@
 package audit
 
 import (
+	"arkade/hub/internal/testdb"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
@@ -29,7 +29,7 @@ func (testSession) ClearCookie(context.Context)                     {}
 
 func testDB(t *testing.T) *store.DB {
 	t.Helper()
-	db, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "audit.db"))
+	db, err := store.Open(t.Context(), testdb.New(t))
 	if err != nil {
 		t.Fatal(err)
 	}

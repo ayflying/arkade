@@ -9,13 +9,13 @@ import (
 
 func TestLoadEnvOnlyAndFileOverrides(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "hub.toml")
-	if err := os.WriteFile(path, []byte("[server]\naddr = \"127.0.0.1:1234\"\ntimeout = \"10s\"\n[auth]\ninitial_pass = \"FilePass123\"\n[database]\npath = \"file.db\"\n[web]\ndist = \"file-dist\"\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("[server]\naddr = \"127.0.0.1:1234\"\ntimeout = \"10s\"\n[auth]\ninitial_pass = \"FilePass123\"\n[database]\ndsn = \"host=localhost dbname=file_db\"\n[web]\ndist = \"file-dist\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("ARKADE_INITIAL_PASS", "EnvPass123!")
 	t.Setenv("ARKADE_INITIAL_USER", "env-admin")
 	t.Setenv("ARKADE_AGENT_TOKEN", "env-token-0123456789")
-	t.Setenv("ARKADE_DB_PATH", "/data/hub.db")
+	t.Setenv("ARKADE_DB_DSN", "host=postgres user=arkade dbname=arkade sslmode=disable")
 	t.Setenv("ARKADE_WEB_DIST", "/app/web/dist")
 	t.Setenv("ARKADE_LISTEN", "0.0.0.0:9090")
 	t.Setenv("ARKADE_BASE_URL", "https://hub.example.com")
@@ -36,7 +36,7 @@ func TestLoadEnvOnlyAndFileOverrides(t *testing.T) {
 			if cfg.Auth.InitialPass != "EnvPass123!" || cfg.Auth.InitialUser != "env-admin" || cfg.Auth.AgentToken != "env-token-0123456789" || cfg.Auth.SessionTTL != 48*time.Hour {
 				t.Fatal("认证环境变量未生效")
 			}
-			if cfg.Database.Path != "/data/hub.db" || cfg.Web.Dist != "/app/web/dist" || cfg.Server.Addr != "0.0.0.0:9090" || cfg.Server.BaseURL != "https://hub.example.com" || cfg.Auth.SettingsKeyFile != "/data/settings.key" || cfg.Auth.AllowInsecureOIDCLoopback {
+			if cfg.Database.DSN != "host=postgres user=arkade dbname=arkade sslmode=disable" || cfg.Web.Dist != "/app/web/dist" || cfg.Server.Addr != "0.0.0.0:9090" || cfg.Server.BaseURL != "https://hub.example.com" || cfg.Auth.SettingsKeyFile != "/data/settings.key" || cfg.Auth.AllowInsecureOIDCLoopback {
 				t.Fatal("容器环境变量未生效")
 			}
 			wantTimeout := 30 * time.Second

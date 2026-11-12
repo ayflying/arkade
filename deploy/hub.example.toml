@@ -11,10 +11,13 @@ base_url = "http://127.0.0.1:8080"
 timeout = "30s"
 
 [database]
-# 首期 SQLite 单实例（决策 D-03），父目录不存在会自动创建
-path = "./data/hub.db"
+# 仅 PostgreSQL，新库初始化，不兼容旧 SQLite 文件。
+# 密码通过 ARKADE_DB_PASSWORD 等分字段环境变量或 ARKADE_DB_DSN 注入。
+dsn = "host=localhost port=5432 user=arkade dbname=arkade sslmode=disable"
 
 [auth]
+# 与数据库地址解耦；备份数据库时同时备份此文件。
+settings_key_file = "./data/settings.key"
 # 登录会话有效期，支持 30m / 24h / 72h 这类写法
 session_ttl = "72h"
 # Agent 反向连接使用的预共享 Token，至少 16 位。

@@ -2,6 +2,7 @@ package httpx
 
 import (
 	"arkade/hub/internal/config"
+	"arkade/hub/internal/testdb"
 	"context"
 	"errors"
 	"io"
@@ -13,7 +14,8 @@ import (
 
 func TestRuntimeWatcherCloseHookPrecedesStorageAndRetries(t *testing.T) {
 	cfg := config.Default()
-	cfg.Database.Path = filepath.Join(t.TempDir(), "watchers.db")
+	cfg.Database.DSN = testdb.New(t)
+	cfg.Auth.SettingsKeyFile = filepath.Join(t.TempDir(), "settings.key")
 	cfg.Auth.InitialPass = "RuntimeWatcherPass123!"
 	cfg.Auth.AgentToken = "runtime-watcher-token"
 	cfg.Web.Dist = ""

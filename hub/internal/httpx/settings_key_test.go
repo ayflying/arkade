@@ -8,24 +8,30 @@ import (
 	"testing"
 )
 
+func TestSettingsKeyRequiresExplicitPath(t *testing.T) {
+	if _, err := loadSettingsKey(""); err == nil {
+		t.Fatal("empty key path must not fall back to a database-derived filename")
+	}
+}
+
 func TestSettingsKeyPersistenceAndFailClosed(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "hub.db")
-	first, err := loadSettingsKey(path, "")
+	path := filepath.Join(dir, "settings.key")
+	first, err := loadSettingsKey(path)
 	if err != nil || len(first) != 32 {
 		t.Fatalf("create key: %v", err)
 	}
-	second, err := loadSettingsKey(path, "")
+	second, err := loadSettingsKey(path)
 	if err != nil || !bytes.Equal(first, second) {
 		t.Fatalf("restart changed key: %v", err)
 	}
-	if err := os.WriteFile(path+".settings.key", []byte("corrupt"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte("corrupt"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := loadSettingsKey(path, ""); err == nil {
+	if _, err := loadSettingsKey(path); err == nil {
 		t.Fatal("silently replaced corrupt key")
 	}
-	raw, err := os.ReadFile(path + ".settings.key")
+	raw, err := os.ReadFile(path)
 	if err != nil || string(raw) != "corrupt" {
 		t.Fatal("corrupt key was overwritten")
 	}
@@ -33,7 +39,7 @@ func TestSettingsKeyPersistenceAndFailClosed(t *testing.T) {
 func TestSettingsKeyConfiguredPathAndPermissions(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "secrets", "identity.key")
-	first, err := loadSettingsKey(filepath.Join(dir, "hub.db"), path)
+	first, err := loadSettingsKey(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +57,7 @@ func TestSettingsKeyConfiguredPathAndPermissions(t *testing.T) {
 		if err := os.Chmod(path, 0644); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := loadSettingsKey("", path); err == nil {
+		if _, err := loadSettingsKey(path); err == nil {
 			t.Fatal("accepted globally readable key")
 		}
 		if err := os.Chmod(path, 0600); err != nil {
@@ -61,11 +67,11 @@ func TestSettingsKeyConfiguredPathAndPermissions(t *testing.T) {
 		if err := os.Symlink(path, alias); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := loadSettingsKey("", alias); err == nil {
+		if _, err := loadSettingsKey(alias); err == nil {
 			t.Fatal("accepted symlink key")
 		}
 	}
-	again, err := loadSettingsKey("", path)
+	again, err := loadSettingsKey(path)
 	if err != nil || !bytes.Equal(first, again) {
 		t.Fatalf("configured key changed: %v", err)
 	}

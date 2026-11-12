@@ -1,13 +1,13 @@
 package imagetasks
 
 import (
+	"arkade/hub/internal/testdb"
 	"context"
 	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -56,7 +56,7 @@ func (backend) Release(context.Context, string, string) error { return nil }
 
 func setup(t *testing.T) (*Controller, *sessionStub) {
 	t.Helper()
-	db, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "images.db"))
+	db, err := store.Open(context.Background(), testdb.New(t))
 	if err != nil {
 		t.Fatal(err)
 	}

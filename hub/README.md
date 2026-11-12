@@ -2,6 +2,12 @@
 
 控制面服务。负责 Web 界面、用户鉴权、Agent 连接管理、容器操作下发。**不直连任何 Docker 守护进程**（架构红线，见 `docs/01-architecture.md`）。
 
+## 当前数据库与运行方式
+
+默认且唯一业务数据库为 PostgreSQL，使用 GoFrame 官方 pgsql 驱动与 gdb。此版本是全新数据库，不兼容/导入 SQLite；原 SQLite 专用备份工具已移除。运行时通过环境变量配置连接，容器不要求 TOML；普通参数直接写编排，只有密码和令牌引用对应 `.env`。
+
+服务器仅需一份完整编排和对应凭据文件，详见 [独立容器部署](../deploy/docker/README.md) 和 [PG 新部署/备份](../docs/18-manual-goframe-deployment.md)。Hub OIDC 主密钥独立持久化，不再从数据库文件路径推导。
+
 ## 目录结构
 
 ```
@@ -9,7 +15,7 @@ hub/
 ├── cmd/hub/main.go              # 进程入口：解析参数、加载配置、优雅退出
 └── internal/
     ├── config/                  # TOML 配置加载与校验（未知字段直接拒绝）
-    ├── store/                   # SQLite 数据访问层 + 版本化迁移器
+    ├── store/                   # GoFrame PostgreSQL 数据访问层（版本化建表在 dbmigrate）
     │   ├── store.go             # 连接池与事务封装（单写连接 + WAL）
     │   ├── migrate.go           # 迁移执行器（事务内执行、失败整体回滚）
     │   ├── migrate_sql.go       # 迁移脚本（只增不改）
@@ -70,6 +76,8 @@ Agent 不在线时，`Registry.Call` 立刻返回 `agent_offline`（HTTP 503）�
 
 ## 开发
 
+数据库测试必须设置 `ARKADE_TEST_PG_DSN`，使用具有 CREATEDB 权限的专用隔离测试 PostgreSQL，不可指向生产账号。测试创建独立库并清理，未配置时明确失败。
+
 ```bash
 go build -o bin/arkade-hub ./cmd/hub
 go test ./... -count=1
@@ -82,4 +90,4 @@ gofmt -l .
 - `internal/config`：配置校验、未知字段拒绝、时长解析边界
 - `internal/httpx`：鉴权 401 契约、登录成败、账号枚举防护、退出失效、空列表序列化、未知 API 返回 JSON，以及通过真实 WebSocket 的 Agent 握手、请求往返、心跳、离线回调、Token 校验
 
-未覆盖（已知缺口）：`store` 与 `agentlink` 尚无独立单测，目前依赖 `httpx` 的集成测试间接覆盖。
+`store` 已有真实 PostgreSQL 仓储及跨连接并发回归；`dbmigrate` 验证新库初始化、重复启动、脏位、校验和、结构漂移及锁等待。`agentlink` 另有独立协议测试。测试通过不代表生产部署或数据库恢复演练已完成。

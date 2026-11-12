@@ -8,6 +8,6 @@ package entity
 type Sessions struct {
 	TokenHash string `json:"tokenHash" orm:"token_hash" ` //
 	UserId    string `json:"userId"    orm:"user_id"    ` //
-	CreatedAt int    `json:"createdAt" orm:"created_at" ` //
-	ExpiresAt int    `json:"expiresAt" orm:"expires_at" ` //
+	CreatedAt int64  `json:"createdAt" orm:"created_at" ` //
+	ExpiresAt int64  `json:"expiresAt" orm:"expires_at" ` //
 }
