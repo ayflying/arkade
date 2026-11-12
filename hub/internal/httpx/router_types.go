@@ -22,7 +22,7 @@ type (
 
 // serverSeq 用于生成唯一的 ghttp 实例名。
 //
-// 为什么必须唯一（实测结论，见 tools/gf-http-probe）：
+// 为什么必须唯一（GoFrame 实例生命周期约束）：
 //
 //   - ghttp 实例经包级全局注册表 `serverMapping` 管理，同名**必然复用同一实例**；
 //   - 没有 RemoveServer / 清空路由的 API，Shutdown 也不摘除条目；

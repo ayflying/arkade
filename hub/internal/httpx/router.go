@@ -114,7 +114,7 @@ func globalChain(h http.Handler, log *slog.Logger) http.Handler {
 // 若每次 NewRouter 都用固定名字，测试之间会共享路由表，而重复注册
 // 同一 route 会走 `Logger().Fatalf` **直接终止进程**——
 // 表现为 `go test` 无输出 FAIL，极难排查。
-// 因此这里用进程内自增序号生成唯一名字（详见 tools/gf-http-probe 的实测记录）。
+// 因此这里用进程内自增序号生成唯一名字，避免多个路由实例相互干扰。
 func NewRouter(d Deps) *ghttp.Server {
 	if d.ImageTasks == nil {
 		d.ImageTasks = imagetask.New(agentlink.NewImageBackend(d.Ops))
