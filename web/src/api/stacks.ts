@@ -152,7 +152,7 @@ function normalizeExternal(raw: ExternalStack): ExternalStack {
     managed: raw.managed === true,
     auto_adopt_status: status,
     /*
-     * 旧 Hub（status 为 unknown）**不保留 reason**：
+     * 无法确认状态时**不保留 reason**：
      * 契约里 reason 只在 skipped/failed 时有意义，unknown 下带着只会被误显示成
      * 「这台 Hub 说有原因」，反而误导。宁可丢掉也不推测。
      */
@@ -170,7 +170,6 @@ function normalizeExternal(raw: ExternalStack): ExternalStack {
 export async function listStacks(agentId: string): Promise<StackListResponse> {
   const res = await httpGet<StackListResponse>(stacksBase(agentId))
   return {
-    ...res,
     stacks: Array.isArray(res.stacks) ? res.stacks.map(normalizeStack) : [],
     agent_online: res.agent_online === true,
     // 外部项目逐个兜底：字段缺失即未知，不退化成「0 个容器」
@@ -196,12 +195,8 @@ export async function getUnifiedStack(agentId: string, name: string): Promise<im
 }
 
 export async function getStack(agentId: string, name: string): Promise<StackDetail> {
-  const res = await httpGet<StackEnvelope & { content?: string }>(stackPath(agentId, name))
-  return {
-    ...normalizeStack(res.stack),
-    // 后端不再返回该字段；保留兜底以防旧响应，但没有就绝不能填成空串当内容用
-    ...(typeof res.content === 'string' ? { content: res.content } : {})
-  }
+  const res = await httpGet<StackEnvelope>(stackPath(agentId, name))
+  return normalizeStack(res.stack)
 }
 
 /**
@@ -210,7 +205,7 @@ export async function getStack(agentId: string, name: string): Promise<StackDeta
  * 后端已改为 JSON 返回 `{content, env_content, version}`，且仅 manage 权限可读、
  * 响应带 `Cache-Control: no-store`（内容含 .env 里的密钥，不能被缓存）。
  *
- * 三个字段都做兜底：`.env` 可能为空串、也可能因后端版本较旧而缺失，
+ * 三个字段都做保守校验：`.env` 允许为空串，异常响应不假造有效配置，
  * 直接 `.trim()` 会炸在 undefined 上。
  */
 export async function getStackConfig(agentId: string, name: string): Promise<StackConfig> {

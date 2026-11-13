@@ -43,10 +43,8 @@ const (
 )
 
 var (
-	// ErrComposeSourceUnavailable 表示没有可用的来源信息（旧的分类错误）。
-	//
-	// 具体原因现在由 SourceBlockerError.Reason 承载，
-	// 这里保留是为了让已有测试与调用方能识别大类。
+	// ErrComposeSourceUnavailable 表示没有可用的来源信息。
+	// SourceBlockerError.Reason 提供详细原因，哨兵错误用于分类判断。
 	ErrComposeSourceUnavailable = errors.New("该项目没有可用的配置来源信息")
 	// ErrComposeSourceUnsafePath 表示标签里给出的路径被安全规则拒绝。
 	ErrComposeSourceUnsafePath = errors.New("该项目声明的配置路径未被允许读取")
@@ -54,16 +52,15 @@ var (
 
 // ComposeSourceRuntime 是可选能力：只读读回外部编排的配置文件。
 //
-// 与 VolumeFileRuntime 同样的做法——独立可选接口，不改既有 Runtime 接口，
-// 因此所有已有 mock 无需改动。
+// 与 VolumeFileRuntime 一样使用独立能力接口，使不支持外部配置读取的运行时
+// 无需暴露该方法。
 type ComposeSourceRuntime interface {
 	RunComposeSource(ctx context.Context, name string) (string, error)
 }
 
 // ComposeSourceRawRuntime 是"原样读取"能力（未接管项目的查看/编辑）。
 //
-// 单独一个接口而不是给 ComposeSourceRuntime 加方法：
-// 这样已实现的 mock 不需要改，旧版本调用路径行为完全不变。
+// 与自动接管所需的普通读取能力分离，避免后台扫描隐式获得增强读取权限。
 type ComposeSourceRawRuntime interface {
 	// RunComposeSourceRaw 与 RunComposeSource 读取同样的内容，
 	// 但会给 helper 加 DAC_READ_SEARCH，以读取 0600/0700 的配置。

@@ -134,41 +134,6 @@ func (d *DB) ListComposeStacks(ctx context.Context, agentID string) ([]ComposeSt
 	return out, nil
 }
 
-// UpdateComposeStack 以乐观锁方式更新编排内容。
-//
-// 乐观锁是这里的核心：WHERE 里带上调用方读到的 version，只有它仍然匹配才更新。
-// 为什么必须这么做——编排文件是多人可编辑的长文本，两个人同时打开详情页、
-// 各自改一段再先后保存，如果没有版本校验，后保存的人会静默覆盖先保存的内容，
-// 而且双方都不会收到任何提示。这种数据丢失比报错难发现得多。
-//
-// 返回的三个值：
-//   - ComposeStack：更新后的完整记录（带上新的 version，供前端刷新）
-//   - bool：是否命中（false 表示 version 不匹配）
-//   - error：真正的数据库错误
-func (d *DB) UpdateComposeStack(ctx context.Context, agentID, name string, expectedVersion int64, content, configHash string) (ComposeStack, bool, error) {
-	// 不读取后回写 env_content：只更新这些列，数据库原子保留当前环境文件。
-	q := `UPDATE compose_stacks
-	           SET content = ?, config_hash = ?, version = version + 1, updated_at = ?
-	           WHERE agent_id = ? AND name = ? AND version = ?
-	           RETURNING ` + composeStackColumns
-	updated, err := d.composeStackViaReturning(ctx, q,
-		content, configHash, time.Now().UTC().Unix(), agentID, name, expectedVersion)
-	if errors.Is(err, ErrNotFound) {
-		// 没命中分两种情况，必须区分：
-		//   - 记录不存在 → ErrNotFound（404）
-		//   - 记录存在但版本不符 → 乐观锁冲突（409）
-		// 两者对前端的处理完全不同：一个是"记录没了"，一个是"重新加载再改"。
-		if _, gerr := d.GetComposeStack(ctx, agentID, name); gerr != nil {
-			return ComposeStack{}, false, gerr
-		}
-		return ComposeStack{}, false, nil
-	}
-	if err != nil {
-		return ComposeStack{}, false, gerror.Wrap(err, "更新编排失败")
-	}
-	return updated, true, nil
-}
-
 // UpdateComposeProject 原子更新 compose、环境文件、哈希与版本。
 // expectedVersion 不匹配时不写入任何字段；at 是本次保存的时间。
 // RETURNING 与写入属于同一条语句，返回的记录不会混入后续并发更新。
@@ -180,7 +145,7 @@ func (d *DB) UpdateComposeProject(ctx context.Context, agentID, name, content, e
 	updated, err := d.composeStackViaReturning(ctx, q,
 		content, envContent, configHash, timeToUnix(at), agentID, name, expectedVersion)
 	if errors.Is(err, ErrNotFound) {
-		// 保留旧更新接口的语义：不存在是 404，版本过期是冲突。
+		// 不存在返回 404，版本过期返回冲突。
 		if _, gerr := d.GetComposeStack(ctx, agentID, name); gerr != nil {
 			return ComposeStack{}, false, gerr
 		}
@@ -218,7 +183,7 @@ func (d *DB) CountComposeStacks(ctx context.Context, agentID string) (int, error
 
 // MarkComposeStackSynced 记录一次成功的下发。
 //
-// 单独一个方法而不是并进 UpdateComposeStack，是因为两者的触发时机不同：
+// 单独一个方法而不是并进 UpdateComposeProject，是因为两者的触发时机不同：
 // 更新发生在用户保存时，同步发生在 Agent 真的落盘并执行之后。
 // 中间可能隔着一次失败重试，如果把 synced_at 写进更新语句里，
 // 就会出现"用户保存即认为已同步"的错误结论。

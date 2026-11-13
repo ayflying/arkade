@@ -21,11 +21,9 @@ package migrate
 // 任何一个字节不同都会让 drift 判定永远为真。
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
+	"arkade/protocol/composehash"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 )
 
@@ -108,32 +106,9 @@ func ImportComposition(importer CompositionImporter, req ComposeArchive) (Compos
 	return ComposeImportResult{Name: name, ConfigHash: hash}, nil
 }
 
-// ComposeProjectHash 计算编排配置的哈希（与 Hub 侧算法逐字节一致）。
-//
-// ============================ 这个函数必须与 Hub 对齐 ============================
-// 算法是：
-//
-//	env 为空 → sha256(content) 的十六进制前 16 位
-//	env 非空 → sha256("arkade.compose.project.v1\0content\0" + len(content) + "\0" +
-//	                 content + "env\0" + len(env) + "\0" + env) 的前 16 位
-//
-// 长度前缀的作用是避免"不同文件分界得到相同输入"——
-// 例如 content="ab" env="c" 与 content="a" env="bc" 若直接拼接就得到同一串。
+// ComposeProjectHash 复用共享项目协议，迁移与普通编排使用完全相同的哈希。
 func ComposeProjectHash(content, envContent string) string {
-	if envContent == "" {
-		sum := sha256.Sum256([]byte(content))
-		return hex.EncodeToString(sum[:])[:composeHashHexLen]
-	}
-	h := sha256.New()
-	h.Write([]byte("arkade.compose.project.v1\x00content\x00"))
-	h.Write([]byte(strconv.Itoa(len(content))))
-	h.Write([]byte("\x00"))
-	h.Write([]byte(content))
-	h.Write([]byte("env\x00"))
-	h.Write([]byte(strconv.Itoa(len(envContent))))
-	h.Write([]byte("\x00"))
-	h.Write([]byte(envContent))
-	return hex.EncodeToString(h.Sum(nil))[:composeHashHexLen]
+	return composehash.Project(content, envContent)
 }
 
 // validComposeName 校验编排项目名。

@@ -25,7 +25,6 @@
 - 镜像任务列表及取消：真实 HTTP typed 路由、任务所有者、同权限不同用户、源/目标撤权、taskID query 别名遮蔽、空数组过滤、真实 fakeAgent WebSocket RPC 取消。
 - 外部编排 apply：在线成功、path 与 body/query 名称对抗、错误 hash 无 DB/adopt 副作用、成功 sync 状态与记录。
 - 在线资源映射：容器详情、日志、启停、重启、删除；编排 ps/logs/up/down/stop/restart/pull/rebuild/backup/remove。验证 RPC payload/响应/标志及必要 DB 副作用，不仅测试离线 503。
-- 历史数据库：v6/v7/v8/v9 × 生产 Run/Open，共八个升级场景。原表原列逐值比对，精确保留 compose/env/draft/token/grant/session/audit、关系及秘密；按真实版本构造，不伪造当版尚不存在的 operation 表。升级到 v10 后写 operation，再经两种生产重启入口验证完整保留。
 
 ### 前端
 

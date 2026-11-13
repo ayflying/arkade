@@ -20,7 +20,6 @@ func TestLoadEnvOnlyAndFileOverrides(t *testing.T) {
 	t.Setenv("ARKADE_LISTEN", "0.0.0.0:9090")
 	t.Setenv("ARKADE_BASE_URL", "https://hub.example.com")
 	t.Setenv("ARKADE_SESSION_TTL", "48h")
-	t.Setenv("ARKADE_SESSION_TTL_SEC", "")
 	t.Setenv("ARKADE_SETTINGS_KEY_FILE", "/data/settings.key")
 	t.Setenv("ARKADE_ALLOW_INSECURE_OIDC_LOOPBACK", "false")
 

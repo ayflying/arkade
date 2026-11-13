@@ -39,9 +39,7 @@ const router = useRouter()
 const { agentId, isOnline: storeOnline, displayName } = useCurrentAgent()
 
 const stacks = ref<StackSummary[]>([])
-/** 未纳管编排：Agent 上有、Hub 里没有（只有名字，旧字段兼容） */
-const orphans = ref<string[]>([])
-/** 未纳管项目的详情（新字段，可用于画成表格）；后端未提供时为空 */
+/** 未纳管项目的详情；离线无数据时为空 */
 const externalStacks = ref<ExternalStack[]>([])
 /** 后端告知的 Agent 在线状态（离线时接口仍返回 200） */
 const agentOnlineFromApi = ref(true)
@@ -65,7 +63,6 @@ async function refresh(silent = false): Promise<void> {
   try {
     const res = await listStacks(agentId.value)
     stacks.value = res.stacks
-    orphans.value = Array.isArray(res.orphans) ? res.orphans : []
     externalStacks.value = Array.isArray(res.external_stacks) ? res.external_stacks : []
     agentOnlineFromApi.value = res.agent_online
     loaded.value = true
@@ -114,13 +111,6 @@ const subtitle = computed(() => {
   return `${displayName.value} · ${stats.value.total} 个编排（运行中 ${stats.value.running} 个）${unregText}${unsyncText}${driftText}`
 })
 
-/**
- * 是否需要显示「自动接管」列。
- *
- * 旧 Hub 不返回该字段，所有行都是 unknown。此时**整列不显示**，
- * 否则会多出一列全是空白，用户会以为功能坏了。
- * 任一行动起来才显示整列，保证表格结构稳定（不会逐行时有时无）。
- */
 /** 进入详情：所有行都走同一个详情页（统一的编排入口） */
 function goDetail(name: string): void {
   if (agentId.value === null) return

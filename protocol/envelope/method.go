@@ -11,9 +11,6 @@ package envelope
 const (
 	MethodVolumeFiles   = "volume.files"
 	MethodComposeSource = "compose.source"
-	// 编排镜像更新：异步任务，start 立即返回 task_id，get 增量轮询输出。
-	MethodComposePullStart = "compose.pull.start"
-	MethodComposePullGet   = "compose.pull.get"
 	// 连接与会话（Agent → Hub 建连后握手）
 	MethodHello        = "agent.hello"         // Agent 上线握手（request/response）
 	MethodHeartbeat    = "agent.heartbeat"     // 心跳（event），携带简要状态摘要
@@ -144,8 +141,8 @@ const (
 	MethodVolumeImportChunkPut  = "volume.import.chunk.put"
 	MethodVolumeImportCommit    = "volume.import.commit"
 	MethodVolumeImportStatus    = "volume.import.status"
- MethodVolumeImportCancel = "volume.import.cancel"
- MethodComposeMigrationPlan = "compose.migration.plan"
+	MethodVolumeImportCancel    = "volume.import.cancel"
+	MethodComposeMigrationPlan  = "compose.migration.plan"
 	MethodComposeImport         = "compose.import"
 )
 
@@ -210,7 +207,7 @@ const (
 	LocalMethodVolumeImportChunkPut  = MethodVolumeImportChunkPut
 	LocalMethodVolumeImportCommit    = MethodVolumeImportCommit
 	LocalMethodVolumeImportStatus    = MethodVolumeImportStatus
- LocalMethodVolumeImportCancel = MethodVolumeImportCancel
- LocalMethodComposeMigrationPlan = MethodComposeMigrationPlan
+	LocalMethodVolumeImportCancel    = MethodVolumeImportCancel
+	LocalMethodComposeMigrationPlan  = MethodComposeMigrationPlan
 	LocalMethodComposeImport         = MethodComposeImport
 )

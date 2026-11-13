@@ -55,17 +55,15 @@ type ContainerSummary struct {
 	State  string `json:"state"`  // running / exited / paused / created …
 	Status string `json:"status"` // 人类可读状态文本
 	Origin string `json:"origin"` // arkade / adopted / discovered，见 01 架构 4.2
-	// StackID 是**兼容字段名**，实际填的是 compose 项目名
-	// （容器标签 com.docker.compose.project），不是 Hub 数据库里的编排 ID。
-	//
-	// 名字沿用是为了不破坏既有前端与测试的字段引用。
+	// StackID 填 compose 项目名（容器标签 com.docker.compose.project），
+	// 用于容器与编排的归属关联，不是 Hub 数据库中的编排记录 ID。
 	// 手工 docker run 启动的容器没有该标签，此处为空字符串。
 	StackID string `json:"stack_id"`
 	Created int64  `json:"created"` // 创建时间 Unix 秒
-	Ports   string `json:"ports"`   // 端口映射摘要文本（兼容字段，给"一眼看"的场景）
+	Ports   string `json:"ports"`   // 端口映射摘要文本，用于快速阅读
 	// PublishedPorts 是结构化的实际端口发布（宿主机 → 容器）。
 	//
-	// 与上面 Ports 字符串**同时保留**：摘要文本兼容既有前端与日志阅读，
+	// 与上面 Ports 摘要各司其职：摘要用于快速阅读，
 	// 结构化数据用于排序、筛选与端口冲突判断（界面无法从字符串可靠地做这些）。
 	// 只含真正发布到宿主机的条目；容器内 EXPOSE 但未发布的端口不在此列。
 	PublishedPorts []PublishedPort `json:"published_ports,omitempty"`

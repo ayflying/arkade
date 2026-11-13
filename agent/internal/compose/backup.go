@@ -175,14 +175,12 @@ func (m *Manager) Backup(ctx context.Context, name string, includeVolumes bool) 
 			manifest = append(manifest, "已备份卷: "+strings.Join(vols, ", "))
 			ob.stage(fmt.Sprintf("已备份 %d 个数据卷", len(vols)), nil)
 		}
-		// ============================ 告诉老用户"这次比以前多备份了" ============================
-		// 显式命名卷（配置里写了 name: 的那些）在旧版本里是静默漏掉的。
-		// 升级后第一次备份会突然多出几个卷，不说清楚会让人以为逻辑出了问题。
+		// 明确本次包含的显式命名卷，不混入历史版本说明。
 		if len(explicitVols) > 0 {
 			manifest = append(manifest,
-				"其中 "+strconv.Itoa(len(explicitVols))+" 个是显式命名的卷（旧版本会漏掉，本次已包含）: "+
+				"本次包含 "+strconv.Itoa(len(explicitVols))+" 个显式命名卷: "+
 					strings.Join(explicitVols, ", "))
-			ob.stage(fmt.Sprintf("本次比旧版本多备份了 %d 个显式命名的数据卷", len(explicitVols)), nil)
+			ob.stage(fmt.Sprintf("本次包含 %d 个显式命名卷", len(explicitVols)), nil)
 		}
 	} else {
 		manifest = append(manifest, "未包含数据卷（调用方未要求）")

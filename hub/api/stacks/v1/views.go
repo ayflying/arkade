@@ -51,7 +51,6 @@ type ListRes struct {
 	AgentID        string               `json:"agent_id"`
 	Stacks         []StackView          `json:"stacks"`
 	AgentOnline    bool                 `json:"agent_online"`
-	Orphans        *[]string            `json:"orphans,omitempty"`
 	ExternalStacks *[]ExternalStackView `json:"external_stacks,omitempty"`
 }
 type DetailRes struct {

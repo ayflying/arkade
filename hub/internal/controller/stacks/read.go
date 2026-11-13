@@ -43,19 +43,12 @@ func (c *Controller) List(ctx context.Context, r *api.ListReq) (*api.ListRes, er
 		out.Stacks = append(out.Stacks, v)
 	}
 	if online {
-		orphans := []string{}
-		for name := range remote {
-			if _, ok := known[name]; !ok {
-				orphans = append(orphans, name)
-			}
-		}
 		views := comp.ExternalViews(external, known)
 		if c.d.AutoState != nil {
 			for i := range views {
 				views[i].AutoAdoptStatus, views[i].AutoAdoptReason, _ = c.d.AutoState(r.AgentID, views[i].Name)
 			}
 		}
-		out.Orphans = &orphans
 		out.ExternalStacks = &views
 	}
 	return out, nil

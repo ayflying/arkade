@@ -176,18 +176,3 @@ type ComposeOperationResult struct {
 	// 而用户在这个界面里需要的是"备份放在哪儿"这一信息本身。
 	BackupPath string `json:"backup_path,omitempty"`
 }
-
-// ComposePullStartCompatPayload 是旧 pull 接口的请求体（保留兼容）。
-//
-// 保留它是因为既有 Hub 与 Web 都还在用 compose.pull.start/get；
-// 新代码应改用 ComposeOperationStartPayload。
-type ComposePullStartCompatPayload struct {
-	Name      string `json:"name"`
-	RequestID string `json:"request_id"`
-}
-
-// ComposePullGetCompatPayload 是旧 pull 接口的读取请求体。
-type ComposePullGetCompatPayload struct {
-	TaskID string `json:"task_id"`
-	After  int64  `json:"after"`
-}

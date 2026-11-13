@@ -39,7 +39,7 @@ func TestApplyRejectsExternalNameCollision(t *testing.T) {
 		composeC("act-runner", "runner", stateRunning),
 	}})
 
-	_, err := m.Apply(context.Background(), "act-runner", "services:\n  web:\n    image: nginx\n", "")
+	_, err := m.ApplyProject(context.Background(), ProjectSpec{Name: "act-runner", Content: "services:\n  web:\n    image: nginx\n"})
 	if err == nil {
 		t.Fatal("与外部项目同名时必须拒绝，否则会重建生产容器")
 	}
@@ -76,7 +76,7 @@ func TestApplyAllowsWhenWorkspaceExists(t *testing.T) {
 	// 这次不该被闸门拒绝。它可能在后续 run 阶段失败
 	// （测试环境里没有 compose 二进制），但那不是闸门的问题——
 	// 所以只断言错误里不含"同名"提示。
-	_, err := m.Apply(context.Background(), "mine", "services:\n  web:\n    image: nginx\n", "")
+	_, err := m.ApplyProject(context.Background(), ProjectSpec{Name: "mine", Content: "services:\n  web:\n    image: nginx\n"})
 	if err != nil && strings.Contains(err.Error(), "不是由 Arkade 创建") {
 		t.Errorf("自己管理的项目被安全闸门误拦了: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestApplyRejectsWhenProbeFails(t *testing.T) {
 	m, _ := newTestManager(t)
 	m.SetLabelSource(&fakeLabels{err: context.DeadlineExceeded})
 
-	_, err := m.Apply(context.Background(), "whatever", "services: {}\n", "")
+	_, err := m.ApplyProject(context.Background(), ProjectSpec{Name: "whatever", Content: "services: {}\n"})
 	if err == nil {
 		t.Fatal("无法确认安全性时应保守拒绝，实际放行了")
 	}
@@ -103,7 +103,7 @@ func TestApplyRejectsWhenProbeFails(t *testing.T) {
 func TestApplyNoProbeSourceKeepsOldBehavior(t *testing.T) {
 	m, _ := newTestManager(t)
 	// 不注入 labelSource。
-	_, err := m.Apply(context.Background(), "fresh", "services:\n  web:\n    image: nginx\n", "")
+	_, err := m.ApplyProject(context.Background(), ProjectSpec{Name: "fresh", Content: "services:\n  web:\n    image: nginx\n"})
 	if err != nil && strings.Contains(err.Error(), "不是由 Arkade 创建") {
 		t.Errorf("未注入探测源时不应触发安全闸门: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestApplyRejectsBeforeWritingFile(t *testing.T) {
 		composeC("prod-db", "mysql", stateRunning),
 	}})
 
-	if _, err := m.Apply(context.Background(), "prod-db", "services: {}\n", ""); err == nil {
+	if _, err := m.ApplyProject(context.Background(), ProjectSpec{Name: "prod-db", Content: "services: {}\n"}); err == nil {
 		t.Fatal("应拒绝")
 	}
 	// 工作区里不应留下同名目录/文件。

@@ -12,7 +12,7 @@
  * - 只显示**宿主端口**（用户关心的是「我该访问哪个端口」）
  * - TCP + 服务器配了直连地址 + 绑定不是回环 → 做成链接，新窗口打开
  * - UDP 照常显示但**不给链接**（浏览器没有对应协议，链接一定是坏的）
- * - 没有结构化 `published_ports`（旧 Agent）→ 显示「无端口映射」，
+ * - 没有结构化 `published_ports`（无发布端口）→ 显示「无端口映射」，
  *   **绝不解析 ports 文本猜链接**
  */
 import { computed } from 'vue'
@@ -35,9 +35,8 @@ const items = computed<PortDisplayItem[]>(() =>
 )
 
 /*
- * 注意：这里**不尝试**区分「新版但无映射」和「旧 Agent 没上报」。
- * 协议里 published_ports 带 omitempty，两种情况都是 undefined，
- * 前端无从判断，所以文案只能说「无已上报的端口映射」。
+ * 协议里 published_ports 带 omitempty，无发布端口时可为 undefined；
+ * 空值文案为「无已上报的端口映射」，不从显示文本反推网络事实。
  */
 
 /**

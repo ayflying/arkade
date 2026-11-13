@@ -18,7 +18,6 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
-	"time"
 
 	"github.com/gogf/gf/v2/net/ghttp"
 
@@ -37,7 +36,7 @@ import (
 // 恢复 writer 之后才执行，两者都会失真。
 //
 // prepare 是可选的 context 增强（可为 nil）：进入标准库链前对
-// context 做一次性加工（例如放入会话有效期这类配置值）。
+// context 做一次性加工。
 // 配置值不是请求态，放 context 不会造成并发覆盖。
 //
 // guardTarget 是可选的请求体校验靶子（可为 nil，表示不校验）。
@@ -188,8 +187,8 @@ func globalChainGF(log *slog.Logger) ghttp.HandlerFunc {
 //
 // 必须是工厂而不是实例：控制器/中间件是单例，共享 *Req 会被并发
 // json.Decode 写入（数据竞争），并把残值带到下一个请求。
-func responseChainGF(log *slog.Logger, d Deps, sessionTTL time.Duration, reqFactory func() any) ghttp.HandlerFunc {
-	return responseChainGFWith(log, d, sessionTTL, reqFactory, nil)
+func responseChainGF(log *slog.Logger, d Deps, reqFactory func() any) ghttp.HandlerFunc {
+	return responseChainGFWith(log, d, reqFactory, nil)
 }
 
 // gate 是**原生 GF 形态**的前置守卫（可能提前拒绝）。
@@ -208,12 +207,11 @@ type gate func(*ghttp.Request) bool
 func privResponseChainGF(
 	log *slog.Logger,
 	d Deps,
-	sessionTTL time.Duration,
 	reqFactory func() any,
 	gates []gate,
 	extra []middlewareFunc,
 ) ghttp.HandlerFunc {
-	return responseChainGFWith(log, d, sessionTTL, reqFactory, append(gateMiddlewares(gates), extra...))
+	return responseChainGFWith(log, d, reqFactory, append(gateMiddlewares(gates), extra...))
 }
 
 func gateMiddlewares(gates []gate) []middlewareFunc {
@@ -259,7 +257,6 @@ func gateMiddlewares(gates []gate) []middlewareFunc {
 func responseChainGFWith(
 	log *slog.Logger,
 	d Deps,
-	sessionTTL time.Duration,
 	reqFactory func() any,
 	extra []middlewareFunc,
 ) ghttp.HandlerFunc {
@@ -271,7 +268,7 @@ func responseChainGFWith(
 	mws = append(mws, extra...)
 	return gfChain(log,
 		func(r *ghttp.Request) { writeBareResult(r, d) },
-		func(ctx context.Context) context.Context { return withSessionTTL(ctx, sessionTTL) },
+		nil,
 		reqFactory,
 		mws...,
 	)

@@ -150,7 +150,7 @@ func TestProductionLocalExecutorDisabledConfiguration(t *testing.T) {
 	}
 }
 
-// 关闭配置不删除旧身份，也不能把保留的本机误当成远程失联节点。
+// 关闭配置不删除已有身份，也不能把保留的本机误当成远程失联节点。
 func TestProductionLocalExecutorDisabledConfigurationPreservesIdentity(t *testing.T) {
 	ctx := context.Background()
 	cfg := embeddedLocalTestConfig(t)
@@ -173,7 +173,7 @@ func TestProductionLocalExecutorDisabledConfigurationPreservesIdentity(t *testin
 	app := embeddedLocalTestApp(t, cfg)
 	rec, err := app.db.GetAgent(ctx, store.LocalAgentID)
 	if err != nil || rec.Disabled {
-		t.Fatalf("配置关闭不应删除或禁用旧本机记录: %+v %v", rec, err)
+		t.Fatalf("配置关闭不应删除或禁用已有本机记录: %+v %v", rec, err)
 	}
 	if app.localExecutor != nil || app.registry.IsOnline(store.LocalAgentID) || !app.registry.IsReservedLocal(store.LocalAgentID) {
 		t.Fatal("配置关闭仍启动本机或释放身份")
@@ -190,15 +190,15 @@ func TestProductionLocalExecutorDisabledConfigurationPreservesIdentity(t *testin
 	}
 }
 
-func TestProductionLocalExecutorPreservesDisabledLegacyIdentity(t *testing.T) {
+func TestProductionLocalExecutorDisabledIdentityFailsClosed(t *testing.T) {
 	ctx := context.Background()
 	cfg := embeddedLocalTestConfig(t)
 	db, err := store.Open(ctx, cfg.Database.DSN)
 	if err != nil {
 		t.Fatal(err)
 	}
-	legacyTokenHash := agentlink.HashEnrollmentToken("test-only-legacy-local-token")
-	if err = db.EnsureLocalAgent(ctx, legacyTokenHash); err != nil {
+	// 模拟数据库被人为设为禁用；启动必须安全拒绝，而不是自行恢复。
+	if err = db.EnsureEmbeddedLocalAgent(ctx); err != nil {
 		db.Close()
 		t.Fatal(err)
 	}
@@ -212,18 +212,18 @@ func TestProductionLocalExecutorPreservesDisabledLegacyIdentity(t *testing.T) {
 	app := embeddedLocalTestApp(t, cfg)
 	rec, err := app.db.GetAgent(ctx, store.LocalAgentID)
 	if err != nil || !rec.Disabled {
-		t.Fatalf("升级重新启用了旧身份: %+v %v", rec, err)
+		t.Fatalf("启动不应重新启用数据库中的禁用身份: %+v %v", rec, err)
 	}
 	if app.localExecutor != nil || app.registry.IsLocal(store.LocalAgentID) || app.registry.IsOnline(store.LocalAgentID) || !app.registry.IsReservedLocal(store.LocalAgentID) {
-		t.Fatal("旧禁用身份不得启动执行器，但仍需防远程冒名")
+		t.Fatal("禁用身份不得启动执行器，但仍需防远程冒名")
 	}
 	hasToken, err := app.db.HasAgentToken(ctx, store.LocalAgentID)
 	if err != nil || hasToken {
-		t.Fatalf("未撤销旧本机网络令牌: %v %v", hasToken, err)
+		t.Fatalf("内置本机不应绑定网络令牌: %v %v", hasToken, err)
 	}
 	source := &monitorSource{db: app.db, registry: app.registry}
 	agents, err := source.Agents(ctx)
 	if err != nil || len(agents) != 0 {
-		t.Fatalf("禁用旧身份仍进入监控清单: %+v %v", agents, err)
+		t.Fatalf("禁用身份仍进入监控清单: %+v %v", agents, err)
 	}
 }

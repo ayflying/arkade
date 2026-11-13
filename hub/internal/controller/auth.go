@@ -50,9 +50,6 @@ type AuthDeps struct {
 
 	// Log 记日志。
 	Log Logger
-
-	// SessionTTL 是会话有效期（用于 Cookie MaxAge）。
-	SessionTTL time.Duration
 }
 
 // AuthService 是认证业务能力。

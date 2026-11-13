@@ -50,7 +50,10 @@ func TestInitConfigKeepsDefaultPath(t *testing.T) {
 		t.Fatalf("未指定 -c 时仍应生成 config.toml: %v", err)
 	}
 	text := string(raw)
-	if !strings.Contains(text, `dsn = "host=localhost port=5432 user=arkade dbname=arkade sslmode=disable"`) || !strings.Contains(text, `settings_key_file = "./data/settings.key"`) || strings.Contains(text, "SQLite") || strings.Contains(text, "password=") {
+	if !strings.Contains(text, `data_dir = "/data/local"`) || strings.Contains(text, "local_agent_token") || strings.Contains(text, "/opt/arkade/agent") {
+		t.Fatal("template must use canonical local workspace without removed token settings")
+	}
+	if !strings.Contains(text, `dsn = "host=localhost port=5432 user=arkade dbname=arkade sslmode=disable"`) || !strings.Contains(text, `settings_key_file = "/data/settings.key"`) || strings.Contains(text, "SQLite") || strings.Contains(text, "password=") {
 		t.Fatal("generated template must use password-free PostgreSQL DSN and an independent key file")
 	}
 }

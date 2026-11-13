@@ -160,7 +160,7 @@ func TestAgentIDPersistence(t *testing.T) {
 	}
 
 	// 写入后能读回。
-	if err := cfg.PersistAgentID("agent-7"); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, agentIDFile), []byte("agent-7\n"), 0600); err != nil {
 		t.Fatalf("持久化失败: %v", err)
 	}
 	id, err = cfg.ResolveAgentID()
@@ -178,32 +178,6 @@ func TestAgentIDPersistence(t *testing.T) {
 		t.Fatalf("显式 agent_id 应优先，实际 %q", id)
 	}
 
-	// 空 ID 必须拒绝写入，否则下次启动会读到空身份。
-	if err := cfg.PersistAgentID(""); err == nil {
-		t.Fatal("空 agent_id 应被拒绝")
-	}
-}
-
-func TestLoadRegistryMissingIsNotError(t *testing.T) {
-	cfg := Config{DataDir: t.TempDir()}
-	reg, err := cfg.LoadRegistry()
-	if err != nil {
-		t.Fatalf("文件不存在不应报错: %v", err)
-	}
-	if reg.Containers == nil {
-		t.Fatal("应返回可写的空表")
-	}
-}
-
-func TestLoadRegistryCorrupt(t *testing.T) {
-	dir := t.TempDir()
-	cfg := Config{DataDir: dir}
-	if err := os.WriteFile(cfg.RegistryFile(), []byte("{not json"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := cfg.LoadRegistry(); err == nil {
-		t.Fatal("损坏的登记文件应报错而不是静默返回空表")
-	}
 }
 
 func TestExpandHome(t *testing.T) {

@@ -67,8 +67,7 @@ func newComposeUpHandler(mgr *compose.Manager) Handler {
 		}
 		// 用 ApplyProject 而不是 Apply：这样 env_content 才会一起落盘，
 		// 且哈希校验按"compose.yml + .env 联合"进行。
-		// 旧 Hub 不发 env_content → 反序列化为空串 → 视为"清空 .env"，
-		// 那恰好等于旧行为（旧版根本没有 .env 这个概念）。
+		// env_content 为空表示清空 .env，项目哈希始终包含该输入。
 		res, err := mgr.ApplyProject(ctx, compose.ProjectSpec{
 			Name:       name,
 			Content:    p.Content,
@@ -182,7 +181,7 @@ func newComposeRebuildHandler(mgr *compose.Manager) Handler {
 
 // newComposeRemoveHandler 处理 compose.remove。
 //
-// 这是唯一会删数据卷的编排动作。Hub 侧在派发前已校验 manage 权限，
+// 只有请求明确 remove_volumes 时才删除数据卷。Hub 侧已校验 manage 权限，
 // 这里不再重复做权限判断（Agent 没有用户概念，只有连接身份）。
 func newComposeRemoveHandler(mgr *compose.Manager) Handler {
 	return func(ctx context.Context, payload []byte) (any, error) {
@@ -194,7 +193,7 @@ func newComposeRemoveHandler(mgr *compose.Manager) Handler {
 		if nerr != nil {
 			return nil, nerr
 		}
-		res, err := mgr.Remove(ctx, name)
+		res, err := mgr.RemoveWithVolumes(ctx, name, p.RemoveVolumes)
 		if err != nil {
 			return nil, badRequestf("%v", err)
 		}

@@ -29,7 +29,6 @@ import (
 
 	"github.com/gogf/gf/v2/net/ghttp"
 
-	"arkade/hub/internal/auth"
 	"arkade/hub/internal/user"
 )
 
@@ -73,26 +72,3 @@ func (sessionAccessor) ClearCookie(ctx context.Context) {
 	}
 	clearSessionCookie(r.Response.Writer, r.Request)
 }
-
-// sessionTTLKey 是会话有效期在 context 里的键。
-//
-// 有效期是**配置值**（不是请求态），由 registerAuthRoutes 在装配时
-// 放进 context，因此不存在并发覆盖问题。
-type sessionTTLKey struct{}
-
-// withSessionTTL 把会话有效期放进 context。
-func withSessionTTL(ctx context.Context, ttl time.Duration) context.Context {
-	return context.WithValue(ctx, sessionTTLKey{}, ttl)
-}
-
-// sessionTTLFromCtx 取会话有效期。
-func sessionTTLFromCtx(ctx context.Context) time.Duration {
-	if v, ok := ctx.Value(sessionTTLKey{}).(time.Duration); ok {
-		return v
-	}
-	return 0
-}
-
-// 保证 auth 包被引用：CookieName/CookiePath 由它定义，
-// setSessionCookie/clearSessionCookie 内部使用。
-var _ = auth.CookieName

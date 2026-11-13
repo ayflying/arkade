@@ -52,11 +52,6 @@ func NewApp(ctx context.Context, cfg config.Config, log *slog.Logger, version st
 		return nil, err
 	}
 
-	// 内置本机不使用任何接入令牌；旧部署变量仅提示，不再创建外部连接凭据。
-	if cfg.Auth.LocalAgentToken != "" {
-		log.Warn("ARKADE_LOCAL_AGENT_TOKEN 已弃用，Hub内置本机无需令牌")
-	}
-
 	authSvc := auth.NewService(db, cfg.Auth.SessionTTL)
 	identityServices, err := newIdentityServices(ctx, db, authSvc, cfg, log)
 	if err != nil {

@@ -63,25 +63,6 @@ func NewManager(dataDir, dockerHost string) *Manager {
 // Workspace 暴露工作区，供备份等子能力复用（避免再 new 一个导致路径规则分裂）。
 func (m *Manager) Workspace() *Workspace { return m.ws }
 
-// Apply 把编排内容落盘并启动（对应 compose.up）。
-//
-// 期望哈希的处理：Hub 下发的 ContentHash 用来校验"落盘的内容与 Hub 认为的一致"。
-// 如果收到的内容与它自己声明的哈希对不上，说明传输或 Hub 侧计算出了问题。
-// 此时**拒绝且不写盘**（详见 ApplyProject 里的说明）。
-//
-// 这是**不含 .env 的旧签名**，保留它有两个原因：
-//   - 既有调用方与测试不必跟着改（无 env 的编排仍然完全可用）；
-//   - 它精确表达了"这个项目没有 .env"，而不是让调用方传一个容易忘的空串。
-//
-// 需要下发 .env 时用 ApplyProject。
-func (m *Manager) Apply(ctx context.Context, name, content, expectHash string) (Result, error) {
-	return m.ApplyProject(ctx, ProjectSpec{
-		Name:       name,
-		Content:    content,
-		ExpectHash: expectHash,
-	})
-}
-
 // ProjectSpec 是"一次编排下发"的完整输入。
 //
 // 把 compose.yml 与 .env 放在同一个结构体里，而不是给 Apply 加两个参数：
@@ -369,21 +350,6 @@ func (m *Manager) Rebuild(ctx context.Context, name string) (Result, error) {
 	})
 }
 
-// Remove 删除编排：down -v，然后删掉本机目录。
-//
-// down 失败时的处理：仍然删除目录。理由——用户明确要删除，
-// 而 down 失败最常见的原因是"容器本来就没跑"，此时留着目录毫无意义。
-// 但如果 down 失败是因为"引擎连不上"，删目录就丢了唯一能排查的线索，
-// 因此把 down 的输出一并返回给用户看。
-func (m *Manager) Remove(ctx context.Context, name string) (Result, error) {
-	// **兼容入口**：保持历史行为（down 失败也删本机编排文件）。
-	//
-	// 之所以保留：Hub/Web 的 HTTP DELETE 路径依赖"删了就从这个列表消失"，
-	// 突然改成"失败保留"会让既有调用方看到项目又冒回来。
-	// 新代码（异步任务）应走 RemoveWithVolumes，它的语义是安全的。
-	return m.remove(ctx, name, true, false)
-}
-
 // RemoveWithVolumes 删除编排项目，是否连带删除数据卷由调用方显式决定。
 //
 // ============================ 为什么必须显式 ============================
@@ -398,17 +364,7 @@ func (m *Manager) Remove(ctx context.Context, name string) (Result, error) {
 //     此时删掉配置等于把可恢复故障变成不可恢复；
 //   - 异步任务会因此置为 failed，而 failed 的任务本意是"可以重试"——
 //     若配置已被删除，重试就变成"项目不存在"，用户彻底失去入口。
-//
-// 这是新旧行为的关键差异：旧 Remove 为了"列表立刻消失"牺牲了可恢复性。
 func (m *Manager) RemoveWithVolumes(ctx context.Context, name string, removeVolumes bool) (Result, error) {
-	return m.remove(ctx, name, removeVolumes, true)
-}
-
-// remove 是 Remove 与 RemoveWithVolumes 的共同实现。
-//
-// keepOnFailure=true 表示 down 失败时保留本机编排文件（安全语义）；
-// false 表示无论如何删除（历史兼容语义）。
-func (m *Manager) remove(ctx context.Context, name string, removeVolumes, keepOnFailure bool) (Result, error) {
 	n, err := cleanName(name)
 	if err != nil {
 		return Result{}, err
@@ -421,7 +377,7 @@ func (m *Manager) remove(ctx context.Context, name string, removeVolumes, keepOn
 		}
 		res := m.run(ctx, n, TimeoutLong, args...)
 
-		if res.ExitCode != 0 && keepOnFailure {
+		if res.ExitCode != 0 {
 			// 安全语义：失败即保留，让用户能重试或自行排查。
 			res.Output = truncate(res.Output + "\n\n（编排文件已保留，可修复问题后重试删除）")
 			return res, nil

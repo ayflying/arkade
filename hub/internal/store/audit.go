@@ -23,10 +23,6 @@ import (
 
 // 审计保留与清理相关常量集中在此，便于统一调整。
 const (
-	// AuditMaxRecords is retained only for the explicit legacy PruneAuditCount API.
-	// Normal writes and Open never enforce an implicit row-count retention cap.
-	AuditMaxRecords = 9999
-
 	// AuditRetentionDays 是审计记录保留天数。
 	//
 	// 90 天是运维复盘与合规审计的常见口径：足够覆盖一个季度的排查窗口，

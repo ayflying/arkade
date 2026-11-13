@@ -2,6 +2,7 @@ package compose
 
 import (
 	"arkade/hub/internal/store"
+	"arkade/protocol/composehash"
 	"arkade/protocol/envelope"
 	"strings"
 	"testing"
@@ -9,8 +10,8 @@ import (
 )
 
 func TestHashValidationAndViews(t *testing.T) {
-	if ConfigHash("abc") != "ba7816bf8f01cfea" || ProjectHash("abc", "") != ConfigHash("abc") {
-		t.Fatal("legacy hash changed")
+	if ProjectHash("abc", "") != composehash.Project("abc", "") || ProjectHash("abc", "") == "ba7816bf8f01cfea" {
+		t.Fatal("project hash must use shared project domain even with empty env")
 	}
 	if ProjectHash("a", "bc") == ProjectHash("ab", "c") {
 		t.Fatal("file boundary collision")

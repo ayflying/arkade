@@ -1,34 +1,15 @@
 package compose
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
+	"arkade/protocol/composehash"
 	"github.com/gogf/gf/v2/errors/gerror"
-	"strconv"
 	"strings"
 )
 
 const MaxContentBytes = 1 << 20
 
-func ConfigHash(content string) string {
-	sum := sha256.Sum256([]byte(content))
-	return hex.EncodeToString(sum[:])[:16]
-}
-func ProjectHash(content, env string) string {
-	if env == "" {
-		return ConfigHash(content)
-	}
-	h := sha256.New()
-	h.Write([]byte("arkade.compose.project.v1\x00content\x00"))
-	h.Write([]byte(strconv.Itoa(len(content))))
-	h.Write([]byte("\x00"))
-	h.Write([]byte(content))
-	h.Write([]byte("env\x00"))
-	h.Write([]byte(strconv.Itoa(len(env))))
-	h.Write([]byte("\x00"))
-	h.Write([]byte(env))
-	return hex.EncodeToString(h.Sum(nil))[:16]
-}
+// ProjectHash 统一使用共享项目协议，空 env 不退回单文件算法。
+func ProjectHash(content, env string) string { return composehash.Project(content, env) }
 func ValidName(name string) bool {
 	if name == "" || len(name) > 64 {
 		return false

@@ -90,9 +90,8 @@ export interface StackSummary {
  * `adopted` 不在这里出现：接管成功后项目会从 `external_stacks`
  * 移入正式的 `stacks` 列表，未纳管表里不该再出现它。
  *
- * `unknown` 是**前端兜底值**，不是后端语义：旧 Hub 不返回该字段时用它，
- * 表示「这台 Hub 还没这个能力」。此时界面**不显示任何接管相关文案**，
- * 绝不推测成 skipped/failed——否则旧后端会满屏假原因。
+ * `unknown` 是非法或缺失状态的保守兜底；不显示判断性文案，
+ * 不把无法识别的信息推测成 skipped/failed。
  */
 export type AutoAdoptStatus = 'pending' | 'skipped' | 'failed' | 'unknown'
 
@@ -139,7 +138,7 @@ export type ExternalStack = {
    */
   managed: boolean
   /**
-   * 自动接管状态。**可选**：旧 Hub 不返回该字段。
+   * 自动接管状态；不认识的值归一化为 unknown。
    *
    * 归一化后一定有值（缺省为 `'unknown'`），页面拿到的永远不是 undefined。
    */
@@ -156,23 +155,14 @@ export type ExternalStack = {
 /**
  * 编排列表响应。
  *
- * `orphans` 是「Agent 上有、Hub 数据库里没有」的编排名：
- * 这类编排无法通过本界面管理（界面数据来自 Hub），
- * 但**必须显示出来**，否则用户永远发现不了它们的存在。
- *
- * 注意与 `external_stacks` 的区别——两者都是「未纳管」，但信息量不同：
- * - `orphans` 只有名字（string[]），兼容旧后端，只说得出「有这个项目」；
- * - `external_stacks` 带状态与服务/容器数，能画成一张有信息量的表。
- * 后端提供 `external_stacks` 时优先用它渲染；只有 `orphans` 时退化成名字列表。
+ * `external_stacks` 展示 Agent 上存在但未被 Hub 纳管的项目及其状态。
  */
 export interface StackListResponse {
   stacks: StackSummary[]
   /** Agent 是否在线；离线时列表仍返回 200，各条 status 为 'offline' */
   agent_online: boolean
-  /** 存在于 Agent 本机但未被 Hub 纳管的编排名（旧字段，兼容保留） */
-  orphans?: string[]
-  /** 未被纳管的 compose 项目详情（新字段，可能暂缺） */
-  external_stacks?: ExternalStack[]
+  /** 未被纳管的 compose 项目详情 */
+  external_stacks: ExternalStack[]
 }
 
 /**
@@ -196,13 +186,7 @@ export interface UnifiedStackDetailResponse {
   containers_error?: string
 }
 
-export interface StackDetail extends StackSummary {
-  /**
-   * compose 原文。**后端已不再随详情返回**，保留字段仅为兼容旧响应，
-   * 正常情况下是 undefined —— 需要内容请用 getStackConfig。
-   */
-  content?: string
-}
+export type StackDetail = StackSummary
 
 /** 编排下的单个服务（日志页下拉用；详情接口只给名字） */
 export interface StackService {
@@ -219,7 +203,7 @@ export interface StackConfig {
    * 用途：compose 里的 `${VAR}` 由它插值。**不是**把整个文件灌进容器环境——
    * 只有 compose 显式引用的变量才会进入容器。
    *
-   * 后端可能暂未返回该字段（旧版本），因此读取时一律做 `?? ''` 兜底，
+   * 内容允许为空，因此读取时保留空字符串保护，
    * 不要直接 `.trim()`，否则会炸在 undefined 上。
    */
   env_content: string

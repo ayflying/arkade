@@ -303,9 +303,7 @@ func registerAll(reg *Registry, rt runtime.Runtime, composeMgr *compose.Manager,
 	// 若 composeMgr.RootCtx 为 nil，任务只随进程退出而结束，
 	// 优雅退出就**不会**取消正在跑的 compose pull，会留下孤儿进程。
 	pullMgr := compose.NewPullManager(composeMgr, composeMgr.RootCtx)
-	reg.Register(envelope.MethodComposePullStart, newComposePullStartHandler(pullMgr))
-	reg.Register(envelope.MethodComposePullGet, newComposePullGetHandler(pullMgr))
-	// 编排动作任务：与 pull 共用同一个任务引擎实例。
+	// 编排动作统一任务接口，pull 通过 action=pull 运行。
 	reg.Register(envelope.MethodComposeOperationStart, newComposeOperationStartHandler(pullMgr))
 	reg.Register(envelope.MethodComposeOperationGet, newComposeOperationGetHandler(pullMgr))
 	reg.AddCloser(pullMgr.Close)

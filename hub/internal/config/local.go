@@ -17,7 +17,7 @@ type LocalConfig struct {
 }
 
 func defaultLocal() LocalConfig {
-	return LocalConfig{Enabled: true, DataDir: "/opt/arkade/agent", Runtime: "auto"}
+	return LocalConfig{Enabled: true, DataDir: "/data/local", Runtime: "auto"}
 }
 
 // validateLocalEnv 在应用环境覆盖前拒绝拼错的安全开关，不回显环境值。

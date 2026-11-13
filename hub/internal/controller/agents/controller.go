@@ -49,10 +49,10 @@ func (c *Controller) access() controller.Access {
 	return controller.Access{DB: c.d.DB, Session: c.d.Session, Log: c.d.Log}
 }
 
-// 本机身份即使暂时离线也保留；Enable 仅解除历史禁用，启动仍由 Hub 配置管理。
+// 本机身份即使暂时离线也保留，生命周期只能由 Hub 配置管理。
 func (c *Controller) rejectReservedLocal(id string) error {
 	if c.d.Registry != nil && c.d.Registry.IsReservedLocal(id) {
-		return badRequest("本机由 Hub 配置 local.enabled 管理，不支持删除、重置密钥或禁用")
+		return badRequest("本机由 Hub 配置 local.enabled 管理，不支持删除、重置密钥或启用禁用")
 	}
 	return nil
 }

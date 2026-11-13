@@ -43,12 +43,13 @@ def check_hub(config, combined=False):
     assert env["ARKADE_AGENT_TOKEN"] == ""
     assert "ARKADE_LOCAL_AGENT_TOKEN" not in env
     assert env["ARKADE_LOCAL_ENABLED"] == "true"
-    assert env["ARKADE_LOCAL_DATA_DIR"] == "/opt/arkade/agent"
+    assert env["ARKADE_LOCAL_DATA_DIR"] == "/data/local"
     assert env["ARKADE_LOCAL_RUNTIME"] == "auto"
     assert env["ARKADE_LOCAL_ENDPOINT"] == "/var/run/docker.sock"
     assert env["ARKADE_LOCAL_COMPOSE_BIN"] == "docker"
     mounts = {volume["target"]: volume for volume in hub["volumes"]}
-    assert mounts["/opt/arkade/agent"]["source"] == "agent-data"
+    assert set(mounts) == {"/data", "/var/run/docker.sock"}, "Hub 只保留一个数据卷及 Docker socket"
+    assert set(config["volumes"]) == ({"hub-data", "postgres-data"} if combined else {"hub-data"})
     assert mounts["/var/run/docker.sock"]["source"] == "/var/run/docker.sock"
     assert mounts["/data"]["source"] == "hub-data"
     assert not any("toml" in target for target in mounts)
@@ -63,8 +64,7 @@ def check_hub(config, combined=False):
     else:
         assert not hub.get("depends_on"), "Hub 单独编排不能依赖内置数据库"
         assert "postgres-data" not in config.get("volumes", {}), "Hub 单独编排不能声明数据库卷"
-    assert config["volumes"]["hub-data"]["name"] == "arkade-hub-files-pg"
-    assert config["volumes"]["agent-data"]["name"] == "arkade-agent-data"
+    assert config["volumes"]["hub-data"]["name"] == "arkade-hub-data"
 
 
 def check_agent(config):
@@ -99,14 +99,14 @@ def main():
         check_hub(parsed["combined-compose.yml"], combined=True)
         check_agent(parsed["agent-compose.yml"])
         assert parsed["hub-compose.yml"]["name"] == "arkade-hub"
-        assert parsed["combined-compose.yml"]["name"] == "arkade", "保留旧 combined project"
+        assert parsed["combined-compose.yml"]["name"] == "arkade"
         for filename, missing in (("hub-compose.yml", "ARKADE_DB_PASSWORD"), ("hub-compose.yml", "ARKADE_INITIAL_PASS"),
                                   ("combined-compose.yml", "ARKADE_DB_PASSWORD"), ("combined-compose.yml", "ARKADE_INITIAL_PASS"),
                                   ("agent-compose.yml", "ARKADE_AGENT_TOKEN")):
             save({key: value for key, value in values.items() if key != missing})
             render(filename, envfile, valid=False)
-        # 旧本机 token、全局 token、普通参数不会通过外部 .env 意外覆盖新 Hub。
-        save(dict(values, ARKADE_LOCAL_AGENT_TOKEN="obsolete-token", ARKADE_LOCAL_ENABLED="false",
+        # 普通参数直接由 YAML 定义，不允许外部 .env 意外覆盖。
+        save(dict(values, ARKADE_LOCAL_ENABLED="false",
                   ARKADE_HUB_IMAGE="unexpected:tag", ARKADE_HUB_PORT="18080", ARKADE_HUB_VOLUME="unexpected-volume"))
         for filename in ("hub-compose.yml", "combined-compose.yml"):
             assert render(filename, envfile) == parsed[filename]
@@ -136,9 +136,9 @@ def main():
                 check_hub(config, combined=compose == "combined-compose.yml")
     dockerfile = (ROOT / "hub" / "Dockerfile").read_text(encoding="utf-8")
     for fragment in ("COPY agent/go.mod agent/go.sum agent/", "COPY agent ./../agent", "docker-cli docker-cli-compose",
-                     "DOCKER_CLI_PLUGIN_EXTRA_DIRS", "/root/.docker/cli-plugins", "docker compose version", "USER root", '"/opt/arkade/agent"'):
+                     "DOCKER_CLI_PLUGIN_EXTRA_DIRS", "/root/.docker/cli-plugins", "docker compose version", "USER root", 'VOLUME ["/data"]'):
         assert fragment in dockerfile, f"Hub 镜像缺少本机执行依赖：{fragment}"
-    print("三套编排独立解析、Hub内置本机/无重复Agent、历史卷名、凭据隔离及镜像静态约束通过（未构建镜像或启动容器）。")
+    print("三套编排独立解析、Hub内置本机/无重复Agent、单Hub数据卷、凭据隔离及镜像静态约束通过（未构建镜像或启动容器）。")
 
 
 if __name__ == "__main__":

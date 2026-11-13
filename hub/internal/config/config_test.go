@@ -249,7 +249,7 @@ func TestDatabaseFieldEnvEscapesCredentialsAndDSNPrecedence(t *testing.T) {
 
 func TestPostgresAndSettingsKeyConfigurationContracts(t *testing.T) {
 	cfg := Default()
-	if cfg.Auth.SettingsKeyFile != "./data/settings.key" || strings.Contains(cfg.Database.DSN, "password=") {
+	if cfg.Auth.SettingsKeyFile != "/data/settings.key" || strings.Contains(cfg.Database.DSN, "password=") {
 		t.Fatal("unsafe defaults")
 	}
 	cfg.Auth.InitialPass = "Password123!"
@@ -268,12 +268,20 @@ func TestPostgresAndSettingsKeyConfigurationContracts(t *testing.T) {
 	}
 }
 
-// TestApplyEnvSessionTTLSeconds 验证旧的纯秒数写法仍然兼容。
-func TestApplyEnvSessionTTLSeconds(t *testing.T) {
+// 会话覆盖仅识别标准 duration 环境变量，不再读取无前缀或秒数别名。
+func TestSessionTTLUsesCanonicalEnvironmentOnly(t *testing.T) {
 	t.Setenv("ARKADE_SESSION_TTL_SEC", "3600")
-	cfg := Config{}
+	t.Setenv("SESSION_TTL", "1h")
+	t.Setenv("ARKADE_SESSION_TTL", "48h")
+	cfg := Default()
 	applyEnv(&cfg)
-	if cfg.Auth.SessionTTL != time.Hour {
-		t.Fatalf("秒数写法应生效，实际 %v", cfg.Auth.SessionTTL)
+	if cfg.Auth.SessionTTL != 48*time.Hour {
+		t.Fatalf("标准 duration 配置应独占优先级，实际 %v", cfg.Auth.SessionTTL)
+	}
+	t.Setenv("ARKADE_SESSION_TTL", "")
+	cfg = Default()
+	applyEnv(&cfg)
+	if cfg.Auth.SessionTTL != 72*time.Hour {
+		t.Fatalf("非标准环境变量不应生效: %v", cfg.Auth.SessionTTL)
 	}
 }

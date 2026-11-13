@@ -121,9 +121,8 @@ type ComposeProjectSummary struct {
 type ComposeListResult struct {
 	// Projects 是 Arkade 工作区里的项目（可管理）。
 	//
-	// 保留这个字段名与含义是为了向后兼容：Hub 现有代码与测试都按
-	// "工作区项目"理解它。外部项目放在 External 里而不是混进来，
-	// 是因为两者可做的操作完全不同，混在一个列表里迟早会被误操作。
+	// 工作区项目与 External 外部项目分开，
+	// 因为两者允许的操作不同，不能混合后误操作。
 	Projects []ComposeProjectSummary `json:"projects"`
 	// External 是机器上已有、但 Arkade 未纳管的编排项目。
 	//
@@ -131,8 +130,6 @@ type ComposeListResult struct {
 	// **不读取任何外部配置文件、不执行任何外部 up/down**。
 	// 这些项目不属于 Arkade，不得自动导入、不得改动。
 	//
-	// 新增字段而非复用 Projects：旧版 Hub 不认识它会被忽略（json 反序列化
-	// 忽略未知字段），因此这是向后兼容的增量变化。
 	External []ComposeProjectSummary `json:"external"`
 }
 
@@ -147,10 +144,8 @@ type ComposeSpecPayload struct {
 	Content string `json:"content"`
 	// EnvContent 是该项目同名 .env 的完整文本。
 	//
-	// 空串有两种含义，必须靠 ContentHash 区分，因此这里只表达"文本为空"：
-	//   - 旧版 Hub 不发这个字段 → 反序列化为空串 → 继续按旧方式工作（只有 compose.yml）；
-	//   - 新版 Hub 明确发空串 → 表示"清空该项目的 .env"（删除文件），
-	//     而不是"保留上一次的 .env"。保留会留下用户以为已经删掉的密钥。
+	// 空串表示清空该项目的 .env（删除文件），不是保留上一次的 .env。
+	// 保留会留下用户以为已经删掉的密钥。
 	//
 	// 之所以把 .env 放在消息里而不是让 Agent 去某处读：
 	// Agent 运行在容器里，**读不到宿主机上的编排目录**，
@@ -158,9 +153,7 @@ type ComposeSpecPayload struct {
 	EnvContent string `json:"env_content"`
 	// ContentHash 是 Hub 侧计算的**项目哈希**（compose.yml 与 .env 的联合哈希）。
 	//
-	// 与旧版的兼容性靠算法保证：当 EnvContent 为空时，
-	// 联合哈希就等于旧版的 sha256(content) 前 16 位，
-	// 所以旧 Hub（只发 content）与新版 Agent 仍然算得出同一个值。
+	// 使用 composehash.Project 的域分隔与长度定界算法，空 EnvContent 同样参与计算。
 	ContentHash string `json:"content_hash"`
 }
 

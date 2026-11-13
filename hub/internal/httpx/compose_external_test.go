@@ -50,9 +50,7 @@ type stackResp struct {
 	Stacks      []struct {
 		Name string `json:"name"`
 	} `json:"stacks"`
-	// Orphans 保持为字符串数组（既有契约，不能改类型）。
-	Orphans []string `json:"orphans"`
-	// ExternalStacks 是新增的完整状态列表。
+	// ExternalStacks 是外部项目的完整状态列表。
 	ExternalStacks []struct {
 		Name     string   `json:"name"`
 		Status   string   `json:"status"`
@@ -266,15 +264,11 @@ func TestStacksShowsExternalProjects(t *testing.T) {
 	}
 }
 
-// TestStacksKeepsOrphansTyped 锁定 orphans 仍是字符串数组。
-//
-// 这是既有前端契约。改成对象数组会让已发布的前端解析失败，
-// 而那种失败是静默的（JSON 解析出错只表现为列表空）。
-func TestStacksKeepsOrphansTyped(t *testing.T) {
+// 外部项目只用丰富状态字段表达，不再维护重复的名称数组。
+func TestStacksExternalUsesRichStateOnly(t *testing.T) {
 	e := newTestEnv(t)
 	agentID, srvURL := startComposeAgent(t, e, &envelope.ComposeListResult{
-		// Agent 工作区里有、但 Hub 未登记 → orphans。
-		Projects: []envelope.ComposeProjectSummary{extProject("workspace-only", "running", 1, 1, "app")},
+		External: []envelope.ComposeProjectSummary{extProject("external-only", "running", 1, 1, "app")},
 	})
 
 	cookies := e.loginAsFor(t, srvURL, "admin", testPassword)
@@ -286,12 +280,15 @@ func TestStacksKeepsOrphansTyped(t *testing.T) {
 	if err := json.Unmarshal(body, &raw); err != nil {
 		t.Fatal(err)
 	}
-	var orphans []string
-	if err := json.Unmarshal(raw["orphans"], &orphans); err != nil {
-		t.Fatalf("orphans 必须是字符串数组（既有契约），解析失败: %v，原文 %s", err, raw["orphans"])
+	if _, exists := raw["orphans"]; exists {
+		t.Fatal("响应不应再包含重复的名称数组")
 	}
-	if len(orphans) != 1 || orphans[0] != "workspace-only" {
-		t.Errorf("工作区里 Hub 未登记的项目应出现在 orphans，实际 %v", orphans)
+	var rich stackResp
+	if err := json.Unmarshal(body, &rich); err != nil {
+		t.Fatal(err)
+	}
+	if len(rich.ExternalStacks) != 1 || rich.ExternalStacks[0].Name != "external-only" || rich.ExternalStacks[0].Running != 1 || len(rich.ExternalStacks[0].Services) != 1 {
+		t.Fatalf("外部项目状态丢失: %+v", rich)
 	}
 }
 

@@ -29,8 +29,9 @@ func TestLocalAgentBootstrapNewApp(t *testing.T) {
 	cfg.Auth.InitialUser = "admin"
 	cfg.Auth.InitialPass = "1"
 	cfg.Auth.AgentToken = ""
-	cfg.Auth.LocalAgentToken = ""
-	cfg.Local.Enabled = true
+	if !cfg.Local.Enabled || cfg.Local.DataDir != "/data/local" {
+		t.Fatalf("默认本机配置错误: %+v", cfg.Local)
+	}
 	cfg.Local.Runtime = "none"
 	cfg.Local.DataDir = t.TempDir()
 	cfg.Web.Dist = ""

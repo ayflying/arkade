@@ -18,8 +18,7 @@ import (
 //	User-Agent: arkade-agent/<版本>
 //
 // 为什么认证信息放请求头而不是 URL 查询串：查询串会被各级代理与访问日志原样记录，
-// 令牌泄漏在日志里比泄漏在网络里更难察觉。Hub 的首期实现若只支持查询串，
-// 这里会同时带上（见 query 里的 token 参数），保证兼容期两边都能跑通。
+// 令牌泄漏在日志里比泄漏在网络里更难察觉。认证只使用 Bearer 请求头。
 const (
 	headerAuth      = "Authorization"
 	headerAgentID   = "X-Arkade-Agent-Id"
@@ -117,18 +116,12 @@ func (d *dialer) headers() http.Header {
 	return h
 }
 
-// connectURL 返回最终连接地址（含兼容期的 token 查询参数）。
+// connectURL 返回不含认证令牌的连接地址，避免凭据进入代理访问日志。
 func (d *dialer) connectURL() string {
 	u := *d.u
-	if d.token != "" {
-		// 兼容期同时提供查询串参数：老版本 Hub 可能只读 ?token=。
-		// 一旦 Hub 侧确认只读请求头，这一行即可删除（已在 docs 对齐项中登记）。
-		q := u.Query()
-		if q.Get("token") == "" {
-			q.Set("token", d.token)
-		}
-		u.RawQuery = q.Encode()
-	}
+	q := u.Query()
+	q.Del("token")
+	u.RawQuery = q.Encode()
 	return u.String()
 }
 

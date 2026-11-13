@@ -11,12 +11,23 @@ import (
 )
 
 // EnsureEmbeddedLocalAgent 预建无需网络凭据的内置本机身份。
-// 旧预建 agent-local 保留名称、禁用状态和所有管理员配置，仅撤销其网络接入
-// 摘要。preprovisioned 标记继续保留，不能退化为可被共享 token 认领的身份。
+// 既有身份必须是无网络凭据的内置记录；不接管远程服务器或转换旧凭据。
+// preprovisioned 标记防止共享 token 认领，Registry 保留身份防止所有远程冒充。
 // 未调用本方法（例如 local.enabled=false）不会删除或修改既有身份。
 func (d *DB) EnsureEmbeddedLocalAgent(ctx context.Context) error {
 	return d.TxModel(ctx, func(ctx context.Context, tx gdb.TX) error {
+		// 跨连接池串行化固定身份的检查与新建，避免首次并发启动互相冲突。
+		if _, err := tx.Exec("SELECT pg_advisory_xact_lock(734281905)"); err != nil {
+			return gerror.Wrap(err, "锁定内置本机身份失败")
+		}
 		ac := dao.Agents.Columns()
+		tokens, err := tx.Model(dao.AgentTokens.Table()).Ctx(ctx).Where(dao.AgentTokens.Columns().AgentId, LocalAgentID).Count()
+		if err != nil {
+			return gerror.Wrap(err, "检查内置本机身份冲突失败")
+		}
+		if tokens != 0 {
+			return gerror.New("内置本机固定 ID 已关联远程凭据，拒绝接管")
+		}
 		rec, err := tx.Model(dao.Agents.Table()).Ctx(ctx).Where(ac.Id, LocalAgentID).One()
 		if err != nil {
 			return gerror.Wrap(err, "查询内置本机身份失败")
@@ -39,13 +50,12 @@ func (d *DB) EnsureEmbeddedLocalAgent(ctx context.Context) error {
 				return normalizeExecError(err, "创建内置本机身份")
 			}
 		}
-		_, err = tx.Model(dao.AgentTokens.Table()).Ctx(ctx).Where(dao.AgentTokens.Columns().AgentId, LocalAgentID).Delete()
-		return gerror.Wrap(err, "撤销旧本机网络凭据失败")
+		return nil
 	})
 }
 
 // UpdateEmbeddedLocalAgentRuntime 仅更新内置本机运行快照。不可直接复用
-// UpsertAgent：它会覆盖 Name，抹掉旧本机身份的管理员命名。此方法不新建身份，
+// UpsertAgent：它会覆盖 Name，抹掉本机身份的管理员命名。此方法不新建身份，
 // 不改变 disabled、labels、备注、显示名、地址、preprovisioned 或分组归属。
 func (d *DB) UpdateEmbeddedLocalAgentRuntime(ctx context.Context, rec AgentRecord) error {
 	if rec.ID != "" && rec.ID != LocalAgentID {

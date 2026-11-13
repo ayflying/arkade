@@ -52,22 +52,3 @@ func (r OperationRes) MarshalJSON() ([]byte, error) {
 		Task *OperationTask `json:"task"`
 	}{r.Task})
 }
-
-type StartPullReq struct {
-	g.Meta  `path:"/api/agents/{agentID}/stacks/{name}/pull-tasks" method:"post"`
-	AgentID string `json:"-" in:"path" name:"agentID"`
-	Name    string `json:"-" in:"path" name:"name"`
-}
-type PullInput struct {
-	RequestID string `json:"request_id"`
-}
-type GetPullReq struct {
-	g.Meta  `path:"/api/agents/{agentID}/stacks/{name}/pull-tasks/{taskID}" method:"get"`
-	AgentID string `json:"-" in:"path" name:"agentID"`
-	Name    string `json:"-" in:"path" name:"name"`
-	TaskID  string `json:"-" in:"path" name:"taskID"`
-	After   string `json:"-" in:"query" name:"after"`
-}
-type PullRes struct {
-	Task envelope.ComposePullResult `json:"task"`
-}

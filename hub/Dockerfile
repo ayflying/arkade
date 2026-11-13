@@ -54,7 +54,7 @@ FROM alpine:3.20
 # 内置本机执行面通过运行时 API 和 docker compose 操作宿主容器。
 # 与 Agent 镜像保持相同 CLI 插件发现路径；镜像因此比纯控制面版本更大。
 RUN apk add --no-cache ca-certificates tzdata docker-cli docker-cli-compose \
-    && mkdir -p /data /app/web /opt/arkade/agent
+    && mkdir -p /data/local /app/web
 ENV DOCKER_CLI_PLUGIN_EXTRA_DIRS=/usr/libexec/docker/cli-plugins
 RUN mkdir -p /usr/local/lib/docker/cli-plugins /root/.docker/cli-plugins \
     && for p in /usr/libexec/docker/cli-plugins/*; do \
@@ -69,8 +69,8 @@ WORKDIR /app
 COPY --from=gopkg /out/arkade-hub /app/arkade-hub
 COPY --from=webbuild /src/web/dist /app/web/dist
 
-# Hub 文件目录，持久化 OIDC 加密主密钥；业务数据由独立 PostgreSQL 保存
-VOLUME ["/data", "/opt/arkade/agent"]
+# 单一文件数据目录：加密主密钥及本机执行工作区；业务数据由 PostgreSQL 保存
+VOLUME ["/data"]
 
 # 默认 root 是访问宿主 root:docker socket 与复用 Agent 工作卷的刻意选择。
 # socket 权限等价于宿主高权限；仅控制中心部署应关闭 local 并不挂 socket。

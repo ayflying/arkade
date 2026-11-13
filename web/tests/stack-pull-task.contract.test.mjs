@@ -62,8 +62,8 @@ function track(runner) {
   return runner
 }
 
-const types = await loadTs('src/types/stackPullTask.ts')
-const { normalizePullTask, isConfirmedSuccess, normalizePullStatus, isTerminal } = types
+const types = await loadTs('src/types/stackOperationTask.ts')
+const { normalizeOperationTask: normalizePullTask, isConfirmedOperationSuccess: isConfirmedSuccess, normalizeOperationStatus: normalizePullStatus, isOperationTerminal: isTerminal } = types
 
 /** 动作元数据源（文案的唯一定义处） */
 const typesSrc = readFileSync(
@@ -194,7 +194,7 @@ function check(name, ok, detail) {
 /* ───────── 4. 输出合并 ───────── */
 
 const composableModule = await loadTs('src/composables/useStackOperationTask.ts')
-// 纯函数已抽到 utils/stackPullOutput.ts，从那里导入
+// 纯函数已抽到 utils/stackOperationOutput.ts，从那里导入
 const outputModule = await loadTs('src/utils/stackOperationOutput.ts')
 const { mergeOutput, stripAnsi, byteLength, MAX_OUTPUT_BYTES, MAX_OUTPUT_EVENTS } = outputModule
 
@@ -372,7 +372,7 @@ const { mergeOutput, stripAnsi, byteLength, MAX_OUTPUT_BYTES, MAX_OUTPUT_EVENTS 
 
 {
   const modal = readFileSync(
-    join(here, '..', 'src', 'components', 'stack', 'StackPullModal.vue'),
+    join(here, '..', 'src', 'components', 'stack', 'StackOperationModal.vue'),
     'utf8'
   )
   /*
@@ -391,7 +391,7 @@ const { mergeOutput, stripAnsi, byteLength, MAX_OUTPUT_BYTES, MAX_OUTPUT_EVENTS 
   )
   check(
     '组件: 说明只拉不重建',
-    /不会自动重建/.test(modal),
+    /不会自动重建/.test(typesSrc) && /meta\.description/.test(modal),
     '用户会以为点完就生效'
   )
 }
@@ -418,18 +418,18 @@ const { mergeOutput, stripAnsi, byteLength, MAX_OUTPUT_BYTES, MAX_OUTPUT_EVENTS 
   )
   check(
     '按钮: 只拉不重建的提示在弹窗里',
-    /不会自动重建/.test(
-      readFileSync(join(here, '..', 'src', 'components', 'stack', 'StackPullModal.vue'), 'utf8')
+    /不会自动重建/.test(typesSrc) && /meta\.description/.test(
+      readFileSync(join(here, '..', 'src', 'components', 'stack', 'StackOperationModal.vue'), 'utf8')
     ),
     '一步到位方案下，说明放在弹窗内固定展示'
   )
   /*
    * 弹窗已从 pull 专用的 StackPullModal 泛化为 StackOperationModal，
-   * 所有编辑动作共用。这里接受两者任一，保证旧引用仍能通过。
+   * 所有编辑动作共用，只验证当前生产组件。
    */
   check(
     '按钮: 接入实时输出弹窗',
-    /StackPullModal|stack-pull-modal|StackOperationModal|stack-operation-modal/.test(actions)
+    /StackOperationModal|stack-operation-modal/.test(actions)
   )
 }
 
@@ -638,7 +638,7 @@ const { mergeOutput, stripAnsi, byteLength, MAX_OUTPUT_BYTES, MAX_OUTPUT_EVENTS 
   check('排队: 不判成失败', r.phase.value !== 'failed')
 
   const modal = readFileSync(
-    join(here, '..', 'src', 'components', 'stack', 'StackPullModal.vue'),
+    join(here, '..', 'src', 'components', 'stack', 'StackOperationModal.vue'),
     'utf8'
   )
   check(
@@ -1032,7 +1032,7 @@ const { mergeOutput, stripAnsi, byteLength, MAX_OUTPUT_BYTES, MAX_OUTPUT_EVENTS 
    * 而启动失败时 task 为 null、phase 仍是 idle，错误永远不显示。
    */
   const modal = readFileSync(
-    join(here, '..', 'src', 'components', 'stack', 'StackPullModal.vue'),
+    join(here, '..', 'src', 'components', 'stack', 'StackOperationModal.vue'),
     'utf8'
   )
   check(

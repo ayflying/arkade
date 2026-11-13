@@ -12,7 +12,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -42,7 +41,6 @@ type DatabaseConfig struct {
 type AuthConfig struct {
 	SessionTTL                time.Duration `toml:"session_ttl"`                  // 登录会话有效期
 	AgentToken                string        `toml:"agent_token"`                  // 首期 Agent 接入的预共享 Token（简化版）
-	LocalAgentToken           string        `toml:"local_agent_token"`            // Deprecated: 兼容旧配置读取；内置本机执行端不使用此凭据
 	InitialUser               string        `toml:"initial_user"`                 // 首次启动时创建的管理员用户名
 	InitialPass               string        `toml:"initial_pass"`                 // 首次启动时创建的管理员密码
 	SettingsKeyFile           string        `toml:"settings_key_file"`            // OIDC 密钥加密主密钥文件；独立于数据库连接
@@ -64,7 +62,7 @@ func Default() Config {
 		},
 		Database: DatabaseConfig{DSN: "host=localhost port=5432 user=arkade dbname=arkade sslmode=disable"},
 		Auth: AuthConfig{
-			SettingsKeyFile: "./data/settings.key",
+			SettingsKeyFile: "/data/settings.key",
 			SessionTTL:      72 * time.Hour,
 			AgentToken:      "",
 			InitialUser:     "admin",
@@ -105,9 +103,6 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("ARKADE_AGENT_TOKEN"); v != "" {
 		cfg.Auth.AgentToken = v
 	}
-	if v := os.Getenv("ARKADE_LOCAL_AGENT_TOKEN"); v != "" {
-		cfg.Auth.LocalAgentToken = v
-	}
 	if v := os.Getenv("ARKADE_INITIAL_PASS"); v != "" {
 		cfg.Auth.InitialPass = v
 	}
@@ -132,17 +127,10 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("ARKADE_BASE_URL"); v != "" {
 		cfg.Server.BaseURL = v
 	}
-	// 会话有效期同时支持两种写法：
-	//   ARKADE_SESSION_TTL=72h   人类可读，推荐；
-	//   ARKADE_SESSION_TTL_SEC=0 纯秒数，保留兼容旧脚本。
+	// 会话有效期仅使用标准 duration，例如 ARKADE_SESSION_TTL=72h。
 	if v := os.Getenv("ARKADE_SESSION_TTL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d > 0 {
 			cfg.Auth.SessionTTL = d
-		}
-	}
-	if v := os.Getenv("ARKADE_SESSION_TTL_SEC"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			cfg.Auth.SessionTTL = time.Duration(n) * time.Second
 		}
 	}
 	if v := os.Getenv("ARKADE_WEB_DIST"); v != "" {
@@ -197,7 +185,6 @@ func (c Config) Validate() error {
 	if len(c.Auth.AgentToken) > 0 && len(c.Auth.AgentToken) < 16 {
 		errs = append(errs, errors.New("agent_token 至少 16 位，过短容易被爆破"))
 	}
-	// 废弃的 LocalAgentToken 不再参与本机认证，也不应阻止旧配置升级。
 	return errors.Join(errs...)
 }
 

@@ -70,7 +70,7 @@ func TestComposeOperationVersionGuardsAndKnownTask(t *testing.T) {
 		t.Fatalf("stale hash: %v", err)
 	}
 	op, _ := prepareTestOperation(t, db, req)
-	_, _, _ = db.UpdateComposeStack(ctx, "a", "web", 1, "new", "newhash")
+	_, _, _ = db.UpdateComposeProject(ctx, "a", "web", "new", "", "newhash", 1, time.Now().UTC())
 	if _, s, dup, err := db.PrepareComposeOperation(ctx, req); !errors.Is(err, ErrConflict) || !dup || s.ID != "" {
 		t.Fatalf("retry read newer config: %+v %v %v", s, dup, err)
 	}

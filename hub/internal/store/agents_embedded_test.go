@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"errors"
 	"reflect"
 	"testing"
 	"time"
@@ -41,14 +40,13 @@ func TestEnsureEmbeddedLocalAgentIdempotent(t *testing.T) {
 	}
 }
 
-func TestEnsureEmbeddedLocalAgentRevokesLegacyPreservesMetadata(t *testing.T) {
+func TestEnsureEmbeddedLocalAgentPreservesMetadata(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	hash := hashOf("legacy-local-token")
-	if err := db.EnsureLocalAgent(ctx, hash); err != nil {
+	if err := db.EnsureEmbeddedLocalAgent(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := rawDBOf(t, db).Exec(`UPDATE agents SET name='旧名字',display_name='自定义',note='备注',labels='{"role":"local"}',disabled=1,direct_address='localhost',updated_at=123 WHERE id=$1`, LocalAgentID); err != nil {
+	if _, err := rawDBOf(t, db).Exec(`UPDATE agents SET name='管理员名称',display_name='自定义',note='备注',labels='{"role":"local"}',direct_address='localhost',updated_at=123 WHERE id=$1`, LocalAgentID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := rawDBOf(t, db).Exec(`INSERT INTO groups(id,name,created_at) VALUES('local-group','local-group',1); INSERT INTO group_agents(group_id,agent_id,permission) VALUES('local-group','agent-local','read')`); err != nil {
@@ -60,10 +58,10 @@ func TestEnsureEmbeddedLocalAgentRevokesLegacyPreservesMetadata(t *testing.T) {
 	}
 	after, _ := db.GetAgent(ctx, LocalAgentID)
 	if !reflect.DeepEqual(before, after) {
-		t.Fatalf("legacy metadata overwritten %+v -> %+v", before, after)
+		t.Fatalf("admin metadata overwritten %+v -> %+v", before, after)
 	}
-	if _, err := db.LookupAgentByTokenHash(ctx, hash); !errors.Is(err, ErrAgentTokenNotFound) {
-		t.Fatalf("legacy credential still usable: %v", err)
+	if has, err := db.HasAgentToken(ctx, LocalAgentID); err != nil || has {
+		t.Fatalf("tokenless identity acquired credential: %v %v", has, err)
 	}
 	if err := db.UpdateEmbeddedLocalAgentRuntime(ctx, AgentRecord{ID: LocalAgentID, Name: "不应覆盖", Status: "online", Version: "test", Runtime: "docker", RuntimeVersion: "27", LastSeen: 456, UpdatedAt: 456, Labels: map[string]string{"bad": "overwrite"}}); err != nil {
 		t.Fatal(err)
@@ -86,29 +84,44 @@ func TestEnsureEmbeddedLocalAgentRevokesLegacyPreservesMetadata(t *testing.T) {
 }
 
 func TestEnsureEmbeddedLocalAgentRejectsTakeover(t *testing.T) {
-	for _, fixed := range []bool{false, true} {
-		t.Run(map[bool]string{false: "same-name", true: "fixed-id"}[fixed], func(t *testing.T) {
+	for _, kind := range []string{"same-name", "fixed-id", "remote-credential", "orphan-credential"} {
+		t.Run(kind, func(t *testing.T) {
 			db := newTestDB(t)
 			ctx := context.Background()
 			rec := newPreprovRecord(LocalAgentName)
-			if fixed {
+			if kind == "fixed-id" {
 				rec.ID = LocalAgentID
 				rec.Name = "different"
 				if err := db.UpsertAgent(ctx, rec); err != nil {
 					t.Fatal(err)
 				}
+			} else if kind == "orphan-credential" {
+				if err := db.SaveAgentToken(ctx, hashOf("other"), LocalAgentID, time.Now()); err != nil {
+					t.Fatal(err)
+				}
 			} else {
+				if kind == "remote-credential" {
+					rec.ID = LocalAgentID
+				}
 				if err := db.CreatePreprovisionedAgent(ctx, rec, hashOf("other"), time.Now()); err != nil {
 					t.Fatal(err)
 				}
 			}
 			before, _ := db.ListAgents(ctx)
+			hadToken, err := db.HasAgentToken(ctx, LocalAgentID)
+			if err != nil {
+				t.Fatal(err)
+			}
 			if err := db.EnsureEmbeddedLocalAgent(ctx); err == nil {
 				t.Fatal("takeover accepted")
 			}
 			after, _ := db.ListAgents(ctx)
 			if !reflect.DeepEqual(before, after) {
 				t.Fatal("conflict changed records")
+			}
+			hasToken, err := db.HasAgentToken(ctx, LocalAgentID)
+			if err != nil || hasToken != hadToken {
+				t.Fatalf("conflict changed credentials: %v", err)
 			}
 		})
 	}

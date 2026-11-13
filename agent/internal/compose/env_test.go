@@ -10,6 +10,8 @@ package compose
 
 import (
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -173,12 +175,8 @@ func TestWriteEnvAtomicNoTempLeftover(t *testing.T) {
 	}
 }
 
-// TestHashProjectCompatWithEmptyEnv 是兼容性的核心断言：
-// env 为空时必须与旧算法 Hash(content) **完全相同**。
-//
-// 破了这条的后果：升级后所有既有编排会同时显示"配置已偏离"，
-// 一次升级引发全量误报，真正的偏离反而被淹没。
-func TestHashProjectCompatWithEmptyEnv(t *testing.T) {
+// 空 env 仍使用项目域，不与单文件摘要混用。
+func TestHashProjectEmptyEnvUsesProjectDomain(t *testing.T) {
 	contents := []string{
 		"",
 		"services:\n  web:\n    image: nginx\n",
@@ -186,8 +184,8 @@ func TestHashProjectCompatWithEmptyEnv(t *testing.T) {
 		"含中文的内容\n",
 	}
 	for _, c := range contents {
-		if got, want := HashProject(c, ""), Hash(c); got != want {
-			t.Errorf("env 为空时应等于 Hash：HashProject=%q Hash=%q", got, want)
+		if got, raw := HashProject(c, ""), fmt.Sprintf("%x", sha256.Sum256([]byte(c)))[:16]; got == raw {
+			t.Errorf("空 env 项目哈希不得等于原始文件摘要：%q", got)
 		}
 	}
 }
@@ -205,7 +203,7 @@ func TestHashProjectIncludesEnv(t *testing.T) {
 		t.Error("不同的 .env 必须得到不同的项目哈希")
 	}
 	// 与"只有 content"的哈希也要不同。
-	if a == Hash(content) {
+	if a == fmt.Sprintf("%x", sha256.Sum256([]byte(content)))[:16] {
 		t.Error("有 .env 时不应与仅有 content 的哈希相同")
 	}
 }
@@ -403,20 +401,18 @@ func TestApplyProjectRejectsBadEnv(t *testing.T) {
 	}
 }
 
-// TestApplyLegacySignatureStillWorks 验证旧签名未被破坏。
-func TestApplyLegacySignatureStillWorks(t *testing.T) {
+// 无 env 的项目仍可落盘，但不得凭空创建 .env。
+func TestApplyProjectWithoutEnv(t *testing.T) {
 	m, _ := newSafeManager(t)
-
 	const content = "services:\n  web:\n    image: nginx\n"
-	if _, err := m.Apply(context.Background(), "legacy", content, Hash(content)); err != nil {
-		t.Fatalf("旧签名应仍可用: %v", err)
+	if _, err := m.ApplyProject(context.Background(), ProjectSpec{Name: "plain", Content: content, ExpectHash: HashProject(content, "")}); err != nil {
+		t.Fatal(err)
 	}
-	if !m.ws.Exists("legacy") {
-		t.Error("旧签名也应落盘 compose.yml")
+	if !m.ws.Exists("plain") {
+		t.Fatal("项目配置未落盘")
 	}
-	// 旧签名等价于"没有 .env"：不应凭空创建。
-	if m.ws.EnvExists("legacy") {
-		t.Error("旧签名不应创建 .env")
+	if m.ws.EnvExists("plain") {
+		t.Fatal("不应创建 .env")
 	}
 }
 

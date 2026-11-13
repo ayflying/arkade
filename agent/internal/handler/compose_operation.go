@@ -2,8 +2,8 @@ package handler
 
 // compose_operation.go：编排动作的异步任务处理器。
 //
-// 与 compose_pull.go 共用同一套任务引擎与快照结构，
-// 因此这里的代码只是"协议字段 → 领域参数"的翻译。
+// 所有动作（含 pull）复用同一套任务引擎与快照结构，
+// 这里负责"协议字段 → 领域参数"的翻译。
 
 import (
 	"context"

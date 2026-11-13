@@ -1,5 +1,5 @@
-# Hub 内置本机执行面 + PostgreSQL：两个独立容器，不再启动同机 Agent。
-# 保留历史 project 与显式卷名，升级前先停止旧 Agent，复用原工作目录。
+# Hub 内置本机执行面 + PostgreSQL：两个独立容器。
+# Hub 单数据卷 /data（settings.key + local），数据库独立持久化。
 name: arkade
 
 services:
@@ -27,17 +27,14 @@ services:
       # 内置本机无需令牌；远程节点通过后台创建专属接入密钥。
       ARKADE_AGENT_TOKEN: ""
       ARKADE_LOCAL_ENABLED: "true"
-      ARKADE_LOCAL_DATA_DIR: /opt/arkade/agent
+      ARKADE_LOCAL_DATA_DIR: /data/local
       ARKADE_LOCAL_RUNTIME: auto
       ARKADE_LOCAL_ENDPOINT: /var/run/docker.sock
       ARKADE_LOCAL_COMPOSE_BIN: docker
       ARKADE_BASE_URL: http://127.0.0.1:8080
       ARKADE_LOG_LEVEL: info
-      # 数据库内的网页会话策略优先；此项仅供内部旧配置回退。
-      ARKADE_SESSION_TTL: 24h
     volumes:
       - hub-data:/data
-      - agent-data:/opt/arkade/agent
       # 等价于宿主高权限；仅控制中心模式需关闭本机并删除此挂载。
       - /var/run/docker.sock:/var/run/docker.sock
     healthcheck:
@@ -69,11 +66,9 @@ services:
 
 volumes:
   hub-data:
-    name: arkade-hub-files-pg
+    name: arkade-hub-data
   postgres-data:
     name: arkade-postgres-data
-  agent-data:
-    name: arkade-agent-data
 
 networks:
   arkade:

@@ -91,7 +91,7 @@ func TestComposeEnvDefault(t *testing.T) {
 	}
 }
 
-func TestUpdateComposeStackPreservesEnv(t *testing.T) {
+func TestUpdateComposeProjectPreservesProvidedEnv(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	s := mkStack("a1", "web", "old")
@@ -99,16 +99,16 @@ func TestUpdateComposeStackPreservesEnv(t *testing.T) {
 	if err := db.CreateComposeStack(ctx, s); err != nil {
 		t.Fatal(err)
 	}
-	updated, ok, err := db.UpdateComposeStack(ctx, "a1", "web", 1, "new", "new-hash")
+	updated, ok, err := db.UpdateComposeProject(ctx, "a1", "web", "new", s.EnvContent, "new-hash", 1, time.Now().UTC())
 	if err != nil || !ok || updated.EnvContent != s.EnvContent || updated.Version != 2 {
-		t.Fatalf("legacy update: %+v ok=%v err=%v", updated, ok, err)
+		t.Fatalf("project update: %+v ok=%v err=%v", updated, ok, err)
 	}
-	_, ok, err = db.UpdateComposeStack(ctx, "a1", "web", 1, "stale", "stale-hash")
+	_, ok, err = db.UpdateComposeProject(ctx, "a1", "web", "stale", "SECRET=stale\n", "stale-hash", 1, time.Now().UTC())
 	if err != nil || ok {
-		t.Fatalf("legacy stale update: ok=%v err=%v", ok, err)
+		t.Fatalf("project stale update: ok=%v err=%v", ok, err)
 	}
 	got, err := db.GetComposeStack(ctx, "a1", "web")
 	if err != nil || !reflect.DeepEqual(got, updated) {
-		t.Fatalf("legacy stale update changed row: %+v err=%v", got, err)
+		t.Fatalf("project stale update changed row: %+v err=%v", got, err)
 	}
 }

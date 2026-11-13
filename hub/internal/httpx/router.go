@@ -156,7 +156,7 @@ func NewRouter(d Deps) *ghttp.Server {
 		// 分开挂会让 bareJSON 写入时 statusWriter 已被恢复，日志失真。
 		// 健康检查没有请求体：传 nil 表示不做 body 解码
 		// （仍会净化 query/form 来源）。
-		g.Middleware(responseChainGF(d.Log, d, d.Auth.SessionTTL(), nil))
+		g.Middleware(responseChainGF(d.Log, d, nil))
 		g.Bind(healthCtl)
 	})
 
@@ -185,7 +185,7 @@ func NewRouter(d Deps) *ghttp.Server {
 		Log:     d.Log,
 	})
 	s.Group("/", func(g *ghttp.RouterGroup) {
-		g.Middleware(responseChainGF(d.Log, d, d.Auth.SessionTTL(), func() any { return &authapi.LoginReq{} }))
+		g.Middleware(responseChainGF(d.Log, d, func() any { return &authapi.LoginReq{} }))
 		g.Bind(authCtl)
 	})
 
@@ -211,7 +211,7 @@ func NewRouter(d Deps) *ghttp.Server {
 		// authenticator 用**原生 GF 守卫**形态：它可能提前拒绝，
 		// 只有拿到 *ghttp.Request 才能用 commit 一次写完 GF 状态与响应。
 		g.Middleware(privResponseChainGF(
-			d.Log, d, d.Auth.SessionTTL(),
+			d.Log, d,
 			func() any { return &authapi.MeReq{} },
 			[]gate{authenticatorGF(d.Auth)},
 			[]middlewareFunc{auditMiddleware(d.DB, d.Log)},

@@ -53,7 +53,7 @@ const toggleLabel = computed(() => (disabled.value ? '启用' : '禁用'))
 /** 禁用/启用按钮的 tooltip 说明：解释这个操作的后果 */
 const toggleHint = computed(() =>
   disabled.value
-    ? isLocal.value ? '解除旧本机禁用后需重启 Hub，且本机配置须开启' : '启用后恢复正常管理'
+    ? '启用后恢复正常管理'
     : '禁用后该服务器的操作入口不可用，不会删除任何容器'
 )
 
@@ -93,7 +93,7 @@ const enterHint = computed(() =>
       重新生成专属密钥（旧密钥立即失效）
     </n-tooltip>
 
-    <n-tooltip v-if="!isLocal || disabled" trigger="hover" placement="top">
+    <n-tooltip v-if="!isLocal" trigger="hover" placement="top">
       <template #trigger>
         <n-button size="tiny" tertiary :disabled="busy" @click="emit('toggle-disabled')">
           {{ toggleLabel }}

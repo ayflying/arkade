@@ -1,14 +1,7 @@
 /**
  * 编排操作任务（启动/停止/重启/更新/重建/保存部署/备份/删除）的类型
  *
- * ## 和 pull-tasks 的关系
- *
- * 原来只有「更新镜像」有实时输出。现在所有编辑动作统一走同一套任务模型：
- * 后端跑真实命令、前端轮询增量输出。契约形状基本一致，只多了 `action`
- * 与 `command` 流，所以这里是**泛化**而非新写一套。
- *
- * `types/stackPullTask.ts` 仍然保留（旧接口兼容），但它现在的字段是这里
- * 的子集，实现上转调本文件，不复制逻辑。
+ * 所有编辑动作统一通过 operation-tasks 执行真实命令并轮询增量输出。
  *
  * ## 契约
  *
@@ -125,7 +118,7 @@ export interface StackOperationTask {
   action: StackTaskAction | 'unknown'
   /** 当前正在执行（或最后执行）的命令，argv 拼接，只读展示 */
   command: string
-  /** 命令的实际工作目录（Agent 上报；旧版可能为空） */
+  /** 命令的实际工作目录（Agent 上报；未执行时可能为空） */
   working_dir: string
   status: StackOperationStatus
   output: StackOperationEvent[]

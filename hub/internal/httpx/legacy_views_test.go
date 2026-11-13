@@ -26,7 +26,7 @@ type agentView = agentsapi.AgentView
 type composeStackView = stacksapi.StackView
 
 var validComposeName = compose.ValidName
-var composeConfigHash = compose.ConfigHash
+var composeConfigHash = func(content string) string { return compose.ProjectHash(content, "") }
 var composeProjectHash = compose.ProjectHash
 var truncateComposeOutput = compose.TruncateOutput
 var toStackView = compose.StackViewOf

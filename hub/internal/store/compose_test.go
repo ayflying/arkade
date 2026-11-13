@@ -81,8 +81,8 @@ func TestListComposeStacksOrder(t *testing.T) {
 	}
 }
 
-// TestUpdateComposeStackVersion 验证乐观锁：正确版本才更新，版本号自增。
-func TestUpdateComposeStackVersion(t *testing.T) {
+// TestUpdateComposeProjectVersion 验证乐观锁：正确版本才更新，版本号自增。
+func TestUpdateComposeProjectVersion(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	if err := db.CreateComposeStack(ctx, mkStack("a1", "web", "v1")); err != nil {
@@ -90,7 +90,7 @@ func TestUpdateComposeStackVersion(t *testing.T) {
 	}
 
 	// 版本正确：更新成功，版本变 2。
-	updated, ok, err := db.UpdateComposeStack(ctx, "a1", "web", 1, "v2", "hash-v2")
+	updated, ok, err := db.UpdateComposeProject(ctx, "a1", "web", "v2", "", "hash-v2", 1, time.Now().UTC())
 	if err != nil {
 		t.Fatalf("正确版本更新不应报错: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestUpdateComposeStackVersion(t *testing.T) {
 	}
 
 	// 版本过期：不命中（ok=false），且不报错。
-	stale, ok, err := db.UpdateComposeStack(ctx, "a1", "web", 1, "v3", "hash-v3")
+	stale, ok, err := db.UpdateComposeProject(ctx, "a1", "web", "v3", "", "hash-v3", 1, time.Now().UTC())
 	if err != nil {
 		t.Fatalf("版本冲突不应返回错误（由上层映射 409）: %v", err)
 	}
@@ -126,14 +126,14 @@ func TestUpdateComposeStackVersion(t *testing.T) {
 	}
 }
 
-// TestUpdateComposeStackNotFound 验证更新不存在的记录返回 ErrNotFound（不是冲突）。
+// TestUpdateComposeProjectNotFound 验证更新不存在的记录返回 ErrNotFound（不是冲突）。
 //
 // 这个区分至关重要：上层据此返回 404 而不是 409。
-func TestUpdateComposeStackNotFound(t *testing.T) {
+func TestUpdateComposeProjectNotFound(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 
-	_, ok, err := db.UpdateComposeStack(ctx, "a1", "ghost", 1, "v2", "h")
+	_, ok, err := db.UpdateComposeProject(ctx, "a1", "ghost", "v2", "", "h", 1, time.Now().UTC())
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("更新不存在的记录应返回 ErrNotFound，实际 err=%v ok=%v", err, ok)
 	}

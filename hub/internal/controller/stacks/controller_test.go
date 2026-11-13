@@ -95,7 +95,7 @@ func TestReadOfflineAndValidationOrder(t *testing.T) {
 		t.Fatal(e)
 	}
 	list, e := c.List(context.Background(), &api.ListReq{AgentID: "agent"})
-	if e != nil || list.AgentOnline || list.Orphans != nil || list.ExternalStacks != nil || len(list.Stacks) != 1 {
+	if e != nil || list.AgentOnline || list.ExternalStacks != nil || len(list.Stacks) != 1 {
 		t.Fatalf("list %+v %v", list, e)
 	}
 	detail, e := c.Detail(context.Background(), &api.DetailReq{AgentID: "agent", Name: "app"})

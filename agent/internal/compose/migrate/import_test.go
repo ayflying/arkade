@@ -381,15 +381,11 @@ func TestImportStatusProgress(t *testing.T) {
 // 迁移都会在"哈希不符"处被拒——而那个错误看起来像内容损坏，
 // 排查起来极其耗时。因此这里锁死具体输出值。
 func TestComposeProjectHashMatchesHub(t *testing.T) {
-	// 只有 content：sha256(content) 的前 16 位。
+	// 空 env 也必须参与项目域哈希，不退回原始文件摘要。
 	got := ComposeProjectHash("services: {}\n", "")
-	const wantOnlyContent = "d3e5a0f8d5b0e6e1" // 占位，下面用计算值校验
-	_ = wantOnlyContent
-	// 用标准算法独立算一遍比对（不写死魔数：写死会在算法调整时
-	// 变成"测试挂了但不知道为什么"，而独立实现能直接指出差异）。
-	direct := sha([]byte("services: {}\n"))[:16]
+	direct := sha([]byte("arkade.compose.project.v1\x00content\x0013\x00services: {}\nenv\x000\x00"))[:16]
 	if got != direct {
-		t.Fatalf("空 env 时应为 sha256(content) 前 16 位：期望 %s，实际 %s", direct, got)
+		t.Fatalf("空 env 项目域哈希不一致：期望 %s，实际 %s", direct, got)
 	}
 
 	// 有 env：必须包含长度前缀与固定标记。

@@ -54,7 +54,7 @@ func TestEmbeddedLocalEnabledFieldValidation(t *testing.T) {
 
 func TestEmbeddedLocalDefaultsAndEnvironment(t *testing.T) {
 	cfg := Default()
-	if !cfg.Local.Enabled || cfg.Local.DataDir != "/opt/arkade/agent" || cfg.Local.Runtime != "auto" || cfg.Local.Endpoint != "" || cfg.Local.ComposeBin != "" {
+	if !cfg.Local.Enabled || cfg.Local.DataDir != "/data/local" || cfg.Local.Runtime != "auto" || cfg.Local.Endpoint != "" || cfg.Local.ComposeBin != "" {
 		t.Fatalf("defaults %+v", cfg.Local)
 	}
 	t.Setenv("ARKADE_LOCAL_ENABLED", "false")
@@ -71,9 +71,9 @@ func TestEmbeddedLocalDefaultsAndEnvironment(t *testing.T) {
 	}
 }
 
-func TestEmbeddedLocalTOMLAndLegacyToken(t *testing.T) {
+func TestEmbeddedLocalTOML(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "local.toml")
-	if err := os.WriteFile(path, []byte("[local]\nenabled=false\ndata_dir='/toml/agent'\nruntime='docker'\nendpoint='unix:///toml/docker.sock'\ncompose_bin='docker-compose'\n[auth]\ninitial_pass='test'\nlocal_agent_token='old'\n"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte("[local]\nenabled=false\ndata_dir='/toml/agent'\nruntime='docker'\nendpoint='unix:///toml/docker.sock'\ncompose_bin='docker-compose'\n[auth]\ninitial_pass='test'\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	cfg, err := Load(path)
@@ -83,14 +83,11 @@ func TestEmbeddedLocalTOMLAndLegacyToken(t *testing.T) {
 	if cfg.Local.Enabled || cfg.Local.DataDir != "/toml/agent" || cfg.Local.Runtime != "docker" || cfg.Local.ComposeBin != "docker-compose" {
 		t.Fatalf("toml %+v", cfg.Local)
 	}
-	if cfg.Auth.LocalAgentToken != "old" {
-		t.Fatal("legacy token must still decode")
-	}
 	if err := cfg.Validate(); err != nil {
-		t.Fatalf("deprecated token must not block startup: %v", err)
+		t.Fatalf("disabled local config rejected: %v", err)
 	}
 	cfg.Local.Enabled = true
 	if err := cfg.Validate(); err != nil {
-		t.Fatalf("enabled embedded local ignores legacy token: %v", err)
+		t.Fatalf("enabled local config rejected: %v", err)
 	}
 }

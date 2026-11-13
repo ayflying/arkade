@@ -129,7 +129,10 @@ check(
   Array.isArray(list.stacks) ? list.stacks.map((s) => s.name).join(',') : String(list.stacks)
 )
 check('listStacks: agent_online 透传', list.agent_online === true)
-check('listStacks: 缺 orphans 时不炸', Array.isArray(list.external_stacks))
+check('listStacks: 使用 external_stacks 当前契约', Array.isArray(list.external_stacks))
+nextResponse = { stacks: [], agent_online: false, external_stacks: [], orphans: ['legacy-only'] }
+const currentList = await api.listStacks('ag-1')
+check('listStacks: 不透传旧 orphans 字段', !('orphans' in currentList))
 
 const [s0, sBusy] = list.stacks
 noUndefined('listStacks: 编排项无 undefined 字段', s0)
@@ -219,7 +222,10 @@ check('getStack: 路径正确', lastCall.url === '/agents/ag-1/stacks/my-app', l
 check('getStack: 从 stack 包装里解出 name', detail.name === 'my-app', String(detail.name))
 check('getStack: 解出 status', detail.status === 'running', String(detail.status))
 check('getStack: 解出 services', Array.isArray(detail.services) && detail.services.join(',') === 'web,db')
-check('getStack: 后端不再返回 content，不伪造空串', detail.content === undefined)
+check('getStack: 详情不提供 compose 原文', detail.content === undefined)
+nextResponse = { ...fixture.getStack, content: 'legacy-secret-compose' }
+const sanitizedDetail = await api.getStack('ag-1', 'my-app')
+check('getStack: 不再回填旧响应顶层 compose 原文', !('content' in sanitizedDetail))
 // 真实字段齐全时必须原样保留数字，不能被「兜底」改成 null/0
 check('getStack: 真实 running 保留为数字', detail.running === 2, String(detail.running))
 check('getStack: 真实 total 保留为数字', detail.total === 2, String(detail.total))

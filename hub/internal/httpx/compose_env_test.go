@@ -59,7 +59,7 @@ func TestComposeEnvLifecycleOffline(t *testing.T) {
 	}
 	saved, _ = e.db.GetComposeStack(t.Context(), "env-agent", "env-test")
 	if saved.EnvContent != "" || saved.ConfigHash != composeConfigHash(sampleCompose) {
-		t.Fatal("显式空串未清空或空env兼容哈希不符")
+		t.Fatal("显式空串未清空或空env项目哈希不符")
 	}
 }
 
@@ -95,6 +95,6 @@ func TestComposeProjectHashBoundaries(t *testing.T) {
 		t.Fatal("文件边界未参与哈希")
 	}
 	if composeProjectHash(sampleCompose, "") != composeConfigHash(sampleCompose) {
-		t.Fatal("空env破坏旧哈希兼容")
+		t.Fatal("空env项目哈希不一致")
 	}
 }

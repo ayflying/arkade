@@ -234,8 +234,8 @@ async function handleToggleDisabled(agent: Agent): Promise<void> {
   if (busyId.value !== '') return
   const name = agentDisplayName(agent)
   const disabled = isAgentDisabled(agent)
-  if (agent.id === 'agent-local' && !disabled) {
-    toastWarning('内置本机不能在后台禁用；请修改 Hub 的 local.enabled 配置并重启 Hub。')
+  if (agent.id === 'agent-local') {
+    toastWarning('内置本机的启用状态由 Hub 的 local.enabled 配置管理，请修改配置并重启 Hub。')
     return
   }
 
@@ -259,9 +259,7 @@ async function handleToggleDisabled(agent: Agent): Promise<void> {
       // 本地没有这一行（异常情况），退回全量刷新保证界面正确
       await store.refresh()
     }
-    toastSuccess(agent.id === 'agent-local'
-      ? '已解除本机禁用；请确认 local.enabled 已开启并重启 Hub 后恢复本机执行。'
-      : disabled ? `已启用服务器「${name}」` : `已禁用服务器「${name}」`)
+    toastSuccess(disabled ? `已启用服务器「${name}」` : `已禁用服务器「${name}」`)
   } catch (err) {
     toastError(err instanceof ApiError ? err.message : `${disabled ? '启用' : '禁用'}服务器失败`)
   } finally {

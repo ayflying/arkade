@@ -252,6 +252,58 @@ func TestLocalUncooperativeExecutorRemainsBounded(t *testing.T) {
 	close(release)
 	workers.Wait()
 }
+
+// 满槽位使调用停在准入select；注销同时取消local和派生call context，
+// 两条Done分支无论谁胜出都必须分类为offline，而不是偶现timeout。
+func TestLocalRemovalWhileWaitingForSlotIsOffline(t *testing.T) {
+	for i := 0; i < 100; i++ {
+		r := NewRegistry()
+		register(t, r, func(context.Context, string, []byte) ([]byte, *envelope.Error) {
+			t.Error("full slots must prevent executor admission")
+			return nil, nil
+		})
+		for n := 0; n < cap(r.localSlots); n++ {
+			r.localSlots <- struct{}{}
+		}
+		r.mu.RLock()
+		entry := r.locals["local"]
+		r.mu.RUnlock()
+		started := make(chan struct{})
+		done := make(chan *ConnError, 1)
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		go func() {
+			close(started)
+			_, err := r.callLocal(ctx, "local", "x", nil, entry)
+			done <- err
+		}()
+		<-started
+		r.RemoveLocal("local")
+		select {
+		case err := <-done:
+			if err == nil || err.Code != envelope.CodeAgentOffline {
+				t.Fatalf("iteration %d: removal must be offline, got %v", i, err)
+			}
+		case <-ctx.Done():
+			t.Fatalf("iteration %d: removal failed to release waiting call", i)
+		}
+		cancel()
+	}
+}
+
+func TestLocalCancellationClassificationPrefersRemovedEntry(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	localCtx, remove := context.WithCancel(context.Background())
+	entry := &localEntry{ctx: localCtx, cancel: remove}
+	if err := localCancellationError(ctx, entry, "local", "x"); err.Code != envelope.CodeTimeout || !errors.Is(err, context.Canceled) {
+		t.Fatalf("caller cancellation must remain timeout: %v", err)
+	}
+	remove()
+	if err := localCancellationError(ctx, entry, "local", "x"); err.Code != envelope.CodeAgentOffline {
+		t.Fatalf("removed entry must take precedence: %v", err)
+	}
+}
+
 func TestLocalConcurrentRemoveAndReregister(t *testing.T) {
 	r := NewRegistry()
 	f := localFunc(func(context.Context, string, []byte) ([]byte, *envelope.Error) { return []byte("ok"), nil })

@@ -107,7 +107,7 @@ func (r *Registry) callLocal(ctx context.Context, agentID, method string, payloa
 		return nil, newOfflineError(agentID)
 	}
 	if callCtx.Err() != nil {
-		return nil, localTimeoutError(callCtx, agentID, method)
+		return nil, localCancellationError(callCtx, local, agentID, method)
 	}
 	env, err := envelope.NewRequest(newRequestID(), method, "agent:"+agentID, payload)
 	if err != nil {
@@ -119,7 +119,7 @@ func (r *Registry) callLocal(ctx context.Context, agentID, method string, payloa
 	case <-local.ctx.Done():
 		return nil, newOfflineError(agentID)
 	case <-callCtx.Done():
-		return nil, localTimeoutError(callCtx, agentID, method)
+		return nil, localCancellationError(callCtx, local, agentID, method)
 	}
 	results := make(chan result, 1)
 	go func() {
@@ -145,17 +145,28 @@ func (r *Registry) callLocal(ctx context.Context, agentID, method string, payloa
 		if local.ctx.Err() != nil {
 			return nil, newOfflineError(agentID)
 		}
-		return nil, localTimeoutError(callCtx, agentID, method)
+		return nil, localCancellationError(callCtx, local, agentID, method)
 	case res := <-results:
 		if local.ctx.Err() != nil {
 			return nil, newOfflineError(agentID)
 		}
 		if callCtx.Err() != nil {
-			return nil, localTimeoutError(callCtx, agentID, method)
+			return nil, localCancellationError(callCtx, local, agentID, method)
 		}
 		return res.payload, res.err
 	}
 }
+
+// localCancellationError 在所有取消出口保持同一分类：注销优先返回离线，
+// 只有仍存活的 entry 上的调用方取消/期限到期才返回 timeout。
+// local.ctx 与派生 callCtx 可同时就绪，不能依赖 select 选中哪条分支。
+func localCancellationError(ctx context.Context, local *localEntry, agentID, method string) *ConnError {
+	if local.ctx.Err() != nil {
+		return newOfflineError(agentID)
+	}
+	return localTimeoutError(ctx, agentID, method)
+}
+
 func localTimeoutError(ctx context.Context, agentID, method string) *ConnError {
 	err := newTimeoutError(agentID, method)
 	err.Wrapped = ctx.Err()

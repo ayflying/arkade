@@ -248,7 +248,7 @@ func TestComposeListReportsLocalHash(t *testing.T) {
 	if p.Name != "db" {
 		t.Errorf("项目名应为 db，实际 %q", p.Name)
 	}
-	if p.ConfigHash != compose.Hash(content) {
+	if p.ConfigHash != compose.HashProject(content, "") {
 		t.Errorf("哈希应与文件内容一致，实际 %q", p.ConfigHash)
 	}
 	// 服务名应被解析出来。
@@ -300,11 +300,8 @@ func TestComposeLogsRejectsBadService(t *testing.T) {
 	}
 }
 
-// TestComposeRemoveDeletesLocalFiles 验证删除会清掉本机目录。
-//
-// 即使用户的容器本来就没跑（down 失败），删除意图也必须完成——
-// 否则界面上删了、机器上还留着，下次列表又冒出来。
-func TestComposeRemoveDeletesLocalFiles(t *testing.T) {
+// down 失败必须保留恢复所需的工作区，不能把命令失败伪装成删除成功。
+func TestComposeRemoveFailurePreservesLocalFiles(t *testing.T) {
 	reg, mgr := newComposeRegistry(t)
 	if _, err := mgr.Workspace().Write("web", "services: {}\n"); err != nil {
 		t.Fatal(err)
@@ -313,10 +310,12 @@ func TestComposeRemoveDeletesLocalFiles(t *testing.T) {
 		t.Fatal("准备数据失败")
 	}
 
-	request(t, reg, envelope.MethodComposeRemove, envelope.ComposeOpPayload{Name: "web"})
-
-	if mgr.Workspace().Exists("web") {
-		t.Error("删除后本机目录应已清除")
+	resp := request(t, reg, envelope.MethodComposeRemove, envelope.ComposeOpPayload{Name: "web", RemoveVolumes: false})
+	if resp.Error == nil {
+		t.Fatal("down 失败必须返回错误")
+	}
+	if !mgr.Workspace().Exists("web") {
+		t.Error("失败后本机目录必须保留")
 	}
 }
 

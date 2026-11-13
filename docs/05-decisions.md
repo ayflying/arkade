@@ -7,12 +7,12 @@
 以下为当前已确认的新架构，优先于本文后续历史记录及旧架构文档中与其冲突的表述；历史条目保留，不将旧设计误当成当前实现。
 
 - Hub 默认通过 `agent/embedded` 公开包复用本机执行能力，内部 Registry 直接调用；本机不启动 WebSocket、不创建接入 Token。独立 Agent 只用于远程服务器，继续反向连接。
-- 本机固定 ID 为 `agent-local`，沿用已有 identity/workspace，默认目录 `/opt/arkade/agent`；`ARKADE_LOCAL_ENABLED=false` 或 `local.enabled=false` 可关闭本机执行，配置变更需重启 Hub。Hub 仍必须连接 PostgreSQL。
+- 本机固定 ID 为 `agent-local`，容器工作目录 `/data/local`；`ARKADE_LOCAL_ENABLED=false` 或 `local.enabled=false` 可关闭本机执行，配置变更需重启 Hub。Hub 仍必须连接 PostgreSQL。
 - Hub 镜像包含 Docker CLI/Compose；本机执行需要宿主 socket 权限，容器以 root 运行。这是明确的高权限信任边界，覆盖「Hub 绝不接触 Docker」的旧约束，不代表增加了运行时隔离。
-- 同机 combined 编排不再启动独立 Agent，但必须保持原 Compose project 与 `arkade-agent-data` 卷。升级先备份 PG、设置主密钥及工作卷，先停止旧 Agent，再用新版编排 `up -d --remove-orphans`，保留所有卷，不执行生产变更或自动清理。
-- 本机 `online` 只代表进程内执行可用；Docker 健康须看运行时与采集结果。运行时为 `none` 时，List 为兼容可成功返回空集合，不代表 Docker 零容器或健康；监控采样与实际控制不支持，不把缺少指标当作健康。
+- 新安装统一单个 Hub 数据卷 `arkade-hub-data` → `/data`，包含 `settings.key` 与 `local`。仅 Hub 连接已有 PostgreSQL，combined 额外提供独立 PG 数据卷；不提供历史部署兼容流程。
+- 本机 `online` 只代表进程内执行可用；Docker 健康须看运行时与采集结果。运行时为 `none` 时，List 可成功返回空集合，不代表 Docker 零容器或健康；监控采样与实际控制不支持，不把缺少指标当作健康。
 - Hub 宕机时无法为自身发通知，内置执行也随进程停止；远程失联监控仍在 Hub 运行时有效。监控不是容器自动修复或 Hub 自愈。
-- 已有本机记录若为 disabled，保留该记录且不启动内置执行。计划后台 Enable 仅解除旧 disabled 标记，仍须重启 Hub 才能启动；本机 Disable/Delete/Reset 均拒绝，不能按远程 Agent 生命周期处理。
+- 本机生命周期通过启动配置控制；本机 Disable/Delete/Reset 均拒绝，不按远程 Agent 生命周期处理，也不提供后台热启动。
 
 细节与操作边界见 [内置本机执行](<21-embedded-local.md>)。D-05 的独立 CLI 离线自治适用于远程 Agent，不表示 Hub 停机后仍有一个内置 Agent 守护进程；D-08 中「不引入 GoFrame」是历史选型，已由现有 GoFrame v2 重构覆盖。
 
@@ -31,7 +31,7 @@
 
 ## D-03 Hub 存储：PostgreSQL，全新数据库
 
-- 2026-11-12 用户确认：默认且唯一数据库改为 PostgreSQL，删除 SQLite 实现，不迁移旧数据，不做双库兼容。旧运行环境文件不自动删除。
+- 唯一数据库为 PostgreSQL，采用全新数据库结构，不提供其他存储后端或旧数据库接管。
 - 使用 GoFrame 官方 pgsql v2.9.6 驱动与 gdb，多连接池；跨表事务通过数据库锁保留先查后改的并发不变量。
 - 全新 PG 版本化建表迁移独立维护，启动前检查 dirty、脚本校验和、结构漂移和未知版本。迁移锁由 PostgreSQL advisory lock 管理，不使用本机数据库文件锁。
 - 使用 pg_dump/pg_restore 备份与独立恢复；OIDC 加密主密钥单独持久化并备份，不从数据库文件路径推导。

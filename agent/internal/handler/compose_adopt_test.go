@@ -100,7 +100,7 @@ func TestComposeAdoptRequiresConfirmation(t *testing.T) {
 	reg, _ := newComposeRegistry(t)
 	resp := request(t, reg, envelope.MethodComposeAdopt, envelope.ComposeAdoptPayload{
 		Name: "noconfirm", Content: adoptTestPayload,
-		ExpectedContentHash: compose.Hash(adoptTestPayload),
+		ExpectedContentHash: compose.HashProject(adoptTestPayload, ""),
 		Confirmation:        false,
 	})
 	if resp.Error == nil {
@@ -133,7 +133,7 @@ func TestComposeAdoptRejectsUnsafeContent(t *testing.T) {
 	content := "services:\n  app:\n    image: alpine\n    env_file: ./app.env\n"
 	resp := request(t, reg, envelope.MethodComposeAdopt, envelope.ComposeAdoptPayload{
 		Name: "unsafeimport", Content: content,
-		ExpectedContentHash: compose.Hash(content),
+		ExpectedContentHash: compose.HashProject(content, ""),
 		Confirmation:        true,
 	})
 	if resp.Error == nil {
@@ -152,7 +152,7 @@ func TestComposeAdoptWithoutExternalProject(t *testing.T) {
 	reg, mgr := newComposeRegistry(t)
 	resp := request(t, reg, envelope.MethodComposeAdopt, envelope.ComposeAdoptPayload{
 		Name: "ghost", Content: adoptTestPayload,
-		ExpectedContentHash: compose.Hash(adoptTestPayload),
+		ExpectedContentHash: compose.HashProject(adoptTestPayload, ""),
 		Confirmation:        true,
 	})
 	if resp.Error == nil {

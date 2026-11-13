@@ -250,9 +250,6 @@ func writeAuditRecord(w auditWriter, log *slog.Logger, r *http.Request, rec *sta
 	if strings.HasSuffix(pattern, "/operation-tasks") {
 		detail = subAction + "：提交编排执行任务；受理不代表执行成功，请查看任务结果"
 	}
-	if strings.HasSuffix(pattern, "/pull-tasks") {
-		detail = "pull：提交镜像拉取任务；受理不代表执行成功，请查看任务结果"
-	}
 
 	result := audit.ResultSuccess
 	errMsg := ""

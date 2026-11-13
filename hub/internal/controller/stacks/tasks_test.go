@@ -32,8 +32,8 @@ func TestOperationValidationAndSavedOfflineRetry(t *testing.T) {
 	wantError(t, e, 400, "输出游标不合法")
 	_, e = c.GetOperation(context.Background(), &api.GetOperationReq{AgentID: "agent", Name: "app", TaskID: "task_12345"})
 	wantError(t, e, 404, "编排任务不存在")
-	_, e = c.StartPull(bodyCtx(`{"request_id":"bad"}`), &api.StartPullReq{AgentID: "agent", Name: "app"})
-	wantError(t, e, 400, "任务请求标识不合法")
+	_, e = c.StartOperation(bodyCtx(`{"request_id":"bad","action":"pull"}`), &api.StartOperationReq{AgentID: "agent", Name: "app"})
+	wantError(t, e, 400, "操作或请求标识不合法")
 }
 func TestMigrateValidationAndTypedView(t *testing.T) {
 	c, db, _ := setup(t)

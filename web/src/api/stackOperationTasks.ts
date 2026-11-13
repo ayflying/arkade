@@ -2,9 +2,6 @@
  * 编排操作任务接口
  *
  * 所有编排编辑动作（启动/停止/重启/更新/重建/备份/删除/保存部署）共用。
- *
- * 旧文件 `api/stackPullTasks.ts` 保留并转调本文件——**不复制实现**，
- * 否则两处校验逻辑迟早分叉（一处修了另一处没修）。
  */
 import { httpGet, httpPost } from './request'
 import { ApiError } from '@/types/api'

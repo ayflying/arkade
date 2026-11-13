@@ -162,14 +162,14 @@ initial_user = "admin"
 initial_pass = "请替换为管理员初始密码"
 # OIDC 客户端密钥的加密主密钥文件，独立于 PostgreSQL 数据库连接。
 # 备份/迁移必须同时保留数据库和密钥文件；不要提交此文件到版本库。
-settings_key_file = "./data/settings.key"
+settings_key_file = "/data/settings.key"
 # 仅本地假 OIDC 测试可开启；生产保持 false，OIDC Issuer 必须 HTTPS。
 allow_insecure_oidc_loopback = false
 
 [local]
 # 默认内置本机执行能力；仅作为远程控制中心时设false。
 enabled = true
-data_dir = "/opt/arkade/agent"
+data_dir = "/data/local"
 runtime = "auto"
 endpoint = ""
 # docker可执行文件路径，不是shell命令。

@@ -7,7 +7,7 @@ import { administrationRoutes } from './administration'
  * 结构（改造后）：
  * - /login                        登录页（不需要认证）
  * - /agents                       服务器列表
- * - /agents/:id/containers        容器的容器列表    ← 旧路径 /agents/:id 重定向到此
+ * - /agents/:id/containers        容器的容器列表
  * - /agents/:id/stacks            容器编排列表
  * - /agents/:id/stacks/new        新建编排
  * - /agents/:id/stacks/:name      编排详情
@@ -162,11 +162,6 @@ const routes: RouteRecordRaw[] = [
         // 空路径父级：只为承载 :id 参数与子路由，自身不渲染内容
         path: ':id',
         children: [
-          {
-            // 旧链接兼容：/agents/xxx 曾经直接是容器页，重定向到 /containers
-            path: '',
-            redirect: (to) => ({ name: 'agent-containers', params: { id: to.params.id } })
-          },
           ...agentChildRoutes
         ]
       }

@@ -3,7 +3,7 @@
 工作流：`.github/workflows/images.yml`。使用 GitHub Actions 构建，镜像发布到 GitHub Container Registry（GHCR），可以在 GitHub 的 Packages 页面查看，不把镜像二进制提交进 Git 仓库。
 
 **部署链路就是这个闭环**：本地改代码 → 推送 `master` → CI 跑测试并构建发布镜像 → 部署机 `docker compose pull && up -d`。
-部署机不编译、不需要源码，镜像来源统一，回滚只改一个标签。
+部署机不编译、不需要源码，镜像来源统一，生产固定提交标签或摘要。
 
 ## 镜像地址
 
@@ -68,7 +68,7 @@ docker compose -f deploy/docker/hub-compose.yml up -d
 docker compose -f agent-compose.yml pull && docker compose -f agent-compose.yml up -d
 ```
 
-固定版本（生产推荐）与回滚都只是改这一个字符串：
+固定发布版本（生产推荐）可修改该镜像字符串：
 
 ```sh
 # 先取得摘要（推荐固定摘要，而不是浮动标签）
@@ -83,9 +83,7 @@ docker image inspect ghcr.io/ayflying/arkade-hub:latest --format '{{index .RepoD
 
 然后 `docker compose -f deploy/docker/hub-compose.yml up -d`（**不要加 `--build`**）。
 
-`--build` 是关键开关：Hub 编排同时保留了 `build:` 段，加了 `--build` 就会忽略刚拉取的镜像、
-就地重新构建并打上同名标签，结果「用上了 CI 镜像」只是错觉——那条路径只用于本地未推送的自测。
-显式加 `--no-build` 可以彻底杜绝这种误用。数据卷（`arkade-hub-data` / `arkade-agent-data`）与 `.env`、`*.config.toml` 都不受影响，重建只换容器。
+部署模板仅包含 `image`，不含 `build`，不需要源码或 TOML。两种 Hub 模板使用 `arkade-hub-data` → `/data`（含 `settings.key` 与 `local`）；combined 另使用 `arkade-postgres-data`。远程 Agent 的 `arkade-agent-data` 与 Hub 单卷布局相互独立。更新镜像不应删除数据卷；数据库结构与镜像版本仍需分别验证。
 
 ## 查看产物与排障
 

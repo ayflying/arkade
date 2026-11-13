@@ -11,7 +11,7 @@ Arkade（中文名：容器方舟）是一个用于管理多台服务器上容�
 - **主程序（Hub）**：提供 Web 界面、用户鉴权、服务器管理、编排下发、镜像仓库凭据集中配置与迁移任务编排；默认还在进程内管理本机容器。内置执行复用 Agent 的公开 embedded 包，经内部 Registry 调用，不另起本地 WebSocket 连接、不创建本机接入 Token。
 - **代理程序（Agent）**：只需部署在远程受管服务器上，主动反向连接 Hub，执行该服务器的容器操作、编排文件落盘及镜像与数据卷搬运。同机不必再部署一个独立 Agent。
 
-本机固定标识为 `agent-local`，保留已有本机 identity 与 workspace；默认工作目录为 `/opt/arkade/agent`。只想运行控制面时，可设置 `ARKADE_LOCAL_ENABLED=false` 或配置 `local.enabled=false` 后重启 Hub。Hub 仍必须连接 PostgreSQL。详见 [内置本机执行与升级](<docs/21-embedded-local.md>)。
+本机固定标识为 `agent-local`，容器工作目录为 `/data/local`，与设置主密钥共用单个 `/data` 卷。只想运行控制面时，可设置 `ARKADE_LOCAL_ENABLED=false` 或配置 `local.enabled=false` 后重启 Hub，并移除容器 socket 挂载。Hub 仍必须连接 PostgreSQL。详见 [内置本机执行](<docs/21-embedded-local.md>)。
 
 ## 核心特性
 
@@ -48,7 +48,7 @@ Arkade（中文名：容器方舟）是一个用于管理多台服务器上容�
 - [04 路线图](docs/04-roadmap.md) — 分期计划与验收口径
 - [05 已决策项](docs/05-decisions.md) — 已拍板的技术与范围决策（开发以此为准）
 - [20 容器监控与通知](<docs/20-container-monitoring.md>) — 后台启用步骤、钉钉/SMTP、告警边界与主密钥备份
-- [21 内置本机执行](<docs/21-embedded-local.md>) — 本机/远程拓扑、运行权限、开关及同机升级边界
+- [21 内置本机执行](<docs/21-embedded-local.md>) — 本机/远程拓扑、运行权限、开关与持久化
 
 ## 目录结构
 
@@ -67,15 +67,15 @@ arkade/
 
 提供三套仅使用 `image` 的编排，不包含 `build`；普通参数直接写在编排中，只有密码、令牌使用 `.env`，不再要求挂载 TOML。Hub 镜像包含 Docker CLI 与 Compose；启用本机执行时，Hub 以 root 运行并挂载宿主 Docker socket，该权限近似宿主 root，必须只授予受信管理员。
 
-- [仅 Hub](<deploy/docker/hub-compose.yml>)：默认内置本机执行，连接已有 PostgreSQL，不创建数据库服务或数据库卷；须修改编排中的 PG 地址并确保容器网络可达。纯控制面可关闭本机执行并移除不需要的 socket 挂载。
+- [仅 Hub](<deploy/docker/hub-compose.yml>)：默认内置本机执行，连接已有 PostgreSQL，不创建数据库服务或数据库卷。一个 `arkade-hub-data` 卷挂载 `/data`，包含 `settings.key` 与本机工作目录 `local`；socket 为 bind mount，不是第二个数据卷。须修改 PG 地址并确保容器网络可达；纯控制面可关闭本机执行并移除 socket。
 - [仅 Agent](<deploy/docker/agent-compose.yml>)：部署在远程受管服务器。
-- [Hub 本机执行 + PostgreSQL 合并编排](<deploy/docker/combined-compose.yml>)：不再启动独立 Agent，保留原 `arkade-agent-data` 卷与 Compose project，以沿用本机工作目录。
+- [Hub 本机执行 + PostgreSQL 合并编排](<deploy/docker/combined-compose.yml>)：Hub 与 PostgreSQL 两个容器，Hub 使用单个 `/data` 卷，数据库使用独立卷。
 
-旧版同机部署升级必须先备份数据库、设置主密钥和本机工作卷，并停止旧 Agent。继续使用合并编排时，在原 project 下更新并移除旧 Agent；改为仅 Hub 编排时，须先安排已有 PostgreSQL 的独立运行与可达地址，保留原 PG 容器/数据卷，禁止使用 `--remove-orphans` 删除旧 PG。两套 Hub 编排二选一，不能同时运行同名 Hub 容器。不得使用 `down -v` 或删除数据卷；不要让旧 Agent 与内置执行同时写同一 workspace。这里是升级指引，不会自动操作生产环境。
+两套 Hub 编排二选一，不叠加启动同名容器。新安装不提供历史版本或多卷兼容流程；日常备份应覆盖数据库及 `/data`，不要用 `down -v` 删除需要保留的数据。
 
-数据库仅支持 PostgreSQL，使用 GoFrame 官方驱动；本版本采用全新库，不导入或兼容 SQLite。数据库密码放对应凭据样例，PG 地址、用户名、库名直接写编排；PostgreSQL 数据与 Hub 的 OIDC 加密主密钥分别持久化。
+数据库仅支持 PostgreSQL，使用 GoFrame 官方驱动和版本化建表。数据库密码放对应凭据样例，PG 地址、用户名、库名直接写编排；PostgreSQL 数据与 Hub 的 OIDC 加密主密钥分别持久化。
 
-配置样例、首次创建 Agent 专属密钥的步骤及升级边界见 [容器部署说明](deploy/docker/README.md)。使用支持无 TOML 启动的新镜像，生产固定镜像版本，升级保留原数据卷并先备份。框架重构记录见 [GoFrame 迁移说明](docs/17-goframe-migration.md)，手动升级见 [部署与回退](docs/18-manual-goframe-deployment.md)。
+配置样例及创建 Agent 专属密钥的步骤见 [容器部署说明](<deploy/docker/README.md>)。容器无需 TOML，生产固定镜像版本，更新前备份数据库与数据卷。架构见 [GoFrame 分层](<docs/17-goframe-migration.md>)，安装与恢复演练见 [PostgreSQL 部署与备份](<docs/18-manual-goframe-deployment.md>)。
 
 ## 源码快速开始
 
@@ -115,7 +115,7 @@ cd ../agent && go build -o bin/arkade-agent ./cmd/agent
 **阶段一骨架已打通**（Hub + Agent + 前端三层能连上、能看能管）：
 
 - Hub：登录鉴权（bcrypt + 会话 Cookie）、内置本机执行、远程 Agent 连接管理、容器操作下发、PostgreSQL 版本化建表迁移器、SPA 托管
-- 本机边界：`online` 仅表示进程内执行可用，不代表 Docker 健康；运行时为 `none` 时，各类资源列表为兼容可成功返回空集合，但不代表 Docker 没有资源或健康；监控、日志与实际控制不支持
+- 本机边界：`online` 仅表示进程内执行可用，不代表 Docker 健康；运行时为 `none` 时，各类资源列表可成功返回空集合，但不代表 Docker 没有资源或健康；监控、日志与实际控制不支持
 - Agent：Docker / Podman 运行时抽象、反向连接 + 指数退避重连、心跳、本地 CLI 离线自治
 - 前端：登录页、服务器列表、容器列表（启停二次确认 + 日志抽屉）
 - 端到端验证：真实 Hub 与真实 Agent 通过 WebSocket 完成握手、心跳保活、请求往返与离线拒绝

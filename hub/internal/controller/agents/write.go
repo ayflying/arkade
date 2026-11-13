@@ -102,18 +102,12 @@ func (c *Controller) setDisabled(ctx context.Context, id string, disabled bool) 
 	if err := c.requireAdmin(ctx); err != nil {
 		return api.AgentView{}, err
 	}
-	// 本机 Enable 仅解除历史 disabled 标记，不注册执行器；需启用 local.enabled
-	// 并重启 Hub 才会启动。禁止 Disable，避免绕开配置生命周期管理。
-	if disabled {
-		if err := c.rejectReservedLocal(id); err != nil {
-			return api.AgentView{}, err
-		}
+	if err := c.rejectReservedLocal(id); err != nil {
+		return api.AgentView{}, err
 	}
 	err := c.revoke(ctx, func() error {
-		if disabled {
-			if err := c.rejectReservedLocal(id); err != nil {
-				return err
-			}
+		if err := c.rejectReservedLocal(id); err != nil {
+			return err
 		}
 		if err := c.d.DB.SetAgentDisabled(ctx, id, disabled, time.Now().Unix()); err != nil {
 			return err
