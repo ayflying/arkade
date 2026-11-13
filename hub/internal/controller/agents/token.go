@@ -57,8 +57,14 @@ func (c *Controller) ResetToken(ctx context.Context, req *api.ResetTokenReq) (*a
 	if err := c.requireAdmin(ctx); err != nil {
 		return nil, err
 	}
+	if err := c.rejectReservedLocal(req.AgentID); err != nil {
+		return nil, err
+	}
 	var plain string
 	err := c.revoke(ctx, func() error {
+		if err := c.rejectReservedLocal(req.AgentID); err != nil {
+			return err
+		}
 		p, h, err := agentlink.GenerateEnrollmentTokenAvoiding(c.d.SharedToken)
 		if err != nil {
 			return err

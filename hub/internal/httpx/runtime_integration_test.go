@@ -22,6 +22,7 @@ import (
 func TestRuntimePostgresReconnectStartsWithExistingAccount(t *testing.T) {
 	ctx := context.Background()
 	cfg := config.Default()
+	cfg.Local.Enabled = false
 	cfg.Database.DSN = testdb.New(t)
 	cfg.Auth.SettingsKeyFile = filepath.Join(t.TempDir(), "settings.key")
 	cfg.Auth.AgentToken = "restore-test-token"
@@ -60,6 +61,7 @@ func TestRuntimePostgresReconnectStartsWithExistingAccount(t *testing.T) {
 
 func TestRuntimeAppHTTPContract(t *testing.T) {
 	cfg := config.Default()
+	cfg.Local.Enabled = false
 	cfg.Database.DSN = testdb.New(t)
 	cfg.Auth.SettingsKeyFile = filepath.Join(t.TempDir(), "settings.key")
 	cfg.Auth.AgentToken = "runtime-test-agent-token-only"

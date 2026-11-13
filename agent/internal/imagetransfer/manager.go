@@ -43,8 +43,10 @@ type Manager struct {
 	store  *storage
 	limits Limits
 
-	mu    sync.Mutex
-	tasks map[string]*Task
+	mu        sync.Mutex
+	closed    bool
+	closeOnce sync.Once
+	tasks     map[string]*Task
 
 	// exports 是**可复用归档**表：与 tasks 分开持有。
 	//
@@ -224,6 +226,9 @@ func (m *Manager) activeWorkersLocked() int {
 // 注意：这里**不做磁盘配额检查**。配额判断要读磁盘（store.usage），
 // 属于 IO，必须在锁外做；调用方先算好再进来。
 func (m *Manager) acquireTaskLocked(op Operation, reference string) (*Task, error) {
+	if m.closed {
+		return nil, errors.New("镜像传输管理器已关闭")
+	}
 	if active := m.activeWorkersLocked(); active >= m.limits.MaxConcurrentTasks {
 		return nil, ErrTooManyTasks
 	}
@@ -281,41 +286,32 @@ func (m *Manager) Status(taskID string) (Snapshot, error) {
 // 若不在这里清理，它们会一直占着磁盘，直到下次启动的
 // cleanupOrphans 才被收走——而"下次启动"可能是几天后。
 //
-// 注意：这里**不等待**正在执行的任务自然结束，而是直接取消它们。
-// 理由是退出的时间预算有限（systemd 默认 90 秒就会被 SIGKILL），
-// 而一个 2GB 的 load 可能远超这个时间；与其让进程被强杀、
-// 留下状态未知的引擎操作，不如主动取消，让引擎自己收拾。
+// 先取消再等待真实 writer 退出；terminal 状态不代表文件/HTTP 已完成收尾。
+// 有界等待由嵌入执行器 Close(ctx) 提供，后台继续回收，不提前删仍被写入的归档。
 // load 中途取消的镜像已经入库，这一点无法回滚（见 Cancel 的说明）。
 func (m *Manager) Close() {
+	m.closeOnce.Do(m.closeAndWait)
+}
+
+func (m *Manager) closeAndWait() {
 	m.mu.Lock()
+	m.closed = true
 	active := make([]*Task, 0, len(m.tasks))
+	waits := make([]<-chan struct{}, 0, len(m.tasks))
 	for _, t := range m.tasks {
-		if !t.Status.terminal() && t.cancel != nil {
-			active = append(active, t)
+		active = append(active, t)
+		if t.writers > 0 && t.done != nil {
+			waits = append(waits, t.done)
 		}
 	}
 	m.mu.Unlock()
-
 	for _, t := range active {
-		t.cancel()
+		if t.cancel != nil {
+			t.cancel()
+		}
 	}
-
-	// 给正在收尾的 goroutine 一点时间落状态，但绝不无限等。
-	// 200ms 足够把"取消"写进任务字段；真正慢的是引擎侧，那不在我们掌控内。
-	deadline := time.Now().Add(200 * time.Millisecond)
-	for time.Now().Before(deadline) {
-		m.mu.Lock()
-		running := 0
-		for _, t := range m.tasks {
-			if !t.Status.terminal() {
-				running++
-			}
-		}
-		m.mu.Unlock()
-		if running == 0 {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
+	for _, done := range waits {
+		<-done
 	}
 
 	// 把全部任务标记 gone 并移出表，然后删目录。

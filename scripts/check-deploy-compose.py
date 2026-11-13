@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import shutil
 from pathlib import Path
 import subprocess
 import tempfile
@@ -11,33 +12,45 @@ ROOT = Path(__file__).resolve().parents[1]
 DEPLOY = ROOT / "deploy" / "docker"
 
 
-def render(filename, envfile, valid=True, services=()):
-    # 屏蔽调用者真实凭据与部署覆盖，确保结果可重复且不会泄露密钥。
+def render(filename, envfile, valid=True):
+    # 屏蔽调用者真实凭据与部署覆盖；每份编排独立于仓库其他文件。
     env = {key: value for key, value in os.environ.items()
            if not key.startswith(("ARKADE_", "COMPOSE_"))}
-    # 每次只把一份编排与 .env 放到独立临时目录，证明服务器无需仓库或其他文件。
     with tempfile.TemporaryDirectory(prefix="arkade-standalone-") as directory:
         target = Path(directory)
         (target / "compose.yml").write_text((DEPLOY / filename).read_text(encoding="utf-8"), encoding="utf-8")
         (target / ".env").write_text(Path(envfile).read_text(encoding="utf-8"), encoding="utf-8")
-        command = ["docker", "compose", "--env-file", ".env", "-f",
-                   "compose.yml", "config", "--format", "json", *services]
-        result = subprocess.run(command, cwd=target, env=env, capture_output=True, text=True)
+        result = subprocess.run(["docker", "compose", "--env-file", ".env", "-f", "compose.yml", "config", "--format", "json"],
+                                cwd=target, env=env, capture_output=True, text=True)
     if not valid:
         assert result.returncode != 0, f"{filename}: 缺少必填配置却解析成功"
         return None
-    # 错误消息也不输出，以免未来 Compose 将变量值写入诊断。
     assert result.returncode == 0, f"{filename}: Compose 解析失败"
     return json.loads(result.stdout)
 
 
 def check_hub(config):
+    assert set(config["services"]) == {"hub", "postgres"}, "本机不能重复启动独立 Agent"
     hub = config["services"]["hub"]
     env = hub["environment"]
     assert "ARKADE_DB_PATH" not in env
     assert env["ARKADE_DB_HOST"] == "postgres"
     assert env["ARKADE_DB_PASSWORD"] == "test-pg-not-a-real-password"
+    assert env["ARKADE_INITIAL_PASS"] == "test-admin-not-a-real-password"
     assert env["ARKADE_SETTINGS_KEY_FILE"] == "/data/settings.key"
+    assert env["ARKADE_WEB_DIST"] == "/app/web/dist"
+    assert env["ARKADE_AGENT_TOKEN"] == ""
+    assert "ARKADE_LOCAL_AGENT_TOKEN" not in env
+    assert env["ARKADE_LOCAL_ENABLED"] == "true"
+    assert env["ARKADE_LOCAL_DATA_DIR"] == "/opt/arkade/agent"
+    assert env["ARKADE_LOCAL_RUNTIME"] == "auto"
+    assert env["ARKADE_LOCAL_ENDPOINT"] == "/var/run/docker.sock"
+    assert env["ARKADE_LOCAL_COMPOSE_BIN"] == "docker"
+    mounts = {volume["target"]: volume for volume in hub["volumes"]}
+    assert mounts["/opt/arkade/agent"]["source"] == "agent-data"
+    assert mounts["/var/run/docker.sock"]["source"] == "/var/run/docker.sock"
+    assert mounts["/data"]["source"] == "hub-data"
+    assert not any("toml" in target for target in mounts)
     assert hub["depends_on"]["postgres"]["condition"] == "service_healthy"
     pg = config["services"]["postgres"]
     assert pg["environment"]["POSTGRES_PASSWORD"] == env["ARKADE_DB_PASSWORD"]
@@ -45,26 +58,19 @@ def check_hub(config):
     assert not pg.get("ports"), "数据库不应暴露宿主端口"
     assert pg["volumes"][0]["target"] == "/var/lib/postgresql/data"
     assert config["volumes"]["postgres-data"]["name"] == "arkade-postgres-data"
-    assert env["ARKADE_WEB_DIST"] == "/app/web/dist"
-    assert env["ARKADE_INITIAL_PASS"] == "test-admin-not-a-real-password"
-    assert env["ARKADE_AGENT_TOKEN"] == ("" if "agent" in config["services"] else "test-hub-admission-token")
-    if "agent" in config["services"]:
-        assert env["ARKADE_LOCAL_AGENT_TOKEN"] == "test-local-dedicated-token"
-        assert env["ARKADE_LOCAL_AGENT_TOKEN"] != env["ARKADE_AGENT_TOKEN"]
-    else:
-        assert "ARKADE_LOCAL_AGENT_TOKEN" not in env
-    assert not any("sock" in volume["target"] or "toml" in volume["target"]
-                   for volume in hub["volumes"])
     assert config["volumes"]["hub-data"]["name"] == "arkade-hub-files-pg"
+    assert config["volumes"]["agent-data"]["name"] == "arkade-agent-data"
 
 
-def check_agent(config, token, url):
+def check_agent(config):
+    assert set(config["services"]) == {"agent"}
     agent = config["services"]["agent"]
     env = agent["environment"]
-    assert env["ARKADE_AGENT_TOKEN"] == token
-    assert env["ARKADE_HUB_URL"] == url
+    assert env["ARKADE_AGENT_TOKEN"] == "test-remote-dedicated-token"
+    assert env["ARKADE_HUB_URL"] == "ws://请填写Hub地址:8080/agent/connect"
     assert env["ARKADE_DATA_DIR"] == "/opt/arkade/agent"
     assert "ARKADE_INITIAL_PASS" not in env
+    assert "ARKADE_DB_PASSWORD" not in env
     assert "ARKADE_LOCAL_AGENT_TOKEN" not in env
     assert any(volume["target"] == "/var/run/docker.sock" for volume in agent["volumes"])
     assert not any("toml" in volume["target"] for volume in agent["volumes"])
@@ -72,12 +78,10 @@ def check_agent(config, token, url):
 
 
 def main():
-    values = {
-        "ARKADE_DB_PASSWORD": "test-pg-not-a-real-password",
-        "ARKADE_INITIAL_PASS": "test-admin-not-a-real-password",
-        "ARKADE_AGENT_TOKEN": "test-hub-admission-token",
-        "ARKADE_LOCAL_AGENT_TOKEN": "test-local-dedicated-token",
-    }
+    if shutil.which("docker") is None:
+        raise SystemExit("需要 Docker Compose v2（未找到 docker）；可在安装 Docker CLI 的 Linux/WSL 中运行本脚本。")
+    values = {"ARKADE_DB_PASSWORD": "test-pg-not-a-real-password", "ARKADE_INITIAL_PASS": "test-admin-not-a-real-password",
+              "ARKADE_AGENT_TOKEN": "test-remote-dedicated-token"}
     with tempfile.TemporaryDirectory(prefix="arkade-compose-check-") as directory:
         envfile = Path(directory) / ".env"
 
@@ -85,67 +89,48 @@ def main():
             envfile.write_text("\n".join(f"{k}={v}" for k, v in data.items()) + "\n", encoding="utf-8")
 
         save(values)
-        hub = render("hub-compose.yml", envfile)
-        assert set(hub["services"]) == {"hub", "postgres"}
-        check_hub(hub)
-        agent = render("agent-compose.yml", envfile)
-        assert set(agent["services"]) == {"agent"}
-        check_agent(agent, values["ARKADE_AGENT_TOKEN"], "ws://请填写Hub地址:8080/agent/connect")
-        combined = render("combined-compose.yml", envfile)
-        assert set(combined["services"]) == {"hub", "agent", "postgres"}
-        check_hub(combined)
-        check_agent(combined, values["ARKADE_LOCAL_AGENT_TOKEN"], "ws://hub:8080/agent/connect")
-        assert combined["services"]["agent"]["depends_on"]["hub"]["condition"] == "service_healthy"
-
-        # 合并部署一步启动：两端使用同一专属密钥，默认名称为本机。
-        assert combined["services"]["agent"]["environment"]["ARKADE_AGENT_NAME"] == "本机"
-        assert combined["services"]["hub"]["environment"]["ARKADE_LOCAL_AGENT_TOKEN"] == combined["services"]["agent"]["environment"]["ARKADE_AGENT_TOKEN"]
-        save({k: v for k, v in values.items() if k != "ARKADE_LOCAL_AGENT_TOKEN"})
-        render("combined-compose.yml", envfile, valid=False)
-
-        for filename, missing in (("hub-compose.yml", "ARKADE_DB_PASSWORD"),
-                                  ("hub-compose.yml", "ARKADE_INITIAL_PASS"),
-                                  ("hub-compose.yml", "ARKADE_AGENT_TOKEN"),
+        parsed = {name: render(name, envfile) for name in ("hub-compose.yml", "combined-compose.yml", "agent-compose.yml")}
+        check_hub(parsed["hub-compose.yml"])
+        check_hub(parsed["combined-compose.yml"])
+        check_agent(parsed["agent-compose.yml"])
+        assert parsed["hub-compose.yml"]["name"] == "arkade-hub"
+        assert parsed["combined-compose.yml"]["name"] == "arkade", "保留旧 combined project"
+        for filename, missing in (("hub-compose.yml", "ARKADE_DB_PASSWORD"), ("hub-compose.yml", "ARKADE_INITIAL_PASS"),
+                                  ("combined-compose.yml", "ARKADE_DB_PASSWORD"), ("combined-compose.yml", "ARKADE_INITIAL_PASS"),
                                   ("agent-compose.yml", "ARKADE_AGENT_TOKEN")):
-            save({k: v for k, v in values.items() if k != missing})
+            save({key: value for key, value in values.items() if key != missing})
             render(filename, envfile, valid=False)
-
-        # 普通配置直接写在编排中，外部旧变量不能意外覆盖。
-        save(dict(values, ARKADE_HUB_IMAGE="unexpected:tag", ARKADE_HUB_PORT="18080",
-                  ARKADE_HUB_VOLUME="unexpected-volume", ARKADE_AGENT_NAME="unexpected-node"))
-        assert render("combined-compose.yml", envfile) == combined
-        allowed = {"ARKADE_INITIAL_PASS", "ARKADE_AGENT_TOKEN", "ARKADE_LOCAL_AGENT_TOKEN", "ARKADE_DB_PASSWORD"}
-        for filename, config in (("hub-compose.yml", hub), ("agent-compose.yml", agent),
-                                 ("combined-compose.yml", combined)):
+        # 旧本机 token、全局 token、普通参数不会通过外部 .env 意外覆盖新 Hub。
+        save(dict(values, ARKADE_LOCAL_AGENT_TOKEN="obsolete-token", ARKADE_LOCAL_ENABLED="false",
+                  ARKADE_HUB_IMAGE="unexpected:tag", ARKADE_HUB_PORT="18080", ARKADE_HUB_VOLUME="unexpected-volume"))
+        for filename in ("hub-compose.yml", "combined-compose.yml"):
+            assert render(filename, envfile) == parsed[filename]
+        allowed = {"ARKADE_INITIAL_PASS", "ARKADE_AGENT_TOKEN", "ARKADE_DB_PASSWORD"}
+        for filename, config in parsed.items():
             source = (DEPLOY / filename).read_text(encoding="utf-8")
-            names = set(re.findall(r"\$\{([A-Z_]+)", source))
-            assert names <= allowed, f"{filename}: 普通配置不得使用变量插值"
-            assert not re.search(r"^\s*(extends|include):", source, re.MULTILINE), "编排必须独立完整"
-            assert not any("build" in service for service in config["services"].values())
+            assert set(re.findall(r"\$\{([A-Z_]+)", source)) <= allowed
+            assert not re.search(r"^\s*(extends|include|env_file):", source, re.MULTILINE)
+            assert "ARKADE_LOCAL_AGENT_TOKEN" not in source
             for name, service in config["services"].items():
+                assert "build" not in service
                 assert service["image"] == ("postgres:17-alpine" if name == "postgres" else f"ayflying/arkade-{name}:latest")
-        examples = {
-            "hub.env.example": ("hub-compose.yml", {"ARKADE_INITIAL_PASS", "ARKADE_AGENT_TOKEN", "ARKADE_DB_PASSWORD"}),
-            "agent.env.example": ("agent-compose.yml", {"ARKADE_AGENT_TOKEN"}),
-            "combined.env.example": ("combined-compose.yml", allowed - {"ARKADE_AGENT_TOKEN"}),
-        }
+        examples = {"hub.env.example": ("hub-compose.yml", {"ARKADE_INITIAL_PASS", "ARKADE_DB_PASSWORD"}),
+                    "agent.env.example": ("agent-compose.yml", {"ARKADE_AGENT_TOKEN"}),
+                    "combined.env.example": ("combined-compose.yml", {"ARKADE_INITIAL_PASS", "ARKADE_DB_PASSWORD"})}
         assert {path.name for path in DEPLOY.glob("*.env.example")} == set(examples)
-        assert not (DEPLOY / ".env.example").exists(), "不得保留混用的通用样例"
+        assert not (DEPLOY / ".env.example").exists()
         for filename, (compose, expected) in examples.items():
             source = (DEPLOY / filename).read_text(encoding="utf-8")
-            keys = {line.split("=", 1)[0] for line in source.splitlines()
-                    if line.strip() and not line.startswith("#")}
+            keys = {line.split("=", 1)[0] for line in source.splitlines() if line.strip() and not line.startswith("#")}
             assert keys == expected, f"{filename}: 凭据必须与对应编排精确匹配"
-            # 按每份真实样例的键单独注入虚构值，确保不依赖其他编排的凭据。
             save({key: values[key] for key in keys})
-            parsed = render(compose, envfile)
-            if "hub" in parsed["services"]:
-                check_hub(parsed)
-            if "agent" in parsed["services"]:
-                combined_mode = compose == "combined-compose.yml"
-                check_agent(parsed, values["ARKADE_LOCAL_AGENT_TOKEN" if combined_mode else "ARKADE_AGENT_TOKEN"],
-                            "ws://hub:8080/agent/connect" if combined_mode else "ws://请填写Hub地址:8080/agent/connect")
-    print("三套编排解析、密钥隔离、数据卷、健康依赖、首次启动及仅凭据变量/无 build 检查通过（未启动容器）。")
+            config = render(compose, envfile)
+            (check_agent if compose == "agent-compose.yml" else check_hub)(config)
+    dockerfile = (ROOT / "hub" / "Dockerfile").read_text(encoding="utf-8")
+    for fragment in ("COPY agent/go.mod agent/go.sum agent/", "COPY agent ./../agent", "docker-cli docker-cli-compose",
+                     "DOCKER_CLI_PLUGIN_EXTRA_DIRS", "/root/.docker/cli-plugins", "docker compose version", "USER root", '"/opt/arkade/agent"'):
+        assert fragment in dockerfile, f"Hub 镜像缺少本机执行依赖：{fragment}"
+    print("三套编排独立解析、Hub内置本机/无重复Agent、历史卷名、凭据隔离及镜像静态约束通过（未构建镜像或启动容器）。")
 
 
 if __name__ == "__main__":

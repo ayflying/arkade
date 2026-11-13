@@ -167,6 +167,10 @@ async function handleRefresh(showToast: boolean): Promise<void> {
  *    不能混用「未纳管」这个词。
  */
 async function handleDelete(agent: Agent): Promise<void> {
+  if (agent.id === 'agent-local') {
+    toastWarning('内置本机不能删除；如需关闭，请修改 Hub 的 local.enabled 配置并重启 Hub。')
+    return
+  }
   if (busyId.value !== '') return
   const name = agentDisplayName(agent)
 
@@ -230,6 +234,10 @@ async function handleToggleDisabled(agent: Agent): Promise<void> {
   if (busyId.value !== '') return
   const name = agentDisplayName(agent)
   const disabled = isAgentDisabled(agent)
+  if (agent.id === 'agent-local' && !disabled) {
+    toastWarning('内置本机不能在后台禁用；请修改 Hub 的 local.enabled 配置并重启 Hub。')
+    return
+  }
 
   if (!disabled) {
     const confirmed = await confirmAction({
@@ -251,7 +259,9 @@ async function handleToggleDisabled(agent: Agent): Promise<void> {
       // 本地没有这一行（异常情况），退回全量刷新保证界面正确
       await store.refresh()
     }
-    toastSuccess(disabled ? `已启用服务器「${name}」` : `已禁用服务器「${name}」`)
+    toastSuccess(agent.id === 'agent-local'
+      ? '已解除本机禁用；请确认 local.enabled 已开启并重启 Hub 后恢复本机执行。'
+      : disabled ? `已启用服务器「${name}」` : `已禁用服务器「${name}」`)
   } catch (err) {
     toastError(err instanceof ApiError ? err.message : `${disabled ? '启用' : '禁用'}服务器失败`)
   } finally {
@@ -296,6 +306,10 @@ function handleCreated(payload: CreateAgentResponse): void {
  * 因此必须二次确认并写清后果——尤其对在线服务器，用户很可能不在那台机器旁边。
  */
 async function handleResetToken(agent: Agent): Promise<void> {
+  if (agent.id === 'agent-local') {
+    toastWarning('内置本机不使用网络接入密钥，无需重置。')
+    return
+  }
   if (busyId.value !== '') return
   const name = agentDisplayName(agent)
   const online = agent.status === 'online'

@@ -4,8 +4,9 @@ module arkade/hub
 go 1.24.0
 
 require (
-	arkade/protocol v0.0.0-00010101000000-000000000000
-	github.com/BurntSushi/toml v1.5.0
+	arkade/agent v0.0.0
+	arkade/protocol v0.0.0
+	github.com/BurntSushi/toml v1.6.0
 	github.com/coreos/go-oidc/v3 v3.14.1
 	github.com/gogf/gf/v2 v2.9.6
 	github.com/golang-migrate/migrate/v4 v4.19.1
@@ -46,3 +47,5 @@ require (
 )
 
 replace arkade/protocol => ../protocol
+
+replace arkade/agent => ../agent

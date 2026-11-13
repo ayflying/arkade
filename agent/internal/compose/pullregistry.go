@@ -39,9 +39,12 @@ func (p *PullManager) Sweep() {
 	p.sweepLocked()
 }
 
-// Close 取消全部任务（Agent 关闭时调用）。
+// Close 封闭新任务入口、取消全部任务，并等待执行 goroutine 完成。
+// runner 的命令退出与 Wait 已在 goroutine 内完成，避免进程退出时遗留 docker 子进程。
+// 有限等待由外层 Executor.Close(ctx) 提供，超时后后台继续回收。
 func (p *PullManager) Close() {
 	p.mu.Lock()
+	p.closed = true
 	tasks := make([]*PullTask, 0, len(p.byID))
 	for _, t := range p.byID {
 		tasks = append(tasks, t)
@@ -50,6 +53,7 @@ func (p *PullManager) Close() {
 	for _, t := range tasks {
 		t.cancel()
 	}
+	p.workers.Wait()
 }
 
 // newPullTaskID 生成任务 ID（随机，不可预测）。

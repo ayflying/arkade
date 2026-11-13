@@ -15,6 +15,7 @@ import (
 
 func TestRuntimeWiresMigrationAndClosesBeforeStorage(t *testing.T) {
 	cfg := config.Default()
+	cfg.Local.Enabled = false
 	cfg.Database.DSN = testdb.New(t)
 	cfg.Auth.SettingsKeyFile = filepath.Join(t.TempDir(), "settings.key")
 	cfg.Auth.InitialPass = "RuntimeMigratePass123!"

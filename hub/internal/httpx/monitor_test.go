@@ -21,6 +21,7 @@ import (
 func TestMonitorAdminHTTP(t *testing.T) {
 	ctx := context.Background()
 	cfg := config.Default()
+	cfg.Local.Enabled = false
 	cfg.Database.DSN = testdb.New(t)
 	cfg.Auth.SettingsKeyFile = filepath.Join(t.TempDir(), "settings.key")
 	cfg.Auth.InitialPass = "1"

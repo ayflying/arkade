@@ -489,6 +489,11 @@ func (r *Runner) environ() []string {
 
 	exclude := make(map[string]struct{}, len(r.EnvExcludeKeys)+1)
 	exclude["DOCKER_HOST"] = struct{}{}
+	// DOCKER_CONTEXT 优先于 DOCKER_HOST；显式选定 daemon 后不可继承另一 context。
+	// TLS 变量保持原样，避免破坏既有证书配置。
+	if strings.TrimSpace(r.DockerHost) != "" {
+		exclude["DOCKER_CONTEXT"] = struct{}{}
+	}
 	for _, k := range r.EnvExcludeKeys {
 		k = strings.TrimSpace(k)
 		if k != "" {

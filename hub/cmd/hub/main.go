@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"arkade/agent/embedded"
 	"arkade/hub/internal/config"
 	"arkade/hub/internal/httpx"
 )
@@ -25,6 +26,10 @@ import (
 var version = "0.1.0-dev"
 
 func main() {
+	// 卷文件和编排源读取的隔离helper复用Agent实现，必须早于服务参数解析。
+	if handled, code := embedded.RunHelper(os.Args[1:]); handled {
+		os.Exit(code)
+	}
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "启动失败: "+err.Error())
 		os.Exit(1)
@@ -150,8 +155,8 @@ dsn = "host=localhost port=5432 user=arkade dbname=arkade sslmode=disable"
 [auth]
 # 登录会话有效期
 session_ttl = "72h"
-# Agent 反向连接使用的预共享 Token，至少 16 位；也可用环境变量 ARKADE_AGENT_TOKEN
-agent_token = "请替换为至少16位的随机字符串"
+# 本机不需要Token。远程推荐使用后台生成的专属凭据；共享准入默认关闭。
+agent_token = ""
 # 首次启动管理员密码不能为空，允许短密码；登录后请尽快修改，也可用 ARKADE_INITIAL_PASS
 initial_user = "admin"
 initial_pass = "请替换为管理员初始密码"
@@ -160,6 +165,15 @@ initial_pass = "请替换为管理员初始密码"
 settings_key_file = "./data/settings.key"
 # 仅本地假 OIDC 测试可开启；生产保持 false，OIDC Issuer 必须 HTTPS。
 allow_insecure_oidc_loopback = false
+
+[local]
+# 默认内置本机执行能力；仅作为远程控制中心时设false。
+enabled = true
+data_dir = "/opt/arkade/agent"
+runtime = "auto"
+endpoint = ""
+# docker可执行文件路径，不是shell命令。
+compose_bin = ""
 
 [web]
 # 前端构建产物目录；留空则只提供 API

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // Config 是创建运行时的配置。
@@ -43,6 +44,14 @@ type Config struct {
 //   - 用户显式配置了端点却探测失败：返回 RuntimeNone 且 err 非 nil，避免静默降级
 //     成"看起来没装引擎"这种误导性状态。
 func New(cfg Config) (Runtime, error) {
+	return NewWithContext(context.Background(), cfg)
+}
+
+// NewWithContext 使用调用方取消信号，且所有候选端点共用最多 15 秒探测预算。
+// 不能只依赖 DialTimeout：TCP 已连接但不返回 HTTP 头时仍需总超时。
+func NewWithContext(ctx context.Context, cfg Config) (Runtime, error) {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
 	endpoints := discoverEndpoints(cfg.Socket)
 	if cfg.PreferPodman && strings.TrimSpace(cfg.Socket) == "" {
 		endpoints = preferPodmanFirst(endpoints)
@@ -50,11 +59,14 @@ func New(cfg Config) (Runtime, error) {
 
 	var lastErr error
 	for _, ep := range endpoints {
+		if err := ctx.Err(); err != nil {
+			return NewNone(""), err
+		}
 		// unix 套接字文件不存在时直接跳过，避免每次启动都在不存在的路径上等超时。
 		if !endpointExists(ep) {
 			continue
 		}
-		rt, err := probe(context.Background(), ep, cfg.PreferPodman)
+		rt, err := probe(ctx, ep, cfg.PreferPodman)
 		if err == nil {
 			// 宿主路径换算只在容器化部署（挂了宿主目录）时才配置；
 			// 空值保持原样，原生部署的 Agent 行为完全不变。
@@ -65,6 +77,10 @@ func New(cfg Config) (Runtime, error) {
 			return rt, nil
 		}
 		lastErr = err
+	}
+
+	if err := ctx.Err(); err != nil {
+		return NewNone(""), err
 	}
 
 	// 显式配置的端点探测失败必须报错：用户指定了目标却没连上，属于配置问题，

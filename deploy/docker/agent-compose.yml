@@ -20,7 +20,7 @@ services:
       ARKADE_LOG_FORMAT: text
     volumes:
       - agent-data:/opt/arkade/agent
-      # 等价于宿主机高权限；Hub 永远不挂载此套接字。
+      # 等价于宿主机高权限；远程服务器只需 Agent，不重复启动 Hub。
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - arkade

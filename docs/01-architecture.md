@@ -1,5 +1,12 @@
 # 01 架构设计
 
+> **2026-11-13 架构覆盖声明：Hub 默认内置本机执行，只有远程服务器需要独立 Agent。**
+> 本文以下保留最初的架构设计与探索记录；其中「Hub 绝不访问运行时」「所有服务器必须经独立 Agent/WebSocket」「Hub 不持有 docker.sock」等表述已被本声明覆盖，不能再作为当前实现红线。
+> 本机复用 `agent/embedded` 公开包，经内部 Registry 直接调用，不启动本地 WebSocket、不签发本机 Token；固定 `agent-local`，保留已有 identity/workspace，默认工作目录 `/opt/arkade/agent`。远程 Agent 继续主动反连 Hub。
+> `ARKADE_LOCAL_ENABLED=false` 或 `local.enabled=false` 可关闭本机执行，重启生效；Hub 仍依赖 PostgreSQL。启用本机时 Hub 需要 Docker/Compose 及运行时访问权限，容器版以 root 持有宿主 socket；这扩大了 Hub 的信任边界，不是隔离沙箱。
+> 本机 `online` 表示进程内执行可用而不是 Docker 健康，运行时为 `none` 时，List 为兼容可成功返回空集合，不代表 Docker 零容器或健康；监控采样与实际控制不支持。Hub 停止时内置执行与自身通知均不可用，不提供自愈承诺；Hub 运行期间仍监控远程失联。
+> 当前部署、升级及本机记录管理约束以 [内置本机执行](<21-embedded-local.md>) 为准；数据库相关旧描述由 [D-03 PostgreSQL 决策](<05-decisions.md#d-03-hub-存储postgresql全新数据库>) 覆盖。
+
 ## 1. 总体拓扑
 
 ```

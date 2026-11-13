@@ -425,6 +425,10 @@ func (s *Server) serve(ws *websocket.Conn, r *http.Request, auth authResult) {
 	// 临界区内**不做网络 I/O**：下面写 HelloAck 放在锁外，
 	// 否则一个慢客户端会把所有握手卡住。
 	herr := s.runGuarded(ctx, auth, agentID, func() error {
+		// 本机身份永久保留；共享或历史专属凭据均不得在写库前冒充。
+		if s.registry.IsReservedLocal(agentID) {
+			return errors.New("该身份由 Hub 本机管理，不接受远程 Agent 连接")
+		}
 		// 1) 最终凭据校验：确认这把密钥此刻仍然有效、未被禁用。
 		if verr := s.revalidateEnrollment(ctx, auth, agentID); verr != nil {
 			return verr

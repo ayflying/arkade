@@ -2,6 +2,20 @@
 
 本文记录已经**明确拍板**的决策，与 01-04 的探索性内容区分开。后续开发以本文为准；如需变更，先在此处补一条带日期的变更记录，再改实现。
 
+## 2026-11-13 覆盖决策：Hub 默认内置本机，远程才部署 Agent
+
+以下为当前已确认的新架构，优先于本文后续历史记录及旧架构文档中与其冲突的表述；历史条目保留，不将旧设计误当成当前实现。
+
+- Hub 默认通过 `agent/embedded` 公开包复用本机执行能力，内部 Registry 直接调用；本机不启动 WebSocket、不创建接入 Token。独立 Agent 只用于远程服务器，继续反向连接。
+- 本机固定 ID 为 `agent-local`，沿用已有 identity/workspace，默认目录 `/opt/arkade/agent`；`ARKADE_LOCAL_ENABLED=false` 或 `local.enabled=false` 可关闭本机执行，配置变更需重启 Hub。Hub 仍必须连接 PostgreSQL。
+- Hub 镜像包含 Docker CLI/Compose；本机执行需要宿主 socket 权限，容器以 root 运行。这是明确的高权限信任边界，覆盖「Hub 绝不接触 Docker」的旧约束，不代表增加了运行时隔离。
+- 同机 combined 编排不再启动独立 Agent，但必须保持原 Compose project 与 `arkade-agent-data` 卷。升级先备份 PG、设置主密钥及工作卷，先停止旧 Agent，再用新版编排 `up -d --remove-orphans`，保留所有卷，不执行生产变更或自动清理。
+- 本机 `online` 只代表进程内执行可用；Docker 健康须看运行时与采集结果。运行时为 `none` 时，List 为兼容可成功返回空集合，不代表 Docker 零容器或健康；监控采样与实际控制不支持，不把缺少指标当作健康。
+- Hub 宕机时无法为自身发通知，内置执行也随进程停止；远程失联监控仍在 Hub 运行时有效。监控不是容器自动修复或 Hub 自愈。
+- 已有本机记录若为 disabled，保留该记录且不启动内置执行。计划后台 Enable 仅解除旧 disabled 标记，仍须重启 Hub 才能启动；本机 Disable/Delete/Reset 均拒绝，不能按远程 Agent 生命周期处理。
+
+细节与操作边界见 [内置本机执行](<21-embedded-local.md>)。D-05 的独立 CLI 离线自治适用于远程 Agent，不表示 Hub 停机后仍有一个内置 Agent 守护进程；D-08 中「不引入 GoFrame」是历史选型，已由现有 GoFrame v2 重构覆盖。
+
 ## D-01 首期容器引擎：Docker + Podman
 
 - 首期只实现这两个运行时，统一收敛到「运行时抽象层」（见 03 技术选型）。

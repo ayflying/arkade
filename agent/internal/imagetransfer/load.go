@@ -333,6 +333,10 @@ func (m *Manager) CommitLoad(ctx context.Context, taskID, sha string) (Snapshot,
 	}
 
 	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		return Snapshot{}, errors.New("镜像传输管理器已关闭")
+	}
 	t.Phase = "loading"
 	t.updatedAt = m.now()
 	out := t.snap()

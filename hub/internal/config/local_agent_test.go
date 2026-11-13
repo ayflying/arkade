@@ -13,9 +13,9 @@ func TestLocalAgentTokenValidation(t *testing.T) {
 		invalid             bool
 	}{
 		{"可选", "", "", false},
-		{"短密钥", "short", "", true},
+		{"旧短密钥被忽略", "short", "", false},
 		{"十六位边界", "0123456789abcdef", "", false},
-		{"共享密钥不能复用", "0123456789abcdef", "0123456789abcdef", true},
+		{"旧共享密钥被忽略", "0123456789abcdef", "0123456789abcdef", false},
 		{"独立密钥", "local-token-012345", "shared-token-012345", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

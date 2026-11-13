@@ -23,6 +23,7 @@ type Config struct {
 	Database DatabaseConfig `toml:"database"`
 	Auth     AuthConfig     `toml:"auth"`
 	Web      WebConfig      `toml:"web"`
+	Local    LocalConfig    `toml:"local"`
 }
 
 // ServerConfig 是 HTTP 服务监听配置。
@@ -41,7 +42,7 @@ type DatabaseConfig struct {
 type AuthConfig struct {
 	SessionTTL                time.Duration `toml:"session_ttl"`                  // 登录会话有效期
 	AgentToken                string        `toml:"agent_token"`                  // 首期 Agent 接入的预共享 Token（简化版）
-	LocalAgentToken           string        `toml:"local_agent_token"`            // 可选同机 Agent 专属凭据，仅首次启动预建，不自动轮换
+	LocalAgentToken           string        `toml:"local_agent_token"`            // Deprecated: 兼容旧配置读取；内置本机执行端不使用此凭据
 	InitialUser               string        `toml:"initial_user"`                 // 首次启动时创建的管理员用户名
 	InitialPass               string        `toml:"initial_pass"`                 // 首次启动时创建的管理员密码
 	SettingsKeyFile           string        `toml:"settings_key_file"`            // OIDC 密钥加密主密钥文件；独立于数据库连接
@@ -69,7 +70,8 @@ func Default() Config {
 			InitialUser:     "admin",
 			InitialPass:     "",
 		},
-		Web: WebConfig{Dist: "./web/dist"},
+		Web:   WebConfig{Dist: "./web/dist"},
+		Local: defaultLocal(),
 	}
 }
 
@@ -86,6 +88,9 @@ func Load(path string) (Config, error) {
 			return cfg, fmt.Errorf("解析配置文件失败: %w", err)
 		}
 	}
+	if err := validateLocalEnv(); err != nil {
+		return cfg, err
+	}
 	applyEnv(&cfg)
 	return cfg, nil
 }
@@ -96,6 +101,7 @@ func Load(path string) (Config, error) {
 // 配置文件提供本地运行默认值。普通参数直接写在编排的 environment 中，
 // 仅密码、Token 等凭据引用 .env，不把所有配置间接转入 .env。
 func applyEnv(cfg *Config) {
+	applyLocalEnv(cfg)
 	if v := os.Getenv("ARKADE_AGENT_TOKEN"); v != "" {
 		cfg.Auth.AgentToken = v
 	}
@@ -170,6 +176,9 @@ func databaseEnvDSN() (string, bool) {
 // Validate 在启动前做完整校验，把配置错误挡在监听端口之前。
 func (c Config) Validate() error {
 	var errs []error
+	if err := c.Local.validate(); err != nil {
+		errs = append(errs, err)
+	}
 	if c.Server.Addr == "" {
 		errs = append(errs, errors.New("server.addr 不能为空"))
 	}
@@ -188,14 +197,7 @@ func (c Config) Validate() error {
 	if len(c.Auth.AgentToken) > 0 && len(c.Auth.AgentToken) < 16 {
 		errs = append(errs, errors.New("agent_token 至少 16 位，过短容易被爆破"))
 	}
-	if c.Auth.LocalAgentToken != "" {
-		if len(c.Auth.LocalAgentToken) < 16 {
-			errs = append(errs, errors.New("local_agent_token 至少 16 位"))
-		}
-		if c.Auth.LocalAgentToken == c.Auth.AgentToken {
-			errs = append(errs, errors.New("local_agent_token 必须不同于共享 agent_token"))
-		}
-	}
+	// 废弃的 LocalAgentToken 不再参与本机认证，也不应阻止旧配置升级。
 	return errors.Join(errs...)
 }
 

@@ -13,6 +13,7 @@ import (
 
 	"github.com/gogf/gf/v2/net/ghttp"
 
+	"arkade/agent/embedded"
 	"arkade/hub/internal/agentlink"
 	"arkade/hub/internal/auth"
 	"arkade/hub/internal/config"
@@ -41,6 +42,7 @@ type App struct {
 	migrations      *stackmigrate.Manager
 	autoAdopt       *autoAdopter
 	backgroundClose []func(context.Context) error
+	localExecutor   *embedded.Executor
 }
 
 // NewApp 构造 Hub。所有依赖在此一次性创建，失败时返回明确原因。
@@ -50,16 +52,9 @@ func NewApp(ctx context.Context, cfg config.Config, log *slog.Logger, version st
 		return nil, err
 	}
 
-	// 必须在组装路由、启动后台任务和监听端口之前完成，失败时不对外服务。
+	// 内置本机不使用任何接入令牌；旧部署变量仅提示，不再创建外部连接凭据。
 	if cfg.Auth.LocalAgentToken != "" {
-		if len(cfg.Auth.LocalAgentToken) < 16 || cfg.Auth.LocalAgentToken == cfg.Auth.AgentToken {
-			_ = db.Close()
-			return nil, fmt.Errorf("同机 Agent 凭据至少 16 位且必须不同于共享凭据")
-		}
-		if err := db.EnsureLocalAgent(ctx, agentlink.HashEnrollmentToken(cfg.Auth.LocalAgentToken)); err != nil {
-			_ = db.Close()
-			return nil, fmt.Errorf("初始化同机 Agent 失败: %w", err)
-		}
+		log.Warn("ARKADE_LOCAL_AGENT_TOKEN 已弃用，Hub内置本机无需令牌")
 	}
 
 	authSvc := auth.NewService(db, cfg.Auth.SessionTTL)
@@ -74,6 +69,11 @@ func NewApp(ctx context.Context, cfg config.Config, log *slog.Logger, version st
 	}
 
 	reg := agentlink.NewRegistry()
+	// 保留身份在开放握手前完成，关闭本机执行也不允许远程冒名接管。
+	if err := reg.ReserveLocalID(store.LocalAgentID); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 
 	// 事件处理器：把 Agent 上报的心跳与快照落到数据库。
 	helloHandler := &agentSink{db: db, log: log}
@@ -108,6 +108,11 @@ func NewApp(ctx context.Context, cfg config.Config, log *slog.Logger, version st
 		_ = db.Close()
 		return nil, err
 	}
+	localExecutor, err := newLocalExecutor(ctx, cfg, db, reg, log, version)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	monitorEngine := monitor.NewEngine(db, &monitorSource{db: db, registry: reg}, monitorService.Config, monitorService.Notify, log)
 	autoAdopt := newAutoAdopter(db, ops, reg.OnlineIDs)
 	connections := &connectionTracker{}
@@ -139,6 +144,9 @@ func NewApp(ctx context.Context, cfg config.Config, log *slog.Logger, version st
 	monitorEngine.Start(context.Background())
 	backgroundClose = append(backgroundClose, monitorEngine.Shutdown)
 	backgroundClose = append(backgroundClose, startMonitorRetention(db, log))
+	if localExecutor != nil {
+		backgroundClose = append(backgroundClose, startLocalHeartbeat(db, localExecutor, log, version))
+	}
 
 	// GoFrame 的 session/request 清理依赖 Start 初始化，不能只把未启动
 	// 的 Server 塞进另一个 http.Server；生产监听与关闭都使用框架生命周期。
@@ -152,6 +160,7 @@ func NewApp(ctx context.Context, cfg config.Config, log *slog.Logger, version st
 	httpSrv.SetSessionCookieOutput(false) // 登录仅使用现有数据库会话 Cookie。
 
 	return &App{
+		localExecutor:   localExecutor,
 		cfg:             cfg,
 		log:             log,
 		db:              db,
@@ -220,6 +229,12 @@ func (a *App) Shutdown(ctx context.Context) error {
 	if a.imageTasks != nil {
 		if cerr := a.imageTasks.Close(); cerr != nil && err == nil {
 			err = cerr
+		}
+	}
+	if a.localExecutor != nil {
+		a.registry.RemoveLocal(store.LocalAgentID)
+		if cerr := a.localExecutor.Close(ctx); cerr != nil {
+			return cerr
 		}
 	}
 	if cerr := a.db.Close(); cerr != nil && err == nil {

@@ -48,6 +48,14 @@ func (c *Controller) requireAdmin(ctx context.Context) error {
 func (c *Controller) access() controller.Access {
 	return controller.Access{DB: c.d.DB, Session: c.d.Session, Log: c.d.Log}
 }
+
+// 本机身份即使暂时离线也保留；Enable 仅解除历史禁用，启动仍由 Hub 配置管理。
+func (c *Controller) rejectReservedLocal(id string) error {
+	if c.d.Registry != nil && c.d.Registry.IsReservedLocal(id) {
+		return badRequest("本机由 Hub 配置 local.enabled 管理，不支持删除、重置密钥或禁用")
+	}
+	return nil
+}
 func badRequest(message string) error {
 	return &controller.Error{Status: 400, Code: "bad_request", Message: message}
 }
@@ -72,6 +80,10 @@ func (c *Controller) revoke(ctx context.Context, fn func() error) error {
 	return c.d.Guard.RunRevocation(ctx, fn)
 }
 func (c *Controller) revocationError(err error, missing string) error {
+	var apiErr *controller.Error
+	if errors.As(err, &apiErr) {
+		return apiErr
+	}
 	if errors.Is(err, agentlink.ErrGuardBusy) {
 		return internal("系统繁忙，请稍后重试", err)
 	}

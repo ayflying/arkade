@@ -1,7 +1,7 @@
 # Arkade Hub 镜像（多阶段构建：前端产物 + Go 二进制）
 #
 # 构建上下文必须是**仓库根目录**，不是 hub/：
-#   - hub 通过 replace 引用了同级的 protocol 模块，只拷 hub/ 会找不到；
+#   - hub 通过 replace 引用了同级 protocol 和 agent 模块，只拷 hub/ 会找不到；
 #   - 前端产物需要一并打进镜像，由 Hub 静态托管。
 #
 # 用法（在仓库根目录执行）：
@@ -28,11 +28,16 @@ WORKDIR /src
 
 COPY protocol/go.mod protocol/
 COPY hub/go.mod hub/go.sum hub/
+COPY agent/go.mod agent/go.sum agent/
 
 WORKDIR /src/hub
 RUN go mod download
+WORKDIR /src/agent
+RUN go mod download
+WORKDIR /src/hub
 
 COPY protocol ./../protocol
+COPY agent ./../agent
 COPY hub ./
 
 # CGO_ENABLED=0：静态二进制，运行阶段不需要 glibc。
@@ -46,11 +51,18 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
 # ---------- 阶段三：运行 ----------
 FROM alpine:3.20
 
-# ca-certificates：将来访问外部镜像仓库需要
-# tzdata：日志按本地时区显示，排障更直观
-RUN apk add --no-cache ca-certificates tzdata \
-    && addgroup -S arkade && adduser -S -G arkade arkade \
-    && mkdir -p /data /app/web && chown -R arkade:arkade /data
+# 内置本机执行面通过运行时 API 和 docker compose 操作宿主容器。
+# 与 Agent 镜像保持相同 CLI 插件发现路径；镜像因此比纯控制面版本更大。
+RUN apk add --no-cache ca-certificates tzdata docker-cli docker-cli-compose \
+    && mkdir -p /data /app/web /opt/arkade/agent
+ENV DOCKER_CLI_PLUGIN_EXTRA_DIRS=/usr/libexec/docker/cli-plugins
+RUN mkdir -p /usr/local/lib/docker/cli-plugins /root/.docker/cli-plugins \
+    && for p in /usr/libexec/docker/cli-plugins/*; do \
+           [ -e "$p" ] || continue; \
+           ln -sf "$p" /usr/local/lib/docker/cli-plugins/; \
+           ln -sf "$p" /root/.docker/cli-plugins/; \
+       done \
+    && docker compose version
 
 WORKDIR /app
 
@@ -58,9 +70,11 @@ COPY --from=gopkg /out/arkade-hub /app/arkade-hub
 COPY --from=webbuild /src/web/dist /app/web/dist
 
 # Hub 文件目录，持久化 OIDC 加密主密钥；业务数据由独立 PostgreSQL 保存
-VOLUME ["/data"]
+VOLUME ["/data", "/opt/arkade/agent"]
 
-USER arkade
+# 默认 root 是访问宿主 root:docker socket 与复用 Agent 工作卷的刻意选择。
+# socket 权限等价于宿主高权限；仅控制中心部署应关闭 local 并不挂 socket。
+USER root
 
 EXPOSE 8080
 

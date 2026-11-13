@@ -12,13 +12,12 @@ import (
 	"testing"
 	"time"
 
-	"arkade/hub/internal/agentlink"
 	"arkade/hub/internal/config"
 	"arkade/hub/internal/store"
 	"arkade/hub/internal/testdb"
 )
 
-// 通过真实生产启动验证空库预建、专属凭据 WebSocket 握手和重启幂等。
+// 通过真实生产启动验证无 token 内置本机、管理员登录和重启幂等。
 func TestLocalAgentBootstrapNewApp(t *testing.T) {
 	var (
 		ctx = context.Background()
@@ -29,8 +28,11 @@ func TestLocalAgentBootstrapNewApp(t *testing.T) {
 	cfg.Auth.SettingsKeyFile = filepath.Join(t.TempDir(), "settings.key")
 	cfg.Auth.InitialUser = "admin"
 	cfg.Auth.InitialPass = "1"
-	cfg.Auth.AgentToken = "bootstrap-shared-token-only"
-	cfg.Auth.LocalAgentToken = "bootstrap-local-dedicated-token-only"
+	cfg.Auth.AgentToken = ""
+	cfg.Auth.LocalAgentToken = ""
+	cfg.Local.Enabled = true
+	cfg.Local.Runtime = "none"
+	cfg.Local.DataDir = t.TempDir()
 	cfg.Web.Dist = ""
 
 	var original store.AgentRecord
@@ -48,7 +50,7 @@ func TestLocalAgentBootstrapNewApp(t *testing.T) {
 				}
 			})
 
-			// 在监听前就应只有一个预建服务器，且专属凭据已完成绑定。
+			// 监听前只有一个在线内置本机，无需 WebSocket 或专属网络凭据。
 			agents, err := app.db.ListAgents(ctx)
 			if err != nil || len(agents) != 1 {
 				t.Fatalf("expected exactly one bootstrapped agent: %+v, err=%v", agents, err)
@@ -58,16 +60,16 @@ func TestLocalAgentBootstrapNewApp(t *testing.T) {
 				t.Fatalf("unexpected local agent: %+v", rec)
 			}
 			if phase == "fresh" {
-				if rec.Status != store.StatusPending {
-					t.Fatalf("new local agent must be pending, got %q", rec.Status)
+				if rec.Status != "online" {
+					t.Fatalf("new embedded local agent must be online, got %q", rec.Status)
 				}
 				original = rec
 			} else if rec.CreatedAt != original.CreatedAt {
 				t.Fatalf("restart recreated local agent: before=%+v after=%+v", original, rec)
 			}
-			id, err := app.db.LookupAgentByTokenHash(ctx, agentlink.HashEnrollmentToken(cfg.Auth.LocalAgentToken))
-			if err != nil || id != "agent-local" {
-				t.Fatalf("dedicated credential not bound before listening: id=%q err=%v", id, err)
+			hasToken, err := app.db.HasAgentToken(ctx, store.LocalAgentID)
+			if err != nil || hasToken {
+				t.Fatalf("embedded local agent must not bind a network credential: has=%v err=%v", hasToken, err)
 			}
 			users, err := app.db.CountUsers(ctx)
 			if err != nil || users != 1 {
@@ -79,15 +81,6 @@ func TestLocalAgentBootstrapNewApp(t *testing.T) {
 				t.Fatal(err)
 			}
 			baseURL := "http://" + app.server.GetListenedAddress()
-			agent, ack := dialAsAgent(t, baseURL, cfg.Auth.LocalAgentToken)
-			defer agent.conn.Close()
-			if ack.AgentID != "agent-local" {
-				t.Fatalf("dedicated token handshake assigned wrong identity: %+v", ack)
-			}
-			agents, err = app.db.ListAgents(ctx)
-			if err != nil || len(agents) != 1 || agents[0].ID != "agent-local" || agents[0].Name != "本机" || agents[0].DisplayName != "本机" {
-				t.Fatalf("hello created a duplicate or overwrote the local name: %+v err=%v", agents, err)
-			}
 
 			// 验证真实登录接口和会话 Cookie，而非仅验证密码哈希。
 			jar, err := cookiejar.New(nil)

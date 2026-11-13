@@ -10,22 +10,24 @@
 
 服务器不需要源码仓库：从 [部署目录](../deploy/docker/README.md) 选择一份完整编排和对应凭据样例，分别保存为 `compose.yml`、`.env`。
 
-- Hub 独立编排：Hub + PostgreSQL 两个容器。
-- Agent 独立编排：一个 Agent，连接已有 Hub。
-- 合并编排：Hub + Agent + PostgreSQL 三个容器。
+- Hub 独立编排：Hub（内置本机执行面）+ PostgreSQL 两个容器。
+- Agent 独立编排：远程服务器一个 Agent，连接已有 Hub。
+- 历史合并编排：现在同样为 Hub + PostgreSQL 两个容器，保留旧项目名与卷名，不再启动同机 Agent。
 
 普通参数直接写编排，仅密码和令牌用变量；不包含 build、extends 或外部 TOML 挂载。PostgreSQL 不暴露宿主 5432 端口。Hub 文件卷保存 `/data/settings.key`，PG 独立卷保存业务数据。
 
 ```sh
 chmod 600 .env
-# 填数据库密码、管理员初始密码、Hub准入令牌。
+# 填数据库密码、管理员初始密码；本机不再需要令牌。
 docker compose --env-file .env -f compose.yml config --quiet
 docker compose --env-file .env -f compose.yml pull
 docker compose --env-file .env -f compose.yml up -d hub
 curl -fsS http://127.0.0.1:8080/healthz
 ```
 
-合并编排在 `.env` 预设独立随机的 `ARKADE_LOCAL_AGENT_TOKEN`（至少16位），直接 `up -d` 启动全部服务。Hub 自动创建“本机”并绑定该专属密钥，Agent 等 Hub 健康后自动连接，无须网页添加或复制密钥。Agent 专属密钥与 Hub 准入令牌不可混用；重启保留密钥，已有身份或密钥冲突不自动覆盖。
+两份 Hub 编排默认 `ARKADE_LOCAL_ENABLED: "true"`，直接在 Hub 内执行本机操作，不再依赖本机 token 或额外 Agent 容器。Hub 镜像包含 Docker CLI/Compose，默认 root，挂载宿主 `/var/run/docker.sock`，这等价于宿主高权限；镜像体积比旧纯控制面版本增加。工作目录 `/opt/arkade/agent` 使用原 `arkade-agent-data` 卷，必须保留身份、Compose 文件与归属记录，不能和旧 Agent 并行写入。仅控制中心部署应把 YAML 开关改为 `"false"` 并删除 socket 挂载，而非只停用网页入口。
+
+远程 Agent 独立编排不变，在后台生成各节点专属接入密钥；Hub 全局共享 `ARKADE_AGENT_TOKEN` 默认空。旧 `.env` 中存在令牌不会自动映射到新 Hub，如仍需过渡期共享准入须在自己的 YAML 显式恢复并评估风险。
 
 新库启动自动执行版本化 PostgreSQL 建表迁移。dirty、脚本校验和不符、结构漂移或未知更高版本应拒绝启动，禁止自动 force 跳过。已经有未受版本管理业务表的数据库不可冒充新库使用。
 
@@ -46,7 +48,7 @@ docker cp arkade-hub:/data/settings.key ./settings.key.backup
 chmod 600 settings.key.backup
 ```
 
-不能只有 PG 备份而没有主密钥，否则第三方登录的 Client Secret 无法解密。备份后应在隔离环境/新数据库进行恢复演练，不覆盖活动业务库：
+还应备份本机 `arkade-agent-data` 工作卷；数据库快照不包含该卷内身份、Compose 文件、归属与备份。不能只有 PG 备份而没有主密钥，否则第三方登录的 Client Secret 与监控通知凭据无法解密。备份后应在隔离环境/新数据库进行恢复演练，不覆盖活动业务库：
 
 ```sh
 docker compose --env-file .env -f compose.yml exec -T postgres \
@@ -56,6 +58,23 @@ docker compose --env-file .env -f compose.yml exec -T postgres \
 ```
 
 恢复演练还需用相同版本 Hub 和备份密钥指向恢复库验证登录、权限和编排读取；`pg_restore` 成功不等于业务验收完成。不要让演练 Hub 连接生产 Agent。
+
+## 旧同机 Agent 切换到内置本机
+
+升级前备份数据库、设置主密钥和原 Agent 工作卷，保留旧编排、镜像及凭据。先用旧文件停止 Agent，再替换编排；新版已无 `agent` 服务，不能在换文件后才运行 `stop agent`。
+
+```sh
+# 原部署目录与旧文件；先确认 project 与服务归属。
+docker compose --env-file .env -f compose.yml stop agent
+# 备份旧文件后替换为新版 combined，保留原项目名与显式卷名。
+docker compose --env-file .env -f compose.yml config --quiet
+docker compose --env-file .env -f compose.yml pull
+docker compose --env-file .env -f compose.yml up -d --remove-orphans
+```
+
+新版 combined 保留项目名 `arkade`，复用 `arkade-agent-data`、`arkade-hub-files-pg` 和 `arkade-postgres-data`。原自定义卷名或 bind mount 必须对应保留，不能用空卷替代后声称保留身份。`--remove-orphans` 会移除同项目未声明的旧服务容器，执行前核对是否存在其他应保留 orphan；不会替代停止另一 Compose 项目的 Agent。**不执行 `down -v`、卷清理或删除旧卷**。检查本机记录、原容器归属与 Compose 工作目录，再验证操作；不能同时运行新 Hub 本机执行面和旧 Agent。
+
+详见 [部署迁移步骤](<../deploy/docker/README.md#3-旧同机-agent-迁移到内置本机>)。如需回退，先关闭/停止新本机执行面，再用配套旧镜像、库备份及工作卷恢复旧部署，避免并行执行。
 
 ## 更新与回退
 

@@ -143,7 +143,9 @@ type PullSnapshot struct {
 type PullManager struct {
 	mgr *Manager
 
-	mu sync.Mutex
+	mu      sync.Mutex
+	closed  bool
+	workers sync.WaitGroup
 	// byID 是任务表。
 	byID map[string]*PullTask
 	// byRequest 是幂等键 → task_id。
@@ -218,6 +220,10 @@ func (p *PullManager) StartOperation(spec OperationSpec, name, requestID string)
 	fp := spec.fingerprint(n)
 
 	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+		return PullSnapshot{}, errors.New("编排任务管理器已关闭")
+	}
 	// 幂等检查必须在建任务之前：Hub 重试时两次请求可能几乎同时到达。
 	if existingID, ok := p.byRequest[requestID]; ok {
 		if task, alive := p.byID[existingID]; alive {
@@ -269,10 +275,15 @@ func (p *PullManager) StartOperation(spec OperationSpec, name, requestID string)
 	p.byID[task.id] = task
 	p.byRequest[requestID] = task.id
 	snap := task.snapshot(0)
+	// 必须在持锁时登记，Close 封闭入口后才能安全 Wait。
+	p.workers.Add(1)
 	p.mu.Unlock()
 
 	// 命令在独立 goroutine 里跑，start 立即返回。
-	go p.run(task)
+	go func() {
+		defer p.workers.Done()
+		p.run(task)
+	}()
 	return snap, nil
 }
 

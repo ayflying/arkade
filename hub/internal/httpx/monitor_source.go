@@ -22,10 +22,11 @@ func (s *monitorSource) Agents(ctx context.Context) ([]monitor.Agent, error) {
 	}
 	out := make([]monitor.Agent, 0, len(records))
 	for _, rec := range records {
-		if rec.Disabled || rec.Status == store.StatusPending {
+		// 配置主动关闭的内置本机不是Agent失联，不产生离线告警。
+		if rec.Disabled || rec.Status == store.StatusPending || (s.registry.IsReservedLocal(rec.ID) && !s.registry.IsLocal(rec.ID)) {
 			continue
 		}
-		_, online := s.registry.Get(rec.ID)
+		online := s.registry.IsOnline(rec.ID)
 		out = append(out, monitor.Agent{ID: rec.ID, Name: rec.Name, Online: online, LastSeen: rec.LastSeen})
 	}
 	return out, nil

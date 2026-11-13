@@ -16,6 +16,7 @@ import (
 func TestMonitorMissingKeyMustNotReplaceCredentials(t *testing.T) {
 	ctx := context.Background()
 	cfg := config.Default()
+	cfg.Local.Enabled = false
 	cfg.Database.DSN = testdb.New(t)
 	cfg.Auth.SettingsKeyFile = filepath.Join(t.TempDir(), "settings.key")
 	db, err := store.Open(ctx, cfg.Database.DSN)

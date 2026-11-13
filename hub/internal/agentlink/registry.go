@@ -19,13 +19,16 @@ import (
 
 // Registry 保存在线连接。
 type Registry struct {
-	mu    sync.RWMutex
-	conns map[string]*connection
+	mu            sync.RWMutex
+	conns         map[string]*connection
+	locals        map[string]*localEntry
+	reservedLocal map[string]struct{}
+	localSlots    chan struct{}
 }
 
 // NewRegistry 构造空的在线表。
 func NewRegistry() *Registry {
-	return &Registry{conns: make(map[string]*connection)}
+	return &Registry{conns: make(map[string]*connection), locals: make(map[string]*localEntry), reservedLocal: make(map[string]struct{}), localSlots: make(chan struct{}, 64)}
 }
 
 // Add 把一个新连接登记为在线。
@@ -34,6 +37,11 @@ func NewRegistry() *Registry {
 // 让最新的连接服务请求，旧连接强制关闭，避免同一个 Agent 有两条活跃通道导致消息错配。
 func (r *Registry) Add(c *connection) {
 	r.mu.Lock()
+	if _, reserved := r.reservedLocal[c.agentID]; reserved {
+		r.mu.Unlock()
+		c.close()
+		return
+	}
 	old := r.conns[c.agentID]
 	r.conns[c.agentID] = c
 	r.mu.Unlock()
@@ -73,6 +81,9 @@ func (r *Registry) OnlineIDs() map[string]struct{} {
 	for id := range r.conns {
 		out[id] = struct{}{}
 	}
+	for id := range r.locals {
+		out[id] = struct{}{}
+	}
 	return out
 }
 
@@ -80,7 +91,7 @@ func (r *Registry) OnlineIDs() map[string]struct{} {
 func (r *Registry) Count() int {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return len(r.conns)
+	return len(r.conns) + len(r.locals)
 }
 
 // IsOnline 判断某个 Agent 当前是否在线。
@@ -88,7 +99,8 @@ func (r *Registry) IsOnline(agentID string) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	_, ok := r.conns[agentID]
-	return ok
+	_, local := r.locals[agentID]
+	return ok || local
 }
 
 // Status 返回展示用的实时状态。
@@ -116,9 +128,13 @@ func (r *Registry) Status(agentID, dbStatus string) string {
 //
 // 找不到连接时什么都不做——这是正常情况（Agent 本来就没连）。
 func (r *Registry) Close(agentID, reason string) {
-	r.mu.RLock()
+	r.mu.Lock()
 	c := r.conns[agentID]
-	r.mu.RUnlock()
+	if local := r.locals[agentID]; local != nil {
+		delete(r.locals, agentID)
+		local.cancel()
+	}
+	r.mu.Unlock()
 
 	if c == nil {
 		return
@@ -135,7 +151,13 @@ func (r *Registry) Close(agentID, reason string) {
 // 这是所有容器操作的唯一入口。离线时立刻返回 agent_offline，不排队、不重试：
 // 危险操作排队在重连后执行是极其危险的行为（02-features.md 第 1 节明确禁止）。
 func (r *Registry) Call(ctx context.Context, agentID, method string, payload any) ([]byte, *ConnError) {
-	c, ok := r.Get(agentID)
+	r.mu.RLock()
+	local := r.locals[agentID]
+	c, ok := r.conns[agentID]
+	r.mu.RUnlock()
+	if local != nil {
+		return r.callLocal(ctx, agentID, method, payload, local)
+	}
 	if !ok {
 		return nil, newOfflineError(agentID)
 	}

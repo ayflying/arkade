@@ -41,6 +41,8 @@ const emit = defineEmits<{
 }>()
 
 const disabled = computed(() => isAgentDisabled(props.agent))
+// 内置本机没有网络令牌；关闭入口由 Hub local.enabled 配置负责。
+const isLocal = computed(() => props.agent.id === 'agent-local')
 
 /** 是否还没接入过：pending 状态下没有容器数据可看 */
 const isPending = computed(() => props.agent.status === 'pending')
@@ -51,7 +53,7 @@ const toggleLabel = computed(() => (disabled.value ? '启用' : '禁用'))
 /** 禁用/启用按钮的 tooltip 说明：解释这个操作的后果 */
 const toggleHint = computed(() =>
   disabled.value
-    ? '启用后恢复正常管理'
+    ? isLocal.value ? '解除旧本机禁用后需重启 Hub，且本机配置须开启' : '启用后恢复正常管理'
     : '禁用后该服务器的操作入口不可用，不会删除任何容器'
 )
 
@@ -82,7 +84,7 @@ const enterHint = computed(() =>
       修改显示名、备注与标签
     </n-tooltip>
 
-    <n-tooltip trigger="hover" placement="top">
+    <n-tooltip v-if="!isLocal" trigger="hover" placement="top">
       <template #trigger>
         <n-button size="tiny" tertiary :disabled="busy" @click="emit('reset-token')">
           重置密钥
@@ -91,7 +93,7 @@ const enterHint = computed(() =>
       重新生成专属密钥（旧密钥立即失效）
     </n-tooltip>
 
-    <n-tooltip trigger="hover" placement="top">
+    <n-tooltip v-if="!isLocal || disabled" trigger="hover" placement="top">
       <template #trigger>
         <n-button size="tiny" tertiary :disabled="busy" @click="emit('toggle-disabled')">
           {{ toggleLabel }}
@@ -101,7 +103,7 @@ const enterHint = computed(() =>
     </n-tooltip>
 
     <!-- 删除是危险操作：红色 + 页面里的二次确认（确认文案由页面负责） -->
-    <n-tooltip trigger="hover" placement="top">
+    <n-tooltip v-if="!isLocal" trigger="hover" placement="top">
       <template #trigger>
         <n-button size="tiny" tertiary type="error" :disabled="busy" @click="emit('delete')">
           删除
