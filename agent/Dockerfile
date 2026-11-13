@@ -20,8 +20,9 @@ COPY protocol ./../protocol
 COPY agent ./
 
 # 静态二进制：Agent 要能直接丢到任意 Linux 服务器运行，不依赖 glibc。
-ARG VERSION=0.1.0
-RUN CGO_ENABLED=0 GOOS=linux go build \
+COPY VERSION /src/VERSION
+ARG VERSION
+RUN VERSION="${VERSION:-$(cat /src/VERSION)}" && CGO_ENABLED=0 GOOS=linux go build \
         -trimpath \
         -ldflags "-s -w -X arkade/agent/internal/cli.Version=${VERSION}" \
         -o /out/arkade-agent ./cmd/agent

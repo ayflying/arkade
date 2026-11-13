@@ -42,8 +42,9 @@ COPY hub ./
 
 # CGO_ENABLED=0：静态二进制，运行阶段不需要 glibc。
 # -trimpath 去掉本机路径，-s -w 去掉调试符号。
-ARG VERSION=0.1.0
-RUN CGO_ENABLED=0 GOOS=linux go build \
+COPY VERSION /src/VERSION
+ARG VERSION
+RUN VERSION="${VERSION:-$(cat /src/VERSION)}" && CGO_ENABLED=0 GOOS=linux go build \
         -trimpath \
         -ldflags "-s -w -X main.version=${VERSION}" \
         -o /out/arkade-hub ./cmd/hub

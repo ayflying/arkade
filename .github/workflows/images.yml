@@ -81,6 +81,10 @@ jobs:
           node-version: '22'
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
+      - name: Validate release version
+        run: |
+          python3 scripts/bump-version.py --check
+          python3 scripts/test-version.py
       - name: Install dependencies
         working-directory: web
         run: pnpm install --frozen-lockfile
@@ -142,12 +146,12 @@ jobs:
             fi
             echo "dockerhub_image=docker.io/${namespace}/arkade-${IMAGE}" >> "$GITHUB_OUTPUT"
           fi
-          if [[ "$REF_TYPE" == tag ]]; then
-            # VERSION is passed through the Docker build argument, not eval.
-            echo "version=${REF_NAME#v}" >> "$GITHUB_OUTPUT"
-          else
-            echo "version=sha-${COMMIT:0:12}" >> "$GITHUB_OUTPUT"
+          version="$(python3 scripts/bump-version.py --check)"
+          if [[ "$REF_TYPE" == tag && "$REF_NAME" != "v$version" ]]; then
+            echo 'Git 发布标签必须与 VERSION 一致。' >&2
+            exit 1
           fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - name: Log in to GitHub Container Registry
@@ -175,6 +179,7 @@ jobs:
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-,format=long
+            type=raw,value=${{ steps.vars.outputs.version }},enable={{is_default_branch}}
             type=ref,event=tag
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}

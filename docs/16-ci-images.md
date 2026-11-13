@@ -14,16 +14,22 @@
 
 镜像名根据当前仓库名生成，统一转换为小写；fork 仓库不会误推到原仓库。两个镜像均构建 `linux/amd64`、`linux/arm64` 多架构清单。
 
+## 本地版本号
+
+根目录 [VERSION](<../VERSION>) 是 Hub、Agent 的统一发布版本，首次为 `0.0.1`。每轮发布改动提交前执行一次 `python scripts/bump-version.py`，仅补丁号加一；同轮修正或 CI 重试不再次加号。使用 `python scripts/bump-version.py --check` 只检查版本，不修改文件。规则记录在 [AGENTS.md](<../AGENTS.md>)，CI 不回写版本。
+
+CI 将该版本注入两个二进制；从仓库根目录执行 Docker 构建时，未传 `VERSION` 构建参数也会读取版本文件。默认分支还会发布同名版本镜像标签。直接 `go run` 的开发版本不代表发布镜像版本。
+
 ## 自动触发与标签
 
 | 事件 | 行为 |
 | --- | --- |
-| 推送到 `master` | 测试、构建，发布 `latest` 和 `sha-<完整提交号>` |
+| 推送到 `master` | 测试、构建，发布 `latest`、`VERSION` 中的版本标签和 `sha-<完整提交号>` |
 | 推送 `v*` 标签 | 测试、构建，发布原标签和提交号；符合语义版本的标签额外发布版本号与主次版本号 |
 | PR 到 `master` | 测试与镜像构建，不登录 GHCR、不推送镜像 |
 | Actions → Run workflow | 对选择的分支/标签执行构建发布；只有默认分支更新 `latest` |
 
-例如 `v1.2.3` 会生成 `v1.2.3`、`1.2.3`、`1.2` 和 `sha-...`，不会用版本标签覆盖开发分支的 `latest`。预发布标签遵循 docker/metadata-action 的 SemVer 规则，不建议使用浮动标签部署生产。
+例如 `v1.2.3` 会生成 `v1.2.3`、`1.2.3`、`1.2` 和 `sha-...`，不会用版本标签覆盖开发分支的 `latest`。发布 Git 标签必须为 `v` 加上版本文件的完整值（例如文件为 `1.2.3` 时标签为 `v1.2.3`），不一致时拒绝发布。不建议使用浮动标签部署生产。
 
 每次运行先执行三套 Go 模块测试与 vet、Web 构建及全部契约测试，全部通过后才并行构建 Hub、Agent。测试容器不提供 Docker CLI 和 socket，以免既有“Docker 不可用”的测试假设被 GitHub Runner 内置 Docker 干扰；实际编排生命周期由测试里的假 Docker 执行器验证。镜像构建使用 Buildx/QEMU 和 GitHub Actions 缓存。
 
