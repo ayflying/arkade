@@ -29,12 +29,13 @@ def render(filename, envfile, valid=True):
     return json.loads(result.stdout)
 
 
-def check_hub(config):
-    assert set(config["services"]) == {"hub", "postgres"}, "本机不能重复启动独立 Agent"
+def check_hub(config, combined=False):
+    expected = {"hub", "postgres"} if combined else {"hub"}
+    assert set(config["services"]) == expected, "仅合并编排创建 PostgreSQL，不能重复启动独立 Agent"
     hub = config["services"]["hub"]
     env = hub["environment"]
     assert "ARKADE_DB_PATH" not in env
-    assert env["ARKADE_DB_HOST"] == "postgres"
+    assert env["ARKADE_DB_HOST"] == ("postgres" if combined else "请填写PostgreSQL地址")
     assert env["ARKADE_DB_PASSWORD"] == "test-pg-not-a-real-password"
     assert env["ARKADE_INITIAL_PASS"] == "test-admin-not-a-real-password"
     assert env["ARKADE_SETTINGS_KEY_FILE"] == "/data/settings.key"
@@ -51,13 +52,17 @@ def check_hub(config):
     assert mounts["/var/run/docker.sock"]["source"] == "/var/run/docker.sock"
     assert mounts["/data"]["source"] == "hub-data"
     assert not any("toml" in target for target in mounts)
-    assert hub["depends_on"]["postgres"]["condition"] == "service_healthy"
-    pg = config["services"]["postgres"]
-    assert pg["environment"]["POSTGRES_PASSWORD"] == env["ARKADE_DB_PASSWORD"]
-    assert pg["environment"]["POSTGRES_DB"] == env["ARKADE_DB_NAME"]
-    assert not pg.get("ports"), "数据库不应暴露宿主端口"
-    assert pg["volumes"][0]["target"] == "/var/lib/postgresql/data"
-    assert config["volumes"]["postgres-data"]["name"] == "arkade-postgres-data"
+    if combined:
+        assert hub["depends_on"]["postgres"]["condition"] == "service_healthy"
+        pg = config["services"]["postgres"]
+        assert pg["environment"]["POSTGRES_PASSWORD"] == env["ARKADE_DB_PASSWORD"]
+        assert pg["environment"]["POSTGRES_DB"] == env["ARKADE_DB_NAME"]
+        assert not pg.get("ports"), "数据库不应暴露宿主端口"
+        assert pg["volumes"][0]["target"] == "/var/lib/postgresql/data"
+        assert config["volumes"]["postgres-data"]["name"] == "arkade-postgres-data"
+    else:
+        assert not hub.get("depends_on"), "Hub 单独编排不能依赖内置数据库"
+        assert "postgres-data" not in config.get("volumes", {}), "Hub 单独编排不能声明数据库卷"
     assert config["volumes"]["hub-data"]["name"] == "arkade-hub-files-pg"
     assert config["volumes"]["agent-data"]["name"] == "arkade-agent-data"
 
@@ -91,7 +96,7 @@ def main():
         save(values)
         parsed = {name: render(name, envfile) for name in ("hub-compose.yml", "combined-compose.yml", "agent-compose.yml")}
         check_hub(parsed["hub-compose.yml"])
-        check_hub(parsed["combined-compose.yml"])
+        check_hub(parsed["combined-compose.yml"], combined=True)
         check_agent(parsed["agent-compose.yml"])
         assert parsed["hub-compose.yml"]["name"] == "arkade-hub"
         assert parsed["combined-compose.yml"]["name"] == "arkade", "保留旧 combined project"
@@ -125,7 +130,10 @@ def main():
             assert keys == expected, f"{filename}: 凭据必须与对应编排精确匹配"
             save({key: values[key] for key in keys})
             config = render(compose, envfile)
-            (check_agent if compose == "agent-compose.yml" else check_hub)(config)
+            if compose == "agent-compose.yml":
+                check_agent(config)
+            else:
+                check_hub(config, combined=compose == "combined-compose.yml")
     dockerfile = (ROOT / "hub" / "Dockerfile").read_text(encoding="utf-8")
     for fragment in ("COPY agent/go.mod agent/go.sum agent/", "COPY agent ./../agent", "docker-cli docker-cli-compose",
                      "DOCKER_CLI_PLUGIN_EXTRA_DIRS", "/root/.docker/cli-plugins", "docker compose version", "USER root", '"/opt/arkade/agent"'):

@@ -67,11 +67,11 @@ arkade/
 
 提供三套仅使用 `image` 的编排，不包含 `build`；普通参数直接写在编排中，只有密码、令牌使用 `.env`，不再要求挂载 TOML。Hub 镜像包含 Docker CLI 与 Compose；启用本机执行时，Hub 以 root 运行并挂载宿主 Docker socket，该权限近似宿主 root，必须只授予受信管理员。
 
-- [Hub + PostgreSQL](<deploy/docker/hub-compose.yml>)：控制端、默认内置本机执行及独立数据库；纯控制面可关闭本机执行并移除不需要的 socket 挂载。
+- [仅 Hub](<deploy/docker/hub-compose.yml>)：默认内置本机执行，连接已有 PostgreSQL，不创建数据库服务或数据库卷；须修改编排中的 PG 地址并确保容器网络可达。纯控制面可关闭本机执行并移除不需要的 socket 挂载。
 - [仅 Agent](<deploy/docker/agent-compose.yml>)：部署在远程受管服务器。
 - [Hub 本机执行 + PostgreSQL 合并编排](<deploy/docker/combined-compose.yml>)：不再启动独立 Agent，保留原 `arkade-agent-data` 卷与 Compose project，以沿用本机工作目录。
 
-旧版同机部署升级必须先备份数据库、设置主密钥和本机工作卷，停止旧 Agent，再在原 project 下用新版编排执行 `up -d --remove-orphans`。不得使用 `down -v` 或删除数据卷；不要让旧 Agent 与内置执行同时写同一 workspace。这里是升级指引，不会自动操作生产环境。
+旧版同机部署升级必须先备份数据库、设置主密钥和本机工作卷，并停止旧 Agent。继续使用合并编排时，在原 project 下更新并移除旧 Agent；改为仅 Hub 编排时，须先安排已有 PostgreSQL 的独立运行与可达地址，保留原 PG 容器/数据卷，禁止使用 `--remove-orphans` 删除旧 PG。两套 Hub 编排二选一，不能同时运行同名 Hub 容器。不得使用 `down -v` 或删除数据卷；不要让旧 Agent 与内置执行同时写同一 workspace。这里是升级指引，不会自动操作生产环境。
 
 数据库仅支持 PostgreSQL，使用 GoFrame 官方驱动；本版本采用全新库，不导入或兼容 SQLite。数据库密码放对应凭据样例，PG 地址、用户名、库名直接写编排；PostgreSQL 数据与 Hub 的 OIDC 加密主密钥分别持久化。
 

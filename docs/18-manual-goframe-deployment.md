@@ -10,11 +10,11 @@
 
 服务器不需要源码仓库：从 [部署目录](../deploy/docker/README.md) 选择一份完整编排和对应凭据样例，分别保存为 `compose.yml`、`.env`。
 
-- Hub 独立编排：Hub（内置本机执行面）+ PostgreSQL 两个容器。
+- Hub 独立编排：只有 Hub（内置本机执行面），连接已有 PostgreSQL；必须修改 PG 地址，并确保从 Hub 容器可达，不重复创建数据库。
 - Agent 独立编排：远程服务器一个 Agent，连接已有 Hub。
 - 历史合并编排：现在同样为 Hub + PostgreSQL 两个容器，保留旧项目名与卷名，不再启动同机 Agent。
 
-普通参数直接写编排，仅密码和令牌用变量；不包含 build、extends 或外部 TOML 挂载。PostgreSQL 不暴露宿主 5432 端口。Hub 文件卷保存 `/data/settings.key`，PG 独立卷保存业务数据。
+普通参数直接写编排，仅密码和令牌用变量；不包含 build、extends 或外部 TOML 挂载。合并编排的 PostgreSQL 不暴露宿主 5432 端口；仅 Hub 模板须连接实际可达的已有数据库，容器内 `127.0.0.1` 不是宿主或其他项目的 PG。Hub 文件卷保存 `/data/settings.key`，数据库由自身部署持久化。
 
 ```sh
 chmod 600 .env
@@ -33,7 +33,7 @@ curl -fsS http://127.0.0.1:8080/healthz
 
 ## PostgreSQL 备份和独立恢复演练
 
-在安全目录执行，备份文件含账号密码哈希和业务凭据密文，限制文件权限。以下命令通过容器内部本地连接备份，不把密码放命令行，不公开数据库端口。
+在安全目录执行，备份文件含账号密码哈希和业务凭据密文，限制文件权限。以下 `exec postgres` 命令仅适用于包含 PG 的合并编排；仅 Hub 部署需在已有数据库自身的部署目录执行对应备份/恢复，不能对仅 Hub 的 compose 执行这些命令。以下命令通过容器内部本地连接备份，不把密码放命令行，不公开数据库端口。
 
 ```sh
 umask 077
@@ -61,6 +61,8 @@ docker compose --env-file .env -f compose.yml exec -T postgres \
 
 ## 旧同机 Agent 切换到内置本机
 
+以下命令仅用于继续采用 combined（Hub + PG）的同机升级。改用仅 Hub 模板时必须保留已有 PG 的运行、网络和卷，不能使用 `--remove-orphans` 或 `down`；须先配置 Hub 可达的已有 PG 地址，再只更新 Hub，见部署说明中的“旧 Hub + PG 改为仅 Hub”章节。
+
 升级前备份数据库、设置主密钥和原 Agent 工作卷，保留旧编排、镜像及凭据。先用旧文件停止 Agent，再替换编排；新版已无 `agent` 服务，不能在换文件后才运行 `stop agent`。
 
 ```sh
@@ -74,7 +76,7 @@ docker compose --env-file .env -f compose.yml up -d --remove-orphans
 
 新版 combined 保留项目名 `arkade`，复用 `arkade-agent-data`、`arkade-hub-files-pg` 和 `arkade-postgres-data`。原自定义卷名或 bind mount 必须对应保留，不能用空卷替代后声称保留身份。`--remove-orphans` 会移除同项目未声明的旧服务容器，执行前核对是否存在其他应保留 orphan；不会替代停止另一 Compose 项目的 Agent。**不执行 `down -v`、卷清理或删除旧卷**。检查本机记录、原容器归属与 Compose 工作目录，再验证操作；不能同时运行新 Hub 本机执行面和旧 Agent。
 
-详见 [部署迁移步骤](<../deploy/docker/README.md#3-旧同机-agent-迁移到内置本机>)。如需回退，先关闭/停止新本机执行面，再用配套旧镜像、库备份及工作卷恢复旧部署，避免并行执行。
+详见 [部署迁移步骤](<../deploy/docker/README.md>)。如需回退，先关闭/停止新本机执行面，再用配套旧镜像、库备份及工作卷恢复旧部署，避免并行执行。
 
 ## 更新与回退
 

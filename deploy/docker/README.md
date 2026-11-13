@@ -4,11 +4,11 @@
 
 | 编排 | 独立凭据样例 | 场景 |
 | --- | --- | --- |
-| [hub-compose.yml](<hub-compose.yml>) | [hub.env.example](<hub.env.example>) | Hub（内置本机）+ PostgreSQL，两个容器 |
+| [hub-compose.yml](<hub-compose.yml>) | [hub.env.example](<hub.env.example>) | 仅 Hub（内置本机），连接用户已有 PostgreSQL |
 | [agent-compose.yml](<agent-compose.yml>) | [agent.env.example](<agent.env.example>) | 远程服务器只部署 Agent，连接已有 Hub |
 | [combined-compose.yml](<combined-compose.yml>) | [combined.env.example](<combined.env.example>) | Hub（内置本机）+ PostgreSQL，保留旧同机部署项目名和卷名 |
 
-每种部署只需对应一份 YAML 和凭据样例，分别保存为服务器部署目录中的 `compose.yml` 与 `.env`；不需要克隆仓库、挂载 TOML 或拼接其他编排。三份编排均为独立、仅 `image` 的部署方案，不含 `build`、`extends` 或 `include`。两份 Hub 编排都只有 Hub 与 PostgreSQL，不再额外运行同机 Agent 容器；远程 Agent 仍独立运行。
+每种部署只需对应一份 YAML 和凭据样例，分别保存为服务器部署目录中的 `compose.yml` 与 `.env`；不需要克隆仓库、挂载 TOML 或拼接其他编排。三份编排均为独立、仅 `image` 的部署方案，不含 `build`、`extends` 或 `include`。Hub 独立编排仅声明 Hub，连接已有 PostgreSQL；combined 才提供 Hub 与 PostgreSQL 两个容器。两者都不额外运行同机 Agent，远程 Agent 仍独立运行。不要在同一宿主同时启动两套同名 Hub，不能同时写相同主密钥/工作卷或业务数据库。
 
 **这是部署安全边界的变化：默认 Hub 现在会挂载宿主 Docker socket，以 root 运行并管理本机。** 本机执行复用 Agent 的能力，但不通过一个额外 Agent 容器或本机 WebSocket/token 接入。只需要控制中心、不管理本机的部署见下文“关闭本机管理”。
 
@@ -18,8 +18,9 @@
 - `.env` 由 Compose 读取，不会自动注入全部键到容器；命令显式使用 `--env-file .env`。不要公开包含凭据的 `docker compose config` 完整输出，结构检查使用 `config --quiet`。
 - 两份 Hub 编排默认 `ARKADE_LOCAL_ENABLED: "true"`、`ARKADE_LOCAL_DATA_DIR: /opt/arkade/agent`、`ARKADE_LOCAL_RUNTIME: auto`、`ARKADE_LOCAL_ENDPOINT: /var/run/docker.sock`、`ARKADE_LOCAL_COMPOSE_BIN: docker`。这些是编排字面量，改 `.env` 中同名变量不会覆盖它们。
 - Hub 默认关闭共享准入：`ARKADE_AGENT_TOKEN: ""`。远程服务器在后台创建专属接入密钥，不需要填写全局令牌。本机不再需要 `ARKADE_LOCAL_AGENT_TOKEN`。
-- 保留已有显式卷名：PostgreSQL `arkade-postgres-data` → `/var/lib/postgresql/data`；Hub 设置主密钥 `arkade-hub-files-pg` → `/data`；本机身份、归属、Compose 文件与备份 `arkade-agent-data` → `/opt/arkade/agent`。切勿让独立 Agent 与 Hub 同时写同一工作卷。
-- Hub 内部监听 `8080`，前端 `/app/web/dist`，设置主密钥 `/data/settings.key`。PostgreSQL 只开放内部网络，不映射宿主 5432。改变外部端口无需改变内部监听或健康检查。
+- Hub 两套方案保留显式卷名：设置主密钥 `arkade-hub-files-pg` → `/data`；本机身份、归属、Compose 文件与备份 `arkade-agent-data` → `/opt/arkade/agent`。combined 另管理 PostgreSQL `arkade-postgres-data` → `/var/lib/postgresql/data`；仅 Hub 编排不声明、不控制或删除数据库卷。切勿让独立 Agent 与 Hub 同时写同一工作卷。
+- Hub 内部监听 `8080`，前端 `/app/web/dist`，设置主密钥 `/data/settings.key`。combined 的 PostgreSQL 只开放内部网络，不映射宿主 5432；仅 Hub 的已有数据库网络由部署者安排。改变外部端口无需改变内部监听或健康检查。
+- 仅 Hub 改用项目隔离的默认网络（默认 `arkade-hub_default`），不再声明共享的 `arkade-hub-net`，避免与 combined 网络所有权冲突。旧网络不自动删除；如旧数据库只在该网络可见，必须先为 Hub 配置可达地址或明确的受控网络接入，不能假定跨 Compose 服务名自动解析。
 - 本版本仅支持 PostgreSQL，不导入旧 SQLite。已有 PostgreSQL 按版本化迁移升级；不要将未知或 SQLite 文件挂入新库。
 - 会话、注册、OIDC 等网页设置保存在数据库；`ARKADE_SESSION_TTL` 仅保留旧配置回退。原生二进制仍可通过 `-c` 显式使用 TOML。
 
@@ -39,12 +40,16 @@ CI 发布仍由现有工作流管理；本文不证明某次镜像构建、发�
 
 ## 1. 新建 Hub 与本机管理
 
-把 [Hub 编排](<hub-compose.yml>) 与 [对应凭据样例](<hub.env.example>) 保存为部署目录内的 `compose.yml` 与 `.env`。如需保留历史 `arkade` 项目名，可用 [combined 编排](<combined-compose.yml>) 和 [对应样例](<combined.env.example>)，命令相同。
+已有 PostgreSQL 时，把 [仅 Hub 编排](<hub-compose.yml>) 与 [对应凭据样例](<hub.env.example>) 保存为部署目录内的 `compose.yml` 与 `.env`。需要同时部署 PostgreSQL 才选择 [combined 编排](<combined-compose.yml>) 和 [对应样例](<combined.env.example>)；不是通过两份文件叠加部署。
+
+仅 Hub 必须修改 YAML 的 `ARKADE_DB_HOST: 请填写PostgreSQL地址`、端口、用户名、库名，并在 `.env` 填现有数据库密码。该编排不会创建数据库/角色或等待 PG 服务；提前准备专用 PostgreSQL 数据库和账号，Hub 启动执行受版本管理的业务表迁移。地址必须从 **Hub 容器内**可达，`127.0.0.1` 是 Hub 容器自身，不代表宿主；也不能默认用另一个 Compose 的 `postgres` 服务名。根据现有数据库部署安排受限网络、监听和授权，不要为方便无保护地暴露数据库。
+
+`ARKADE_DB_SSLMODE` 沿用 `disable` 示例，仅适用于可信隔离网络；远程数据库应按证书/主机名配置 TLS（例如 `verify-full` 并提供可信 CA）。请根据实际连接和证书验证，不把改端口或网络当作 TLS 已启用。
 
 ```sh
 chmod 600 .env
 # 编辑 .env：填写 ARKADE_DB_PASSWORD、ARKADE_INITIAL_PASS。
-# 编辑 compose.yml：核对 image、ports、ARKADE_BASE_URL 及宿主 socket。
+# 编辑 compose.yml：仅 Hub 必填可达 PG 地址/账号/库名/TLS；核对 image、ports、BASE_URL 及 socket。
 docker compose --env-file .env -f compose.yml config --quiet
 docker compose --env-file .env -f compose.yml pull
 docker compose --env-file .env -f compose.yml up -d
@@ -73,9 +78,26 @@ docker compose --env-file .env -f compose.yml up -d
 
 跨机器使用 `wss://域名/agent/connect`，可信内网可用 `ws://Hub地址:8080/agent/connect`。远程 Agent 容器的 `127.0.0.1` 是它自己；不要照搬旧 combined 的 `ws://hub:8080/agent/connect` 到另一台机器。Agent 只获得自己的密钥，不获得数据库或管理员密码。远程编排的 socket 和数据路径保持不变。
 
-## 3. 旧同机 Agent 迁移到内置本机
+## 3. 从旧 Hub + PG 编排改为仅 Hub（数据库保留）
 
-先核对正在运行的旧 project name、Hub/数据库版本、工作卷名和身份。默认旧 combined 项目名为 `arkade`，卷为上文三个显式名称；新版 combined 保留这些名称。若原部署改过卷名或使用 bind mount，必须在新版指向**原目录/原卷**，不要创建空工作卷后声称已迁移身份。保留原身份与归属文件，不手工改写 ID。
+**这不是删除数据库的迁移。** 先备份数据库、设置主密钥及本机工作卷，保留旧编排和凭据。记录旧 PostgreSQL 容器、项目、网络和真实卷名，保持该数据库运行；仅 Hub 编排没有管理它的权限或生命周期声明。
+
+旧 Hub 编排曾使用显式 `arkade-hub-net`，新仅 Hub 使用项目默认网络。切换前先安排 Hub 到原数据库的可达连接（受控外部地址或明确配置的已有网络），核对 PG 用户、库名、密码和 TLS，不能简单把服务删掉后仍填 `postgres` 并期待自动连通。不要在此步骤拆除旧 PG 所依赖的网络。
+
+使用原 project name、原 Hub/Agent 工作卷，仅更新 Hub：
+
+```sh
+# 备份并保留旧编排；新版仅 Hub 已设置好原数据库的可达地址与凭据。
+docker compose --env-file .env -f compose.yml config --quiet
+docker compose --env-file .env -f compose.yml pull hub
+docker compose --env-file .env -f compose.yml up -d --no-deps hub
+```
+
+**禁止在此切换中使用 `--remove-orphans`、`down` / `down -v`、卷清理或自动删除旧 PostgreSQL 容器**。旧 PG 可能仍属于同项目，会被误当 orphan 移除；即使不删卷，停掉 PG 也会中断服务。仅 Hub `up` 不声明旧数据库、不会更新或删除其容器/卷；应另外妥善保管旧数据库的运维配置。后续数据库生命周期仍由原部署或专门的数据库管理方案负责。不要同时启动两套 `arkade-hub` 容器来“切换”。
+
+## 4. 旧 combined 同机 Agent 迁移到内置本机（保留 combined 的 PG）
+
+本节仅适用于 **旧 combined → 新 combined**，不能用于上一节仅 Hub 替换场景。先核对正在运行的旧 project name、Hub/数据库版本、工作卷名和身份。默认旧 combined 项目名为 `arkade`，卷为上文三个显式名称；新版 combined 保留这些名称。若原部署改过卷名或使用 bind mount，必须在新版指向**原目录/原卷**，不要创建空工作卷后声称已迁移身份。保留原身份与归属文件，不手工改写 ID。
 
 1. 备份数据库、设置主密钥和本机 Agent 工作卷（含身份与 Compose 数据）；保留旧镜像、旧编排及旧凭据用于受控回退。
 2. **先用旧编排停止旧 Agent**，防止新 Hub 与它同时操作宿主或写工作卷。不要先换掉编排后再执行 `stop agent`，因为新版已没有该服务。
@@ -98,7 +120,7 @@ docker compose --env-file .env -f compose.yml up -d --remove-orphans
 ## 备份、日常更新与验证
 
 - PG 用 `pg_dump` 备份，并在隔离新库演练恢复。数据库必须和 `/data/settings.key` 一起备份，否则 OIDC/通知密文不能解密。另备份本机工作卷，不把数据库快照当作包含全部容器数据。详见 [手动部署与备份](<../../docs/18-manual-goframe-deployment.md>)。
-- 数据库密码仅在空 PG 卷初始化时生效；已有库改密先改数据库角色，再同步 Hub，不能只改 `.env`。
-- 日常 `up -d` 保持原 project、卷和凭据，不随意重启其他业务容器。停止可用 `down`，不要加 `-v`。回退需匹配旧镜像、库结构、密钥与原执行方式，先停新本机执行面再恢复旧 Agent。
+- combined 的数据库密码仅在空 PG 卷初始化时生效；已有 PG 改密先改数据库角色，再同步 Hub，不能只改 `.env`。仅 Hub 的密码始终是连接现有数据库的凭据。
+- 日常更新保持原 project、卷和凭据，不随意重启其他业务容器。仅 Hub 停止使用 `stop hub`；从旧含 PG 编排切换后尤其不要 `down` 或清理 orphan。combined 可按其完整运维范围停止，但不得加 `-v`。回退需匹配旧镜像、库结构、密钥与原执行方式，先停新本机执行面再恢复旧 Agent。
 - 仓库根运行 `python3 scripts/check-deploy-compose.py`：用临时虚构凭据检查三套编排独立解析、无重复本机 Agent、旧卷名、配置隔离与镜像静态约束，需要 Docker Compose v2；不读真实 `.env`，不启动容器。
 - `config --quiet` 只能证明可解析，不能证明远端镜像更新、宿主 socket 可用、身份迁移或业务操作成功。上线需分别验 Hub、数据库、本机执行、远程 Agent 与原数据。
