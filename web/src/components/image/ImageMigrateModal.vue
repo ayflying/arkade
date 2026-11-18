@@ -307,7 +307,7 @@ onUnmounted(() => {
 .migrate__error {
   margin: 10px 0 0;
   font-size: 12px;
-  color: #d03050;
+  color: var(--arkade-danger);
 }
 
 .migrate__footer {

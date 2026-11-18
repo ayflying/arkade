@@ -29,6 +29,8 @@ export type IconName =
   | 'edit' // 编辑
   | 'ban' // 禁用
   | 'check' // 启用/成功
+  | 'sun' // 浅色主题
+  | 'moon' // 深色主题
 
 /** 全部图标名的运行时列表，便于测试或调试时校验完整性 */
 export const ICON_NAMES: readonly IconName[] = [
@@ -52,5 +54,7 @@ export const ICON_NAMES: readonly IconName[] = [
   'plus',
   'edit',
   'ban',
-  'check'
+  'check',
+  'sun',
+  'moon'
 ]

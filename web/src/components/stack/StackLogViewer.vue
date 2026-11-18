@@ -278,7 +278,7 @@ watch(
 
 .stack-logs__status {
   font-size: 12px;
-  color: #18a058;
+  color: var(--arkade-success);
   white-space: nowrap;
 }
 
@@ -294,7 +294,7 @@ watch(
   bottom: 12px;
   padding: 5px 12px;
   font-size: 12px;
-  color: #fff;
+  color: var(--arkade-on-dark);
   background: rgba(32, 128, 240, 0.92);
   border: none;
   border-radius: 14px;
@@ -313,7 +313,7 @@ watch(
 .stack-logs__content {
   max-height: 420px;
   overflow: auto;
-  background: #1e2430;
+  background: var(--arkade-code-bg-alt);
   border-radius: 6px;
   padding: 12px;
   /* 关键：日志行很长时允许横向滚动，而不是撑破页面 */
@@ -325,7 +325,7 @@ watch(
   font-family: var(--arkade-mono-font);
   font-size: 12px;
   line-height: 1.6;
-  color: #d6deeb;
+  color: var(--arkade-code-text);
   white-space: pre;
 }
 
@@ -333,7 +333,7 @@ watch(
   padding: 24px;
   text-align: center;
   font-size: 13px;
-  color: #6b7788;
+  color: var(--arkade-code-muted);
 }
 
 .stack-logs__truncated {

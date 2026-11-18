@@ -333,8 +333,8 @@ watch(
   padding: 1px 6px;
   font-size: 12px;
   font-weight: normal;
-  color: #b25e00;
-  background: #fff7e6;
+  color: var(--arkade-warning-text);
+  background: var(--arkade-warning-soft-bg);
   border-radius: 4px;
 }
 
@@ -361,7 +361,7 @@ watch(
 .log-scroll {
   height: calc(100vh - 220px);
   overflow: auto;
-  background: #1e2127;
+  background: var(--arkade-code-bg);
   border-radius: 6px;
   /* 关键：min-width: 0 才能让内部超长行由自己滚动，而不是撑破抽屉 */
   min-width: 0;
@@ -376,19 +376,19 @@ watch(
   /* pre-wrap：长行自动折行，避免必须左右拖动才能读日志 */
   white-space: pre-wrap;
   word-break: break-all;
-  color: #d8dee9;
+  color: var(--arkade-code-text);
 }
 
 .log-empty {
   padding: 32px;
   text-align: center;
-  color: #8b9099;
+  color: var(--arkade-text-tertiary);
 }
 
 .log-error {
   padding: 16px;
-  color: #d03050;
-  background: #fff1f0;
+  color: var(--arkade-danger);
+  background: var(--arkade-danger-soft-bg);
   border-radius: 6px;
 }
 
@@ -402,7 +402,7 @@ watch(
   gap: 4px;
   padding: 6px 12px;
   font-size: 12px;
-  color: #fff;
+  color: var(--arkade-on-dark);
   background: rgba(32, 128, 240, 0.92);
   border: none;
   border-radius: 16px;
@@ -447,7 +447,7 @@ watch(
 
 .log-footer__follow-label {
   font-size: 12px;
-  color: #5c6169;
+  color: var(--arkade-text-secondary);
   white-space: nowrap;
 }
 
@@ -456,7 +456,7 @@ watch(
   align-items: center;
   gap: 4px;
   font-size: 12px;
-  color: #8b9099;
+  color: var(--arkade-text-tertiary);
   white-space: nowrap;
 }
 
@@ -465,7 +465,7 @@ watch(
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #18a058;
+  background: var(--arkade-success);
 }
 
 .log-footer__dot--on {

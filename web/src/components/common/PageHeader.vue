@@ -22,7 +22,7 @@ withDefaults(defineProps<Props>(), {
       <h1 class="page-header__title">{{ title }}</h1>
       <p v-if="subtitle !== ''" class="page-header__subtitle">{{ subtitle }}</p>
     </div>
-    <div class="page-header__actions">
+    <div v-if="$slots.actions" class="page-header__actions">
       <slot name="actions" />
     </div>
   </div>
@@ -46,19 +46,37 @@ withDefaults(defineProps<Props>(), {
   font-size: 20px;
   font-weight: 600;
   line-height: 1.4;
-  color: #1f2225;
+  color: var(--arkade-text-primary);
 }
 
 .page-header__subtitle {
   margin: 4px 0 0;
   font-size: 13px;
-  color: #8b9099;
+  color: var(--arkade-text-tertiary);
 }
 
 .page-header__actions {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-shrink: 0;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.page-header__title,
+.page-header__subtitle {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 767.98px) {
+  .page-header {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .page-header__text,
+  .page-header__actions {
+    width: 100%;
+  }
 }
 </style>

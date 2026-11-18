@@ -32,6 +32,7 @@ import { isAgentOnline, needsForceDelete } from '@/utils/agentAction'
 import { confirmAction, confirmWithOption } from '@/utils/confirm'
 import { toastError, toastSuccess } from '@/utils/feedback'
 import { formatAbsoluteTime, formatRelativeTime } from '@/utils/formatTime'
+import { useResponsiveColumns } from '@/utils/responsiveColumns'
 import { mapRuntime } from '@/utils/statusMap'
 
 const route = useRoute()
@@ -97,7 +98,7 @@ const lastSeenText = computed(() => {
  * 用 h() 渲染而非模板：Naive UI 的列表格列需要 render 函数，
  * 所有交互都通过下面的 handler 交给页面逻辑，列定义本身保持无副作用。
  */
-const columns = computed<DataTableColumns<Container>>(() => [
+const columns = useResponsiveColumns(computed<DataTableColumns<Container>>(() => [
   {
     title: '名称',
     key: 'name',
@@ -150,6 +151,7 @@ const columns = computed<DataTableColumns<Container>>(() => [
     render: (row) =>
       h(ContainerPortCell, {
         container: row,
+        agentId: agentId.value,
         directAddress: currentAgentDirectAddress.value
       })
   },
@@ -171,7 +173,7 @@ const columns = computed<DataTableColumns<Container>>(() => [
         onDelete: () => void handleDelete(row)
       })
   }
-])
+]))
 
 /** 打开日志抽屉 */
 function openLogs(container: Container): void {
@@ -376,6 +378,9 @@ onMounted(async () => {
       见 global.css 的 .arkade-table-scroll 说明（缺了它横向滚动会失效）。
     -->
     <div class="table-card arkade-table-scroll">
+      <p v-if="containers.length > 0" class="arkade-table-scroll__hint">
+        左右滑动查看端口和操作
+      </p>
       <n-data-table
         v-if="containers.length > 0 || loading"
         :columns="columns"
@@ -385,7 +390,7 @@ onMounted(async () => {
         :bordered="false"
         :single-line="false"
         size="medium"
-        :scroll-x="1080"
+        :scroll-x="1180"
       />
       <empty-state
         v-else-if="loaded"
@@ -410,22 +415,22 @@ onMounted(async () => {
 .agent-meta {
   margin-bottom: 12px;
   padding: 10px 14px;
-  background: #fff;
+  background: var(--arkade-surface-bg);
   border-radius: 8px;
   font-size: 13px;
-  color: #4a4f56;
+  color: var(--arkade-text-secondary);
 }
 
 .agent-meta__label {
-  color: #8b9099;
+  color: var(--arkade-text-tertiary);
 }
 
 .agent-meta__value {
-  color: #1f2225;
+  color: var(--arkade-text-primary);
 }
 
 .agent-meta__version {
-  color: #8b9099;
+  color: var(--arkade-text-tertiary);
   margin-left: 4px;
 }
 
@@ -445,7 +450,7 @@ onMounted(async () => {
 }
 
 .table-card {
-  background: #fff;
+  background: var(--arkade-surface-bg);
   border-radius: 8px;
   padding: 8px 8px 0;
   box-shadow: 0 1px 2px rgba(31, 34, 37, 0.04);
@@ -454,7 +459,7 @@ onMounted(async () => {
 .table-skeleton {
   padding: 48px 0;
   text-align: center;
-  color: #8b9099;
+  color: var(--arkade-text-tertiary);
 }
 
 /* 状态列：徽标 + 后端运行时描述两行展示 */
@@ -467,6 +472,6 @@ onMounted(async () => {
 
 :deep(.state-cell__detail) {
   font-size: 12px;
-  color: #8b9099;
+  color: var(--arkade-text-tertiary);
 }
 </style>

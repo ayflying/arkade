@@ -379,7 +379,7 @@ onUnmounted(() => {
 }
 
 .stack-create__card {
-  background: #fff;
+  background: var(--arkade-surface-bg);
   border-radius: 8px;
   padding: 20px;
 }

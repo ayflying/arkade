@@ -58,7 +58,7 @@ withDefaults(defineProps<Props>(), {
 .status-tag--unknown {
   border-style: dashed;
   border-width: 1px;
-  border-color: #c9cdd4;
+  border-color: var(--arkade-border-strong);
   opacity: 0.85;
 }
 </style>

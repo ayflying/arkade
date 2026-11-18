@@ -62,7 +62,7 @@ function handleChange(value: boolean): void {
   padding: 4px 8px;
   border-radius: 6px;
   /* 与顶栏其他元素视觉重量一致，不抢注意力 */
-  color: var(--arkade-text-secondary, #5c6169);
+  color: var(--arkade-text-secondary);
 }
 
 /* 关闭时图标变淡，一眼能看出「现在不会自动更新」 */

@@ -134,14 +134,14 @@ async function handleSubmit(): Promise<void> {
   justify-content: center;
   min-height: 100vh;
   padding: 24px;
-  background: linear-gradient(135deg, #eef4ff 0%, #f7f9fc 45%, #eef7f3 100%);
+  background: linear-gradient(135deg, var(--arkade-login-bg-1) 0%, var(--arkade-login-bg-2) 45%, var(--arkade-login-bg-3) 100%);
 }
 
 .login-card {
   width: 100%;
   max-width: 380px;
   padding: 32px 28px 24px;
-  background: #fff;
+  background: var(--arkade-surface-bg);
   border-radius: 12px;
   box-shadow: 0 8px 32px rgba(31, 34, 37, 0.08);
 }
@@ -162,13 +162,13 @@ async function handleSubmit(): Promise<void> {
   margin: 0;
   font-size: 18px;
   font-weight: 600;
-  color: #1f2225;
+  color: var(--arkade-text-primary);
 }
 
 .login-brand__desc {
   margin: 2px 0 0;
   font-size: 12px;
-  color: #8b9099;
+  color: var(--arkade-text-tertiary);
 }
 
 .login-error {
@@ -178,7 +178,7 @@ async function handleSubmit(): Promise<void> {
 .login-footnote {
   margin: 16px 0 0;
   font-size: 12px;
-  color: #b5b9c0;
+  color: var(--arkade-text-disabled);
   text-align: center;
 }
 </style>

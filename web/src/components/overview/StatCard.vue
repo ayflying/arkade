@@ -49,7 +49,7 @@ const valueClass = computed(() => `stat-card__value stat-card__value--${props.to
 
 <style scoped>
 .stat-card {
-  background: #fff;
+  background: var(--arkade-surface-bg);
   border-radius: 8px;
   padding: 14px 16px;
   box-shadow: 0 1px 2px rgba(31, 34, 37, 0.04);
@@ -60,7 +60,7 @@ const valueClass = computed(() => `stat-card__value stat-card__value--${props.to
 
 .stat-card__label {
   font-size: 12px;
-  color: #8b9099;
+  color: var(--arkade-text-tertiary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -69,7 +69,8 @@ const valueClass = computed(() => `stat-card__value stat-card__value--${props.to
 .stat-card__main {
   display: flex;
   align-items: baseline;
-  gap: 4px;
+  flex-wrap: wrap;
+  gap: 0 4px;
   margin-top: 6px;
 }
 
@@ -82,27 +83,27 @@ const valueClass = computed(() => `stat-card__value stat-card__value--${props.to
 }
 
 .stat-card__value--normal {
-  color: #1f2225;
+  color: var(--arkade-text-primary);
 }
 
 .stat-card__value--good {
-  color: #18a058;
+  color: var(--arkade-success);
 }
 
 /* 需要关注的数量用橙色而非红色：红色留给错误/危险操作，避免满屏告警色 */
 .stat-card__value--warn {
-  color: #f0a020;
+  color: var(--arkade-warning);
 }
 
 .stat-card__unit {
   font-size: 12px;
-  color: #8b9099;
+  color: var(--arkade-text-tertiary);
 }
 
 .stat-card__hint {
   margin-top: 4px;
   font-size: 12px;
-  color: #8b9099;
+  color: var(--arkade-text-tertiary);
   /* 说明可能较长（如「127.0.0.1 上 3 个未纳管」），允许换行避免撑破卡片 */
   overflow-wrap: anywhere;
 }

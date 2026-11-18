@@ -1,25 +1,72 @@
 /**
  * 全局主题与基础样式
  *
- * 采用 CSS 变量 + Naive UI 主题覆盖（styles/theme.ts）两层：
- * - 这里只管布局骨架、滚动条、表格等通用样式；
- * - 组件内部样式一律 scoped，避免污染。
+ * 采用三层结构：
+ * 1. **CSS 变量**（本文件）：所有颜色、骨架尺寸的唯一来源；
+ * 2. **Naive UI 主题覆盖**（styles/theme.ts）：把同一套色值喂给组件库，
+ *    保证自制卡片与组件库控件不出现色差；
+ * 3. **暗黑模式开关**（composables/useThemeMode.ts）：在 <html> 上写
+ *    `data-theme="dark"`，本文件的深色变量块随之生效。
  *
- * 变量命名约定：`--arkade-<领域>-<属性>`，新增颜色/尺寸请在此集中声明，
- * 不要在组件里写死色值——响应式布局改造后，侧边栏/顶栏/抽屉的配色必须能一处调整。
+ * ## 变量命名约定
+ * `--arkade-<领域>-<属性>`。新增颜色/尺寸必须在这里集中声明，
+ * **不要在组件里写死色值**——写死的那一处会在暗黑模式下变成一块亮斑，
+ * 而且没有集中的地方能查出来。
+ *
+ * ## 为什么暗色变量要整体重声明一遍而不是用 color-mix 推导
+ * 深色不是浅色取反：正文白底黑字 vs 深灰底浅字，主色/警示色都必须提亮才够对比度，
+ * 半透明遮罩在两种模式下的叠加结果也完全不同。逐项声明虽然长，但每一处都是可控的。
  */
 
-/* 让浏览器原生元素也走 Naive 的字体栈，中文优先思源/系统字体 */
 :root {
-  /* 背景与文字 */
+  /* ===== 浅色（默认）===== */
+  color-scheme: light;
+
+  /* 背景层次：页面 < 卡片 < 卡片内的次级块 */
   --arkade-page-bg: #f5f7fa;
   --arkade-surface-bg: #ffffff;
+  --arkade-surface-bg-subtle: #fafbfd;
+  --arkade-surface-bg-hover: #f2f5f9;
+
+  /* 文字层次：主标题 / 正文 / 辅助说明 / 禁用 */
   --arkade-text-primary: #1f2225;
   --arkade-text-secondary: #4a4f56;
   --arkade-text-tertiary: #8b9099;
   --arkade-text-disabled: #b5b9c0;
+
+  /* 描边 */
   --arkade-border-color: #eef0f3;
+  --arkade-border-strong: #d8dee9;
+
+  /* 语义色：主色 / 成功 / 警告 / 危险 */
   --arkade-primary: #2080f0;
+  --arkade-primary-hover: #4098fc;
+  --arkade-primary-pressed: #1060c9;
+  --arkade-success: #18a058;
+  --arkade-success-soft-bg: #eef7f3;
+  --arkade-warning: #f0a020;
+  --arkade-warning-text: #b25e00;
+  --arkade-warning-soft-bg: #fff7e6;
+  --arkade-danger: #d03050;
+  --arkade-danger-soft-bg: #fff1f0;
+
+  /* 代码/日志区域：两种模式下都保持深底浅字（终端观感），只微调底色 */
+  --arkade-code-bg: #1e2127;
+  --arkade-code-bg-alt: #1e2430;
+  --arkade-code-text: #d8dee9;
+  --arkade-code-muted: #6b7788;
+
+  /* 深色面板上的文字（登录页/终端按钮等） */
+  --arkade-on-dark: #ffffff;
+
+  /* 登录页背景渐变的三段色：浅色是淡蓝→近白→淡绿，深色换成低明度冷色 */
+  --arkade-login-bg-1: #eef4ff;
+  --arkade-login-bg-2: #f7f9fc;
+  --arkade-login-bg-3: #eef7f3;
+
+  /* 滚动条 */
+  --arkade-scrollbar-thumb: rgba(0, 0, 0, 0.18);
+  --arkade-scrollbar-thumb-hover: rgba(0, 0, 0, 0.3);
 
   /* 骨架尺寸：侧边栏宽度的唯一来源（在 useResponsive.ts 中也有同值常量，
      这里供纯 CSS 场景使用，两处改动需同步） */
@@ -28,7 +75,58 @@
   --arkade-sider-width-collapsed: 64px;
   --arkade-content-max-width: 1440px;
 
+  /* 列表行高：表格统一走 medium，这里给出内容区最小值 */
+  --arkade-table-row-min-height: 48px;
+
   --arkade-mono-font: 'JetBrains Mono', 'Cascadia Mono', Consolas, 'Courier New', monospace;
+}
+
+/*
+ * 深色变量：由 useThemeMode 在 <html> 上设置 data-theme="dark"。
+ *
+ * 也覆盖 `prefers-color-scheme: dark` 的场景——但那只是初始值，
+ * 用户在页面上手动选过之后以手动选择为准（脚本会把 data-theme 写死为 light/dark）。
+ */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --arkade-page-bg: #14161a;
+  --arkade-surface-bg: #1c1f26;
+  --arkade-surface-bg-subtle: #23262e;
+  --arkade-surface-bg-hover: #262a33;
+
+  --arkade-text-primary: #e8eaed;
+  --arkade-text-secondary: #b6bcc6;
+  --arkade-text-tertiary: #868d99;
+  --arkade-text-disabled: #5b626d;
+
+  --arkade-border-color: #2c313a;
+  --arkade-border-strong: #3a4048;
+
+  --arkade-primary: #4a9eff;
+  --arkade-primary-hover: #6bb0ff;
+  --arkade-primary-pressed: #2f80e0;
+  --arkade-success: #37b26e;
+  --arkade-success-soft-bg: #17281f;
+  --arkade-warning: #e0a63a;
+  --arkade-warning-text: #f0c070;
+  --arkade-warning-soft-bg: #2e2413;
+  --arkade-danger: #f05a70;
+  --arkade-danger-soft-bg: #33181d;
+
+  /* 深色模式下代码区比页面更深，保持"屏幕里的屏幕"的层次 */
+  --arkade-code-bg: #0f1115;
+  --arkade-code-bg-alt: #131722;
+  --arkade-code-text: #d8dee9;
+  --arkade-code-muted: #7b8494;
+
+  /* 深色模式下登录页不再用"淡蓝→白"的渐变（会刺眼），换成低明度冷色 */
+  --arkade-login-bg-1: #1a2230;
+  --arkade-login-bg-2: #171a20;
+  --arkade-login-bg-3: #16211d;
+
+  --arkade-scrollbar-thumb: rgba(255, 255, 255, 0.18);
+  --arkade-scrollbar-thumb-hover: rgba(255, 255, 255, 0.3);
 }
 
 * {
@@ -45,6 +143,7 @@ body,
 
 body {
   background: var(--arkade-page-bg);
+  color: var(--arkade-text-primary);
   -webkit-font-smoothing: antialiased;
   /*
    * 全局防横向溢出兜底：布局改造后若某个子元素（如宽表格）意外撑破容器，
@@ -52,6 +151,8 @@ body {
    * 真正该做的是在各滚动容器上设置 min-width: 0（见各视图的表格容器）。
    */
   overflow-x: hidden;
+  /* 切换主题时给一个短过渡，避免整页突然闪白/闪黑 */
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 /* 细滚动条：日志抽屉内容很长，默认滚动条太粗会显得笨重 */
@@ -61,12 +162,12 @@ body {
 }
 
 *::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.18);
+  background: var(--arkade-scrollbar-thumb);
   border-radius: 4px;
 }
 
 *::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--arkade-scrollbar-thumb-hover);
 }
 
 *::-webkit-scrollbar-track {
@@ -86,7 +187,20 @@ body {
 .arkade-table-scroll {
   min-width: 0;
   max-width: 100%;
-  overflow-x: auto;
+}
+
+.arkade-table-scroll__hint {
+  display: none;
+}
+
+@media (max-width: 767.98px) {
+  .arkade-table-scroll__hint {
+    display: block;
+    margin: 0;
+    padding: 0 4px 8px;
+    color: var(--arkade-text-secondary);
+    font-size: 12px;
+  }
 }
 
 /*
@@ -172,10 +286,41 @@ body {
   margin: 10px 0 0;
   padding: 8px 10px;
   border-radius: 4px;
-  background: #fff2f0;
-  border-left: 3px solid #d03050;
-  color: #d03050;
+  background: var(--arkade-danger-soft-bg);
+  border-left: 3px solid var(--arkade-danger);
+  color: var(--arkade-danger);
   font-size: 13px;
   line-height: 1.5;
   white-space: pre-line;
+}
+
+/*
+ * 页面级卡片：列表页/详情页最外层的内容容器。
+ *
+ * 统一到全局是因为它出现在十几个页面里，各写一份必然颜色漂移；
+ * 而暗黑模式下漏改一处就是一大块白斑。
+ */
+.arkade-card {
+  background: var(--arkade-surface-bg);
+  border-radius: 8px;
+  border: 1px solid var(--arkade-border-color);
+}
+
+/* 卡片内的小标题（"服务器状态""最近操作"这类分区标题） */
+.arkade-section-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--arkade-text-primary);
+  margin-bottom: 8px;
+}
+
+/*
+ * 手机端（<768px）通用降级：
+ * 表格靠横向滚动而不是压缩列宽——运维表列名都很短，压窄后反而看不清。
+ * 保留完整列，固定操作列在手机上也随表格一起滚动。
+ */
+@media (max-width: 767.98px) {
+  :root {
+    --arkade-table-row-min-height: 44px;
+  }
 }

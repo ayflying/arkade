@@ -231,7 +231,7 @@ onMounted(() => {
 
 /* 未纳管项目区块：视觉上与已纳管表格区分开，但不用告警色（不是错误） */
 .stack-page__unmanaged {
-  background: #f7f8fa;
+  background: var(--arkade-surface-bg-subtle);
   border: 1px solid var(--arkade-border-color);
   border-radius: 8px;
   padding: 14px 16px;
@@ -264,7 +264,7 @@ onMounted(() => {
   padding: 1px 4px;
   font-family: var(--arkade-mono-font);
   font-size: 11px;
-  background: #eceef1;
+  background: var(--arkade-border-color);
   border-radius: 3px;
 }
 
@@ -291,7 +291,7 @@ onMounted(() => {
 }
 
 .table-card {
-  background: #fff;
+  background: var(--arkade-surface-bg);
   border-radius: 8px;
   padding: 4px;
 }

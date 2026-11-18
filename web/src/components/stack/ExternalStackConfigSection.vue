@@ -130,6 +130,6 @@ const { store, applying, preview, applyError, alreadyManaged, copyShow, copying,
 .ext-detail__error {
   margin: 0;
   font-size: 13px;
-  color: var(--arkade-error-color, #d03050);
+  color: var(--arkade-error-color, var(--arkade-danger));
 }
 </style>

@@ -165,6 +165,7 @@ const columns = computed<DataTableColumns<VolumeInfo>>(() => [
 onMounted(() => {
   void refresh()
 })
+
 </script>
 
 <template>
@@ -208,7 +209,7 @@ onMounted(() => {
 }
 
 .volume-name-btn:focus-visible {
-  outline: 2px solid var(--arkade-link-color, #2080f0);
+  outline: 2px solid var(--arkade-link-color, var(--arkade-primary));
   outline-offset: 2px;
   border-radius: 2px;
 }

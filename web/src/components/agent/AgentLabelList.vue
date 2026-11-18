@@ -68,7 +68,7 @@ const hiddenText = computed(() =>
 }
 
 .label-list__key {
-  color: #8b9099;
+  color: var(--arkade-text-tertiary);
   margin-right: 4px;
 }
 
@@ -83,6 +83,6 @@ const hiddenText = computed(() =>
 }
 
 .label-list__empty {
-  color: #b5b9c0;
+  color: var(--arkade-text-disabled);
 }
 </style>

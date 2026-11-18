@@ -16,10 +16,12 @@
  */
 import {
   buildPortUrl,
+  inferHostFromLocation,
   isLoopbackBind,
   isUdp,
   isWildcardHost,
   isSctp,
+  resolvePortHost,
   toDisplayItems
 } from '../src/utils/portLinks.ts'
 
@@ -267,12 +269,12 @@ check(
   ).length === 1
 )
 check(
-  '去重: 无地址时 IPv4/IPv6 通配不合并（绑定地址不同）',
+  '去重: 无地址时 IPv4/IPv6 的同一通配映射只显示一次',
   toDisplayItems(
     [port('0.0.0.0', 8080, 80, 'tcp'), port('::', 8080, 80, 'tcp')],
     ''
-  ).length === 2,
-  '没有统一地址时它们是两个不同绑定，不能掩盖'
+  ).length === 1,
+  '同一宿主端口、容器端口和协议不应显示为两个相同条目'
 )
 
 /* 其他行为 */
@@ -321,6 +323,64 @@ check(
   toDisplayItems([port('0.0.0.0', 8080, 80, 'tcp')], ADDR)[0].otherContainerPorts.length === 0
 )
 
+/* ───────── 主机地址解析（resolvePortHost） ───────── */
+
+/*
+ * 背景：服务器不一定填了「直连地址」，而用户此刻正是通过某个地址访问 Arkade 的。
+ * 拿这个地址兜底，端口才能点开；但「兜底来的地址」必须在界面上标出来，
+ * 否则用户在反代域名后面点不开，会以为端口映射配错了。
+ */
+check(
+  '主机解析: 配置了直连地址 → 用它且不算推断',
+  (() => {
+    const r = resolvePortHost(ADDR, 'remote')
+    return r.host === ADDR && r.inferred === false
+  })()
+)
+check(
+  '主机解析: 直连地址为空 → 不报 inferred（Node 里没有 window）',
+  (() => {
+    const r = resolvePortHost('', 'agent-local')
+    return r.host === '' && r.inferred === false
+  })()
+)
+check(
+  '主机解析: 直连地址是脏数据 → 不回退成脏链接',
+  (() => {
+    const r = resolvePortHost('http://evil.example/x', 'agent-local')
+    return r.host === '' && r.inferred === false
+  })()
+)
+check(
+  '主机解析: IPv6 直连地址补方括号',
+  resolvePortHost('2001:db8::1', 'remote').host === '[2001:db8::1]'
+)
+check('推断主机: 非浏览器环境返回空串', inferHostFromLocation() === '')
+
+/* 兜底主机同样要经过 fail closed：没有可用主机时链接必须仍然是 null */
+check(
+  '兜底主机为空时端口没有链接',
+  buildPortUrl(port('0.0.0.0', 8080, 80, 'tcp'), resolvePortHost('', 'agent-local').host) === null
+)
+
+const priorWindow = Object.getOwnPropertyDescriptor(globalThis, 'window')
+try {
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: { location: { hostname: ADDR } }
+  })
+  const local = resolvePortHost('', 'agent-local')
+  check('内置服务器未配置直连地址时使用浏览器主机', local.host === ADDR && local.inferred)
+  check('远端服务器不误用 Hub 的地址', resolvePortHost('', 'remote').host === '')
+  check('无效配置不被浏览器地址掩盖', resolvePortHost('http://invalid', 'agent-local').host === '')
+  const items = toDisplayItems([
+    port('0.0.0.0', 38517, 8080, 'tcp'), port('::', 38517, 8080, 'tcp')
+  ], local.host)
+  check('双栈映射仅显示一次，打开宿主端口', items.length === 1 && items[0].url === `http://${ADDR}:38517`)
+} finally {
+  if (priorWindow === undefined) delete globalThis.window
+  else Object.defineProperty(globalThis, 'window', priorWindow)
+}
 /* ───────── 结果 ───────── */
 
 if (failures.length > 0) {

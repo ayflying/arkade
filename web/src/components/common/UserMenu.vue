@@ -172,12 +172,12 @@ function handleSelect(key: string): void {
 
 :deep(.user-menu-info__name) {
   font-weight: 600;
-  color: #1f2225;
+  color: var(--arkade-text-primary);
 }
 
 :deep(.user-menu-info__meta) {
   margin-top: 2px;
   font-size: 12px;
-  color: #8b9099;
+  color: var(--arkade-text-tertiary);
 }
 </style>

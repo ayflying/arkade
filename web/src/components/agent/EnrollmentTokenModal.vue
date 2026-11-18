@@ -351,7 +351,7 @@ const snippetTabs: { value: SnippetKind; label: string }[] = [
 .enroll__error {
   margin: 6px 0 0;
   font-size: 12px;
-  color: #d03050;
+  color: var(--arkade-danger);
 }
 
 .enroll__tip {
@@ -379,8 +379,8 @@ const snippetTabs: { value: SnippetKind; label: string }[] = [
   padding: 12px 14px;
   max-height: 320px;
   overflow: auto;
-  background: #1e2430;
-  color: #d8dee9;
+  background: var(--arkade-code-bg-alt);
+  color: var(--arkade-code-text);
   border-radius: 6px;
   font-family: var(--arkade-mono-font);
   font-size: 12px;

@@ -261,7 +261,7 @@ defineExpose({ isDirty, markSaved, readSha256 })
 }
 
 .file-panel__dirty {
-  color: #f0a020;
+  color: var(--arkade-warning);
 }
 
 /*
@@ -277,7 +277,7 @@ defineExpose({ isDirty, markSaved, readSha256 })
   padding: 10px 12px;
   border: 1px solid var(--arkade-border-color);
   border-radius: 6px;
-  background: #fcfcfc;
+  background: var(--arkade-surface-bg-subtle);
   font-family: var(--arkade-mono-font);
   font-size: 13px;
   line-height: 1.6;
@@ -286,7 +286,7 @@ defineExpose({ isDirty, markSaved, readSha256 })
 }
 
 .file-panel__editor:focus {
-  outline: 2px solid var(--arkade-link-color, #2080f0);
+  outline: 2px solid var(--arkade-link-color, var(--arkade-primary));
   outline-offset: 1px;
 }
 

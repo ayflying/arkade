@@ -153,6 +153,53 @@ export function isSctp(port: PublishedPort): boolean {
   return port.protocol.trim().toLowerCase() === 'sctp'
 }
 
+/**
+ * 从当前浏览器地址推断主机名。
+ *
+ * ## 为什么需要这个兜底
+ * 只有内置 Agent 与 Hub 同机，才允许用当前浏览器地址作为候选；
+ * 若 Hub 经反向代理访问，仍可能需要配置服务器直连地址。
+ *
+ * ## 边界（仍然 fail closed）
+ * - 非浏览器环境（SSR/测试）→ ''
+ * - 回环地址（localhost / 127.x / ::1）→ ''：那是用户自己的机器，不是服务器
+ * - 其它不合规形态（空格、路径等）→ 交给 sanitizeHost 判定，不通过就 ''
+ */
+export function inferHostFromLocation(): string {
+  if (typeof window === 'undefined') return ''
+  const raw = window.location.hostname
+  if (raw === '') return ''
+  if (isLoopbackBind(raw) || isWildcardHost(raw)) return ''
+  return sanitizeHost(raw)
+}
+
+/** 端口链接实际会使用的主机，以及它是不是推断来的 */
+export interface ResolvedPortHost {
+  /** 可用于拼链接的主机；'' 表示不可用 */
+  host: string
+  /**
+   * 是否由当前访问地址推断（而不是服务器配置的直连地址）。
+   *
+   * 界面要据此调整说明文案：推断来的地址可能不准（例如 Arkade 挂在反代域名后面，
+   * 宿主端口其实没有对外暴露），用户需要知道去改哪里。
+   */
+  inferred: boolean
+}
+
+/**
+ * 决定端口链接使用哪个主机。
+ *
+ * 优先用服务器配置的直连地址；仅同机内置 Agent 未配置时，才退回当前浏览器地址。
+ * 远端 Agent 地址不明时只显示映射，不把用户误导到 Hub 上的同号端口。
+ */
+export function resolvePortHost(configured: string, agentId: string): ResolvedPortHost {
+  const own = sanitizeHost(configured)
+  if (own !== '' && !isWildcardHost(own)) return { host: own, inferred: false }
+  if (configured.trim() !== '' || agentId !== 'agent-local') return { host: '', inferred: false }
+  const inferred = inferHostFromLocation()
+  return { host: inferred, inferred: inferred !== '' }
+}
+
 /** 一条端口在界面上应该占一行时的全部信息 */
 export interface PortDisplayItem {
   /** 稳定的渲染 key */
@@ -178,7 +225,8 @@ export interface PortDisplayItem {
 /** 计算一条端口在界面上会指向哪里（用于去重） */
 function targetOf(port: PublishedPort, url: string | null): string {
   if (url !== null) return url
-  // 没有链接时，绑定地址本身就是"目标"：回环和外网是不同去处
+  // 没有链接时，两种通配绑定的同一端口映射只显示一次；具体绑定仍保留区别。
+  if (isWildcardHost(port.host_ip)) return `wildcard:${String(port.container_port)}`
   return `bind:${port.host_ip.trim().toLowerCase()}`
 }
 
@@ -195,8 +243,8 @@ function targetOf(port: PublishedPort, url: string | null): string {
  *
  * 键是「最终把用户带到哪里」，不是端口号本身：
  * - 有链接 → `host_port/protocol` + **URL**：同一地址下的 IPv4/IPv6 通配合并；
- * - 无链接 → `host_port/protocol` + **绑定地址**：回环与外网、UDP 与 TCP 不合并，
- *   否则用户会以为容器只绑了一个地址/一种协议。
+ * - 无链接 → `host_port/protocol` + **绑定地址**；双栈通配仅合并相同的容器端口，
+ *   回环与外网、UDP 与 TCP 不合并。
  *
  * 合并时不丢弃信息：容器端口不同的项会被记进 `otherContainerPorts`，
  * 由 tooltip 展示（`host_port` 相同而 `container_port` 不同理论上不该出现，

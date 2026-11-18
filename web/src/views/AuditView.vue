@@ -34,6 +34,9 @@ import PageHeader from '@/components/common/PageHeader.vue'
 import { listAudit, listAuditActions } from '@/api/audit'
 import { useAgentsStore } from '@/stores/agents'
 import type { AuditActionOption, AuditEntry, AuditQuery } from '@/types/audit'
+import { useResponsive } from '@/composables/useResponsive'
+
+const { isMobile } = useResponsive()
 import { AUDIT_ACTION_USER_LOGIN, AUDIT_RESULT_FAILED, AUDIT_RESULT_SUCCESS } from '@/types/audit'
 import { ApiError } from '@/types/api'
 import { agentDisplayName } from '@/utils/agentDisplay'
@@ -182,13 +185,13 @@ function handlePageChange(next: number): void {
  * 还可能被误判成「未知结果」。两个常量放 types/audit.ts 里统一引用。
  */
 const RESULT_META: Record<string, { label: string; color: string }> = {
-  [AUDIT_RESULT_SUCCESS]: { label: '成功', color: '#18a058' },
-  [AUDIT_RESULT_FAILED]: { label: '失败', color: '#d03050' }
+  [AUDIT_RESULT_SUCCESS]: { label: '成功', color: 'var(--arkade-success)' },
+  [AUDIT_RESULT_FAILED]: { label: '失败', color: 'var(--arkade-danger)' }
 }
 
 function resultMeta(result: string): { label: string; color: string } {
   // 未知结果原样展示，不吞掉——后端新增取值时至少要看得见
-  return RESULT_META[result] ?? { label: result || '—', color: '#8b9099' }
+  return RESULT_META[result] ?? { label: result || '—', color: 'var(--arkade-text-tertiary)' }
 }
 
 /**
@@ -292,6 +295,7 @@ onMounted(() => {
   void loadActionOptions()
   void refresh()
 })
+
 </script>
 
 <template>
@@ -384,6 +388,7 @@ onMounted(() => {
         :page="page"
         :page-size="PAGE_SIZE"
         :item-count="total"
+        :page-slot="isMobile ? 5 : 9"
         size="small"
         @update:page="handlePageChange"
       />
@@ -437,7 +442,7 @@ onMounted(() => {
 }
 
 .table-card {
-  background: #fff;
+  background: var(--arkade-surface-bg);
   border-radius: 8px;
   padding: 4px;
 }
@@ -449,7 +454,7 @@ onMounted(() => {
 
 .table-skeleton__text {
   font-size: 13px;
-  color: #8b9099;
+  color: var(--arkade-text-tertiary);
 }
 
 .audit-page__pager {

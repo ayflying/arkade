@@ -18,6 +18,7 @@ import type { ImageTask, ImageTaskKind, ImageTaskStatus } from '@/types/imageTas
 import { imageDownloadUrl } from '@/api/imageTasks'
 import { formatBytes } from '@/utils/formatSize'
 import { isTaskActive } from '@/composables/useImageTasks'
+import { useResponsiveColumns } from '@/utils/responsiveColumns'
 
 interface Props {
   tasks: ImageTask[]
@@ -265,6 +266,7 @@ const columns = computed<DataTableColumns<ImageTask>>(() => [
     }
   }
 ])
+const shownColumns = useResponsiveColumns(columns)
 </script>
 
 <template>
@@ -287,13 +289,13 @@ const columns = computed<DataTableColumns<ImageTask>>(() => [
       取消任务 <strong>不会回滚</strong>已完成的写入，导入/迁移可能已更新同名标签。
     </p>
 
-    <n-data-table
-      :columns="columns"
+    <n-data-table class="arkade-table-scroll"
+      :columns="shownColumns"
       :data="tasks"
       :loading="loading"
       :row-key="(row: ImageTask) => row.id"
       :scroll-x="1080"
-      size="small"
+      size="medium"
       :max-height="320"
       virtual-scroll
     />
@@ -390,7 +392,7 @@ const columns = computed<DataTableColumns<ImageTask>>(() => [
 
 .task-download {
   font-size: 12px;
-  color: var(--arkade-link-color, #2080f0);
+  color: var(--arkade-link-color, var(--arkade-primary));
   text-decoration: none;
 }
 

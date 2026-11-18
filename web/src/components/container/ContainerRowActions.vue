@@ -187,6 +187,6 @@ const deleteReason = computed<string>(() => (online.value ? '' : '服务器已�
 
 .container-actions__busy {
   font-size: 12px;
-  color: #8b9099;
+  color: var(--arkade-text-tertiary);
 }
 </style>

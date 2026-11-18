@@ -75,7 +75,7 @@ function back() { void router.push({ name: 'agent-stacks', params: { id: agentId
 
 <style scoped>
 .stack-detail { display: flex; flex-direction: column; gap: 16px; }
-.stack-detail__summary, .stack-detail__content { background: var(--arkade-card-bg, #fff); border: 1px solid var(--arkade-border-color); border-radius: 8px; padding: 16px; }
+.stack-detail__summary, .stack-detail__content { background: var(--arkade-surface-bg); border: 1px solid var(--arkade-border-color); border-radius: 8px; padding: 16px; }
 .stack-detail__summary { display: flex; flex-direction: column; gap: 12px; }
 .stack-detail__identity { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .stack-detail__counts { font-size: 13px; color: var(--arkade-text-tertiary); }

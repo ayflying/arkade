@@ -368,6 +368,7 @@ const columns = computed<DataTableColumns<ImageInfo>>(() => [
 onMounted(() => {
   void refresh()
 })
+
 </script>
 
 <template>

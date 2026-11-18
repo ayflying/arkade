@@ -164,6 +164,7 @@ const columns = computed<DataTableColumns<NetworkInfo>>(() => [
 onMounted(() => {
   void refresh()
 })
+
 </script>
 
 <template>

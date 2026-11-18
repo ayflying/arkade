@@ -112,7 +112,7 @@ const shownError = computed(() => (localError.value !== '' ? localError.value : 
 .error {
   margin: 8px 0 0;
   font-size: 12px;
-  color: #d03050;
+  color: var(--arkade-danger);
 }
 
 .footer {

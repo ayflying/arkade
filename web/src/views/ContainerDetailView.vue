@@ -138,6 +138,7 @@ watch(
         <container-detail-facts
           :detail="detail"
           :forbidden="forbidden"
+          :agent-id="agentId"
           :direct-address="directAddress"
         />
       </n-tab-pane>

@@ -42,10 +42,10 @@ const absolute = computed(() => formatAbsoluteTime(props.seconds))
 <style scoped>
 .relative-time__text {
   cursor: default;
-  border-bottom: 1px dashed #c9cdd4;
+  border-bottom: 1px dashed var(--arkade-border-strong);
 }
 
 .relative-time__empty {
-  color: #b5b9c0;
+  color: var(--arkade-text-disabled);
 }
 </style>

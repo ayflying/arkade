@@ -22,10 +22,12 @@
  * 服务器离线时必然拉不到数据，提前说清原因比让用户看到一句
  * 笼统的「加载失败」友好得多。
  */
+import { toRef } from 'vue'
 import { NAlert, NButton, NDataTable, NTag } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import EmptyState from '@/components/common/EmptyState.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
+import { useResponsiveColumns } from '@/utils/responsiveColumns'
 import type { TableRowData } from '@/types/table'
 
 interface Props {
@@ -53,7 +55,8 @@ interface Props {
   rowKey: (row: T) => string
 }
 
-defineProps<Props>()
+const props = defineProps<Props>()
+const shownColumns = useResponsiveColumns(toRef(props, 'columns'))
 
 const emit = defineEmits<{
   (e: 'refresh'): void
@@ -96,7 +99,7 @@ const emit = defineEmits<{
     <div class="table-card arkade-table-scroll">
       <n-data-table
         v-if="data.length > 0 || loading"
-        :columns="columns"
+        :columns="shownColumns"
         :data="data"
         :loading="loading"
         :row-key="rowKey"
@@ -143,7 +146,7 @@ const emit = defineEmits<{
 }
 
 .table-card {
-  background: #fff;
+  background: var(--arkade-surface-bg);
   border-radius: 8px;
   padding: 4px;
 }

@@ -64,6 +64,7 @@ const columns = computed<DataTableColumns<Container>>(() => [
     render: (row) =>
       h(ContainerPortCell, {
         container: row,
+        agentId: props.agentId,
         directAddress: props.directAddress
       })
   },
@@ -97,7 +98,7 @@ const columns = computed<DataTableColumns<Container>>(() => [
     :data="containers"
     :bordered="false"
     :single-line="false"
-    size="small"
+    size="medium"
     :row-key="(row: Container) => row.id"
     :scroll-x="1100"
   />

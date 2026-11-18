@@ -25,6 +25,7 @@ import AutoRefreshToggle from '@/components/common/AutoRefreshToggle.vue'
 import MobileMenuDrawer from '@/components/common/MobileMenuDrawer.vue'
 import SidebarBrand from '@/components/common/SidebarBrand.vue'
 import SiteMenu from '@/components/common/SiteMenu.vue'
+import ThemeToggle from '@/components/common/ThemeToggle.vue'
 import UserMenu from '@/components/common/UserMenu.vue'
 import { useCurrentAgent } from '@/composables/useCurrentAgent'
 import { SIDER_WIDTH_COLLAPSED, SIDER_WIDTH_EXPANDED, useResponsive } from '@/composables/useResponsive'
@@ -229,6 +230,12 @@ async function handleLogout(): Promise<void> {
         -->
         <auto-refresh-toggle :compact="isMobile" />
 
+        <!--
+          主题切换：放在自动刷新开关左边。
+          这也是全局偏好（不随页面变化），因此常驻顶栏；手机端只显示图标。
+        -->
+        <theme-toggle />
+
         <user-menu :compact="isMobile" :logging-out="loggingOut" @logout="handleLogout" />
       </header>
 
@@ -388,6 +395,11 @@ async function handleLogout(): Promise<void> {
 
 /* 手机端减少留白，把有限的宽度让给内容 */
 @media (max-width: 767.98px) {
+  .app-header {
+    gap: 8px;
+    padding-inline: 12px;
+  }
+
   .app-content__inner {
     padding: 12px;
   }

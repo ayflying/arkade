@@ -13,7 +13,7 @@ import { computed } from 'vue'
 import { NTag } from 'naive-ui'
 import ContainerStateTag from '@/components/container/ContainerStateTag.vue'
 import type { ContainerDetail } from '@/types/container'
-import { buildPortUrl, isUdp } from '@/utils/portLinks'
+import { buildPortUrl, isUdp, resolvePortHost } from '@/utils/portLinks'
 import { formatAbsoluteTime, formatRelativeTime } from '@/utils/formatTime'
 import { formatBytes } from '@/utils/formatSize'
 
@@ -23,6 +23,7 @@ interface Props {
   forbidden: boolean
   /** 服务器直连地址，用于端口链接 */
   directAddress: string
+  agentId: string
 }
 
 const props = defineProps<Props>()
@@ -130,12 +131,24 @@ const commandText = computed(() => {
 const portRows = computed(() => {
   const d = props.detail
   if (d === null) return []
+  /*
+   * 主机地址优先用服务器直连地址，没配时退回「当前访问地址」——
+   * 与列表页的端口单元格同一套规则，否则详情页里同一端口反而不给链接。
+   */
+  const host = resolvePortHost(props.directAddress, props.agentId).host
   return d.published_ports.map((p) => ({
     key: `${p.host_ip}:${String(p.host_port)}:${String(p.container_port)}/${p.protocol}`,
     text: `${p.host_ip !== '' ? p.host_ip : '0.0.0.0'}:${String(p.host_port)} → ${String(p.container_port)}/${p.protocol}`,
-    url: buildPortUrl(p, props.directAddress),
+    url: buildPortUrl(p, host),
     udp: isUdp(p)
   }))
+})
+
+/** 推断地址的说明；配置了直连地址时为空（无需解释） */
+const portHostNote = computed(() => {
+  const { host, inferred } = resolvePortHost(props.directAddress, props.agentId)
+  if (!inferred || host === '') return ''
+  return `链接按当前访问地址 ${host} 生成；若打不开，请到「服务器设置」填写直连地址。`
 })
 </script>
 
@@ -221,6 +234,7 @@ const portRows = computed(() => {
       <div v-if="detail.exposed_ports.length > 0" class="facts__note">
         仅声明未发布：{{ detail.exposed_ports.join(', ') }}
       </div>
+      <div v-if="portHostNote !== ''" class="facts__note">{{ portHostNote }}</div>
     </section>
 
     <!-- 资源限制 -->
@@ -321,7 +335,7 @@ const portRows = computed(() => {
 }
 
 .facts__link {
-  color: var(--arkade-link-color, #2080f0);
+  color: var(--arkade-link-color, var(--arkade-primary));
   text-decoration: none;
 }
 

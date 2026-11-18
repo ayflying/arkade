@@ -31,6 +31,7 @@ import { usePolling } from '@/composables/usePolling'
 import type { AgentOverview, OverviewData } from '@/types/overview'
 import { ApiError } from '@/types/api'
 import { isAgentDisabled } from '@/utils/agentDisplay'
+import { useResponsiveColumns } from '@/utils/responsiveColumns'
 
 const router = useRouter()
 
@@ -237,6 +238,7 @@ const agentColumns = computed<DataTableColumns<AgentOverview>>(() => [
       )
   }
 ])
+const shownAgentColumns = useResponsiveColumns(agentColumns)
 
 /**
  * 统计自动刷新：每 30 秒静默拉一次。
@@ -304,8 +306,9 @@ onMounted(() => {
           :value="selectedAgentId"
           :options="agentOptions"
           clearable
-          placeholder="选择要查看的服务器（未选择时不统计任何服务器）"
-          style="max-width: 420px"
+          placeholder="选择服务器"
+          aria-label="选择要查看的服务器"
+          class="overview-page__agent-select"
           @update:value="onSelectAgent"
         />
       </div>
@@ -489,7 +492,7 @@ onMounted(() => {
       <div class="section-title">服务器状态</div>
       <div class="table-card arkade-table-scroll">
         <n-data-table
-          :columns="agentColumns"
+          :columns="shownAgentColumns"
           :data="data.agents"
           :loading="loading"
           :row-key="(row: AgentOverview) => row.agent.id"
@@ -505,28 +508,37 @@ onMounted(() => {
 </template>
 
 <style scoped>
-/* 统计卡片栅格：桌面 6 列，窄屏自动降列，手机 2 列 */
+/* 按内容区（扣除侧栏及页面留白）决定列数，而不是只看浏览器宽度。 */
+.overview-page {
+  container-type: inline-size;
+}
+
 .stat-grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 16px;
 }
 
-@media (max-width: 1200px) {
+@container (min-width: 540px) {
   .stat-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
-@media (max-width: 640px) {
+@container (min-width: 1000px) {
   .stat-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(6, minmax(0, 1fr));
   }
 }
 
+.overview-page__agent-select {
+  width: 100%;
+  max-width: 420px;
+}
+
 .stat-skeleton {
-  background: #fff;
+  background: var(--arkade-surface-bg);
   border-radius: 8px;
   padding: 16px;
 }
@@ -569,8 +581,20 @@ onMounted(() => {
 }
 
 .problem-area__tag {
+  height: auto;
+  max-width: 100%;
+  min-height: var(--n-height);
+  padding-block: 3px;
+  white-space: normal;
+  line-height: 1.4;
   cursor: pointer;
   font-family: var(--arkade-mono-font);
+}
+
+.problem-area__tag :deep(.n-tag__content),
+.failure-list {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .problem-area__tag:hover {
@@ -587,12 +611,12 @@ onMounted(() => {
 .section-title {
   font-size: 14px;
   font-weight: 600;
-  color: #1f2225;
+  color: var(--arkade-text-primary);
   margin-bottom: 8px;
 }
 
 .table-card {
-  background: #fff;
+  background: var(--arkade-surface-bg);
   border-radius: 8px;
   padding: 4px;
 }

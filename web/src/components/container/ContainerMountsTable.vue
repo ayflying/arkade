@@ -57,7 +57,7 @@ const columns = computed<DataTableColumns<ContainerMount>>(() => [
     :data="mounts"
     :bordered="false"
     :single-line="false"
-    size="small"
+    size="medium"
     :row-key="(row: ContainerMount) => `${row.type}:${row.source}:${row.destination}`"
     :scroll-x="700"
   />

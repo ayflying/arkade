@@ -268,7 +268,7 @@ async function handleSave(): Promise<void> {
 .agent-edit-modal__hint {
   margin: -14px 0 14px;
   font-size: 12px;
-  color: #8b9099;
+  color: var(--arkade-text-tertiary);
   line-height: 1.6;
 }
 

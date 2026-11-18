@@ -117,7 +117,7 @@ const hasHiddenPrefix = computed<boolean>(() => props.compact && allItems.value.
 }
 
 .crumbs__link {
-  color: #2080f0;
+  color: var(--arkade-primary);
   text-decoration: none;
 }
 
@@ -126,11 +126,11 @@ const hasHiddenPrefix = computed<boolean>(() => props.compact && allItems.value.
 }
 
 .crumbs__current {
-  color: #4a4f56;
+  color: var(--arkade-text-secondary);
 }
 
 .crumbs__ellipsis {
-  color: #b5b9c0;
+  color: var(--arkade-text-disabled);
 }
 
 /* 面包屑单级文字过长时省略，避免长机器名把顶栏撑破 */

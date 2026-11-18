@@ -167,7 +167,7 @@ const EMPTY_TEXT = '这台服务器上还没有可显示的编排'
     :loading="props.loading"
     :bordered="false"
     :single-line="false"
-    size="small"
+    size="medium"
     :row-key="(row: StackListRow) => row.key"
     :scroll-x="900"
     :locale="{ emptyText: EMPTY_TEXT }"

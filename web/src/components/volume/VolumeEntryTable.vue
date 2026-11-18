@@ -22,6 +22,7 @@ import type { DataTableColumns } from 'naive-ui'
 import type { VolumeEntry, VolumeEntryKind } from '@/types/volumeFile'
 import { formatAbsoluteTime, formatRelativeTime } from '@/utils/formatTime'
 import { formatBytes } from '@/utils/formatSize'
+import { useResponsiveColumns } from '@/utils/responsiveColumns'
 
 interface Props {
   entries: VolumeEntry[]
@@ -166,18 +167,19 @@ const columns = computed<DataTableColumns<VolumeEntry>>(() => [
     }
   }
 ])
+const shownColumns = useResponsiveColumns(columns)
 </script>
 
 <template>
   <div class="entry-table">
-    <n-data-table
-      :columns="columns"
+    <n-data-table class="arkade-table-scroll"
+      :columns="shownColumns"
       :data="filtered"
       :loading="loading"
       :row-key="(row: VolumeEntry) => row.name"
       :scroll-x="900"
       :bordered="false"
-      size="small"
+      size="medium"
     />
     <p v-if="!loading && filtered.length === 0" class="entry-table__empty">
       {{ keyword.trim() === '' ? '这个目录是空的。' : `没有名称包含「${keyword.trim()}」的条目。` }}
@@ -206,7 +208,7 @@ const columns = computed<DataTableColumns<VolumeEntry>>(() => [
 }
 
 .entry-name--clickable {
-  color: var(--arkade-link-color, #2080f0);
+  color: var(--arkade-link-color, var(--arkade-primary));
 }
 
 /* 用真正的 button 承载点击：键盘可达、有焦点样式，不是 div 假装可点 */
@@ -228,7 +230,7 @@ const columns = computed<DataTableColumns<VolumeEntry>>(() => [
 }
 
 .entry-name-btn:focus-visible {
-  outline: 2px solid var(--arkade-link-color, #2080f0);
+  outline: 2px solid var(--arkade-link-color, var(--arkade-primary));
   outline-offset: 2px;
   border-radius: 2px;
 }

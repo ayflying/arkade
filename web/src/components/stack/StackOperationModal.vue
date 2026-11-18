@@ -737,7 +737,7 @@ const logLabel = computed(() => `「${props.stackName}」${meta.value.label}的�
 }
 
 .op-modal__step-cmd {
-  color: var(--arkade-link-color, #2080f0);
+  color: var(--arkade-link-color, var(--arkade-primary));
   word-break: break-all;
 }
 

@@ -27,6 +27,7 @@ import EmptyState from '@/components/common/EmptyState.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import { agentRowProps, createAgentColumns } from '@/composables/agentColumns'
 import { usePolling } from '@/composables/usePolling'
+import { useResponsiveColumns } from '@/utils/responsiveColumns'
 import { deleteAgent, disableAgent, enableAgent, resetAgentToken } from '@/api/agents'
 import { useAgentsStore } from '@/stores/agents'
 import type { Agent, CreateAgentResponse, Enrollment } from '@/types/agent'
@@ -64,14 +65,20 @@ const pendingAgentName = ref('')
 /** 本次密钥是「重置」产生的吗（影响文案：旧密钥已失效） */
 const tokenIsReset = ref(false)
 
-const columns = createAgentColumns({
-  onEnter: (agent: Agent) => enterAgent(agent),
-  onEdit: (agent: Agent) => openEdit(agent),
-  onResetToken: (agent: Agent) => void handleResetToken(agent),
-  onToggleDisabled: (agent: Agent) => void handleToggleDisabled(agent),
-  onDelete: (agent: Agent) => void handleDelete(agent),
-  isBusy: (agentId: string) => enteringId.value === agentId || busyId.value === agentId
-})
+/**
+ * 列定义用 computed 包一层：手机/桌面切换、旋屏时固定列状态要跟着变，
+ * 一次性构造的常量在横竖屏切换后仍会保留旧的固定列。
+ */
+const columns = useResponsiveColumns(computed(() =>
+  createAgentColumns({
+    onEnter: (agent: Agent) => enterAgent(agent),
+    onEdit: (agent: Agent) => openEdit(agent),
+    onResetToken: (agent: Agent) => void handleResetToken(agent),
+    onToggleDisabled: (agent: Agent) => void handleToggleDisabled(agent),
+    onDelete: (agent: Agent) => void handleDelete(agent),
+    isBusy: (agentId: string) => enteringId.value === agentId || busyId.value === agentId
+  })
+))
 
 /** 顶部摘要：在线/待接入/禁用/总数，让用户一眼看到整体健康度 */
 const summary = computed(() => {
@@ -429,7 +436,7 @@ onUnmounted(() => {
         :bordered="false"
         :single-line="false"
         size="medium"
-        :scroll-x="1180"
+        :scroll-x="1330"
       />
       <empty-state
         v-else-if="store.loaded"
@@ -479,7 +486,7 @@ onUnmounted(() => {
 }
 
 .table-card {
-  background: #fff;
+  background: var(--arkade-surface-bg);
   border-radius: 8px;
   padding: 8px 8px 0;
   box-shadow: 0 1px 2px rgba(31, 34, 37, 0.04);
@@ -497,7 +504,7 @@ onUnmounted(() => {
 
 /* 名称列的可点击链接样式 */
 :deep(.agent-name-link) {
-  color: #2080f0;
+  color: var(--arkade-primary);
   cursor: pointer;
   text-decoration: none;
 }
@@ -507,7 +514,7 @@ onUnmounted(() => {
 }
 
 :deep(.runtime-cell__version) {
-  color: #8b9099;
+  color: var(--arkade-text-tertiary);
   font-size: 12px;
 }
 </style>
