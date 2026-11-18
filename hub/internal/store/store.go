@@ -8,6 +8,7 @@ import (
 	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/errors/gerror"
 
+	"arkade/hub/internal/dbdiag"
 	"arkade/hub/internal/dbmigrate"
 )
 
@@ -23,7 +24,11 @@ func Open(ctx context.Context, dsn string) (*DB, error) {
 	}
 	if err = raw.PingContext(ctx); err != nil {
 		closeGDB(inst)
-		return nil, gerror.New("连接 PostgreSQL 失败（请检查数据库配置和服务状态）")
+		// 原始错误只说明"连不上"，这里补一次带分类的探测，把网络/认证/权限原因说清楚。
+		if probeErr := dbdiag.Probe(ctx, dsn); probeErr != nil {
+			return nil, gerror.Wrap(probeErr, "连接 PostgreSQL 失败")
+		}
+		return nil, gerror.Wrap(err, "连接 PostgreSQL 失败")
 	}
 	if _, err = dbmigrate.Run(ctx, dsn); err != nil {
 		closeGDB(inst)
