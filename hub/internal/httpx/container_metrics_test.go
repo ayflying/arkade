@@ -66,7 +66,8 @@ func TestContainerMetricsScopedHTTP(t *testing.T) {
 	}
 	router := NewRouter(Deps{Log: e.log, DB: e.db, Auth: e.auth, Registry: e.registry, MonitorEngine: engine, Identity: testIdentityServices(t, e.db, e.auth, e.log)})
 	base := startRouterForTest(t, router)
-	viewer := e.loginAsFor(t, base, "metricsviewer", "ViewerPass123")
+	// 完成首次改密后再验证服务器授权，避免把改密拦截误当作权限校验。
+	viewer := e.loginAs(t, "metricsviewer", "ViewerPass123")
 	path := base + "/api/agents/"
 	resp, body := doHTTP(t, http.MethodGet, path+"metrics-allowed/container-metrics?agentID=metrics-denied", "", viewer)
 	if resp.StatusCode != 200 || !strings.Contains(resp.Header.Get("Cache-Control"), "no-store") {
