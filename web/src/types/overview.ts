@@ -69,6 +69,13 @@ export type OverviewData = {
   totalAgents: number
   /** 是否因为服务器过多而只统计了前 N 台 */
   truncated: boolean
+  /**
+   * 用户是否已明确选择服务器。
+   *
+   * false 时概览只展示「有多少台服务器」，不展示任何一台的资源、编排与未纳管清单：
+   * 未选择就等于还没有授权把某台机器的内容铺在首页上。
+   */
+  hasSelection: boolean
   /** 全局汇总 */
   totals: {
     agents: number

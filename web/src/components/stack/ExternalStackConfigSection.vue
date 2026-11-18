@@ -5,7 +5,7 @@ import ExternalStackCopyModal from '@/components/external/ExternalStackCopyModal
 import { useExternalStackConfigActions } from '@/composables/useExternalStackConfigActions'
 const props = defineProps<{ agentId: string; stackName: string }>()
 const emit = defineEmits<{ changed: [] }>()
-const { store, applying, preview, applyError, alreadyManaged, copyShow, copying, copyError, agentList, editorContent, stackName, handleSaveDraft, handleApply, goManagedDetail, openCopy, handleCopy } = useExternalStackConfigActions(props, () => emit('changed'))
+const { store, applying, preview, applyError, alreadyManaged, copyShow, copying, copyError, agentList, agentsLoading, editorContent, stackName, handleSaveDraft, handleApply, goManagedDetail, openCopy, handleCopy } = useExternalStackConfigActions(props, () => emit('changed'))
 </script>
 <template>
   <section>
@@ -80,6 +80,7 @@ const { store, applying, preview, applyError, alreadyManaged, copyShow, copying,
       :agent-id="agentId ?? ''"
       :agents="agentList"
       :loading="copying"
+      :agents-loading="agentsLoading"
       :error-text="copyError"
       @submit="handleCopy"
     />

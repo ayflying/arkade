@@ -17,7 +17,7 @@
  */
 import { computed, h, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { NAlert, NButton, NDataTable, NSkeleton, NTag } from 'naive-ui'
+import { NAlert, NButton, NDataTable, NSelect, NSkeleton, NTag } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import AgentStatusTag from '@/components/agent/AgentStatusTag.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
@@ -25,6 +25,8 @@ import PageHeader from '@/components/common/PageHeader.vue'
 import RelativeTime from '@/components/common/RelativeTime.vue'
 import StatCard from '@/components/overview/StatCard.vue'
 import { OVERVIEW_AGENT_LIMIT, displayNameOf, loadOverview } from '@/api/overview'
+import { listAgents } from '@/api/agents'
+import type { Agent } from '@/types/agent'
 import { usePolling } from '@/composables/usePolling'
 import type { AgentOverview, OverviewData } from '@/types/overview'
 import { ApiError } from '@/types/api'
@@ -35,6 +37,36 @@ const router = useRouter()
 const data = ref<OverviewData | null>(null)
 const loading = ref(false)
 const errorText = ref('')
+
+/**
+ * 用户明确选中的服务器。
+ *
+ * 默认 null 表示"还没选"：概览只给服务器台数与在线数，不铺任何一台的资源、
+ * 编排和未纳管清单。用户自己选过之后才统计那一台，选择存在 sessionStorage，
+ * 刷新页面不丢，但换浏览器/新会话时仍需重新选，避免悄悄沿用旧选择。
+ */
+const SELECTED_AGENT_KEY = 'arkade.overview.selectedAgent'
+
+function readSelectedAgent(): string | null {
+  try {
+    const stored = sessionStorage.getItem(SELECTED_AGENT_KEY)
+    return stored && stored !== '' ? stored : null
+  } catch {
+    // 隐私模式或存储被禁用时退回"未选择"，功能不受影响
+    return null
+  }
+}
+
+function writeSelectedAgent(agentId: string | null): void {
+  try {
+    if (agentId === null) sessionStorage.removeItem(SELECTED_AGENT_KEY)
+    else sessionStorage.setItem(SELECTED_AGENT_KEY, agentId)
+  } catch {
+    // 忽略存储失败：本次会话内仍然生效
+  }
+}
+
+const selectedAgentId = ref<string | null>(readSelectedAgent())
 
 /**
  * 拉取概览数据。
@@ -51,7 +83,10 @@ async function refresh(silent = false): Promise<void> {
   if (!silent) loading.value = true
   if (!silent) errorText.value = ''
   try {
-    data.value = await loadOverview()
+    // 下拉框需要完整服务器清单；它与资源统计分离，未选择时也不为空。
+    // 把这份清单同时交给聚合层，避免它再发一次同样的列表请求。
+    allAgents.value = await listAgents()
+    data.value = await loadOverview(selectedAgentId.value, OVERVIEW_AGENT_LIMIT, allAgents.value)
     if (silent) errorText.value = ''
   } catch (err) {
     if (silent) {
@@ -66,6 +101,32 @@ async function refresh(silent = false): Promise<void> {
 
 const totals = computed(() => data.value?.totals)
 const problems = computed(() => data.value?.problems)
+const hasSelection = computed(() => data.value?.hasSelection === true)
+
+/**
+ * 服务器下拉选项：用于选择要统计哪一台。
+ *
+ * 未选择时概览不返回任何 AgentOverview，因此下拉框要退回监听服务器清单本身。
+ */
+const agentOptions = computed(() =>
+  allAgents.value.map((agent) => ({
+    label: displayNameOf(agent),
+    value: agent.id
+  }))
+)
+
+/**
+ * 切换服务器。
+ *
+ * 下拉框的值立刻跟着变，列表区域只显示「加载中」占位而不是整页消失：
+ * 清空数据会让整页塌下去，看起来像点击没生效。旧数据保留到新数据到达，
+ * 由 loading 状态表明正在刷新，避免用户盯着空白等。
+ */
+async function onSelectAgent(agentId: string | null): Promise<void> {
+  selectedAgentId.value = agentId
+  writeSelectedAgent(agentId)
+  await refresh()
+}
 
 /** 异常总数：0 时显示「一切正常」，>0 时展开异常区 */
 const problemCount = computed(() => {
@@ -76,6 +137,14 @@ const problemCount = computed(() => {
 
 /** 是否有任何服务器（决定是否显示空态引导） */
 const hasAgents = computed(() => (totals.value?.agents ?? 0) > 0)
+
+/**
+ * 全部服务器（含未选中统计的）。
+ *
+ * 概览在"未选服务器"时不会聚合任何一台，但仍要把服务器名字提供给下拉框，
+ * 否则用户没有可选项。单独保存一份列表，不参与资源统计。
+ */
+const allAgents = ref<Agent[]>([])
 
 /** 进入某台服务器的容器页 */
 function enterAgent(agentId: string): void {
@@ -214,7 +283,7 @@ onMounted(() => {
     </template>
 
     <!-- 空态：一台服务器都没有 → 引导部署 Agent（这是唯一能接入服务器的方式） -->
-    <template v-else-if="data !== null && !hasAgents">
+    <template v-if="data !== null && !hasAgents">
       <empty-state description="还没有任何服务器接入 Arkade。部署一个 Agent 后，它所在的服务器就会自动出现在这里。">
         <template #extra>
           <n-button size="small" type="primary" @click="router.push({ name: 'agents' })">
@@ -225,6 +294,43 @@ onMounted(() => {
     </template>
 
     <template v-else-if="data !== null">
+      <!--
+        服务器选择器
+        默认不选：概览只给出"共有几台服务器、几台在线"，不把任何一台的编排、
+        容器、卷铺在首页。用户点了具体的服务器后才统计那一台。
+      -->
+      <div class="overview-page__row">
+        <n-select
+          :value="selectedAgentId"
+          :options="agentOptions"
+          clearable
+          placeholder="选择要查看的服务器（未选择时不统计任何服务器）"
+          style="max-width: 420px"
+          @update:value="onSelectAgent"
+        />
+      </div>
+
+      <!-- 未选择服务器：只给服务器台数，资源统计与未纳管清单一律不展示 -->
+      <template v-if="!hasSelection">
+        <div class="stat-grid">
+          <stat-card
+            label="服务器"
+            :value="data.totals.agents"
+            unit="台"
+            :hint="`在线 ${data.totals.onlineAgents} 台`"
+          />
+        </div>
+        <empty-state description="请先在上方选择一台服务器。未选择时不会统计任何服务器的容器、编排与存储资源。">
+          <template #extra>
+            <n-button size="small" type="primary" @click="router.push({ name: 'agents' })">
+              去服务器页查看全部服务器
+            </n-button>
+          </template>
+        </empty-state>
+      </template>
+
+      <!-- 已选择服务器：显示该台的完整统计与异常提示 -->
+      <template v-else>
       <!--
         统计范围提示：服务器超过上限时只统计前 N 台，必须明说，
         否则用户会以为卡片上是全量数字。
@@ -393,6 +499,7 @@ onMounted(() => {
           :scroll-x="900"
         />
       </div>
+      </template>
     </template>
   </div>
 </template>

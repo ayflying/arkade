@@ -173,15 +173,53 @@ async function aggregateOne(
 /**
  * 拉取概览数据。
  *
- * @param limit 最多统计多少台服务器，默认 OVERVIEW_AGENT_LIMIT
+ * @param agentId 用户选中的服务器；未选择时传入 null，此时**不统计任何服务器**。
+ *               概览是登录后的首页，用户还没明确要看哪台机器时，
+ *               直接把它下面所有编排、容器、卷都铺出来既侵犯边界也让人误以为已被接管，
+ *               因此默认只给「有多少台服务器」这个宏观印象。
+ * @param limit 已选服务器时最多统计多少台服务器，默认 OVERVIEW_AGENT_LIMIT
+ * @param knownAgents 调用方已经取到的服务器清单。传进来可以省掉一次重复的
+ *                    `GET /api/agents`——页面刚拉过一遍列表又在这里拉一遍，
+ *                    切服务器时会多等一个 RTT。
  */
-export async function loadOverview(limit = OVERVIEW_AGENT_LIMIT): Promise<OverviewData> {
-  const agents = await listAgents()
+export async function loadOverview(
+  agentId: string | null,
+  limit = OVERVIEW_AGENT_LIMIT,
+  knownAgents?: Agent[]
+): Promise<OverviewData> {
+  const agents = knownAgents ?? (await listAgents())
 
-  const counted = agents.slice(0, limit)
+  // 未选择服务器：只回传服务器清单与在线数，资源统计一律为 0，问题清单为空。
+  // 不能退回「聚合第一台」——那正是用户明确反对的行为。
+  if (agentId === null) {
+    return {
+      agents: [],
+      failures: [],
+      countedAgents: 0,
+      totalAgents: agents.length,
+      truncated: false,
+      hasSelection: false,
+      totals: {
+        agents: agents.length,
+        onlineAgents: agents.filter((a) => a.status === 'online').length,
+        containers: 0,
+        runningContainers: 0,
+        stacks: 0,
+        unmanagedStacks: 0,
+        images: 0,
+        networks: 0,
+        volumes: 0
+      },
+      problems: { offlineAgents: [], driftedStacks: [], orphanStacks: [] }
+    }
+  }
+
+  // 只统计被选中的那一台：选择是显式意图，不能再偷偷把其它服务器也算进来。
+  const selected = agents.filter((agent) => agent.id === agentId)
+  const counted = selected.slice(0, limit)
   const failures: AggregationFailure[] = []
 
-  // 所有服务器并发聚合：整体耗时 ≈ 最慢的那一个请求，而非 N 台累加
+  // 单台聚合：整体耗时 ≈ 最慢的那一个请求
   const overviews = await Promise.all(counted.map((agent) => aggregateOne(agent, failures)))
 
   const totals: OverviewData['totals'] = {
@@ -197,9 +235,8 @@ export async function loadOverview(limit = OVERVIEW_AGENT_LIMIT): Promise<Overvi
   }
 
   const problems: OverviewData['problems'] = {
-    // 离线名单用**全部**服务器，不限于前 N 台：
-    // 离线是最需要被看见的问题，哪怕这台没参与资源统计也必须报出来
-    offlineAgents: agents.filter((a) => a.status === 'offline'),
+    // 离线提醒只针对选中的服务器：用户没问的机器不该出现在异常区
+    offlineAgents: selected.filter((a) => a.status === 'offline'),
     driftedStacks: [],
     orphanStacks: []
   }
@@ -227,7 +264,8 @@ export async function loadOverview(limit = OVERVIEW_AGENT_LIMIT): Promise<Overvi
     failures,
     countedAgents: counted.length,
     totalAgents: agents.length,
-    truncated: agents.length > limit,
+    truncated: selected.length > limit,
+    hasSelection: true,
     totals,
     problems
   }

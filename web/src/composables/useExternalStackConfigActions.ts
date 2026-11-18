@@ -31,6 +31,8 @@ export function useExternalStackConfigActions(props: { agentId: string; stackNam
   const copying = ref(false)
   const copyError = ref('')
   const agentList = ref<Agent[]>([])
+  /** 复制弹窗里的服务器清单是否仍在加载（弹窗已打开，只是选项还没到） */
+  const agentsLoading = ref(false)
 
   async function handleSaveDraft(content: string, expectedVersion: number): Promise<void> {
     const ok = await store.saveDraft(content, expectedVersion)
@@ -94,17 +96,27 @@ export function useExternalStackConfigActions(props: { agentId: string; stackNam
 
   const editorContent = ref('')
 
-  async function openCopy(): Promise<void> {
+  /**
+   * 打开「复制配置到其他服务器」弹窗。
+   *
+   * 先开弹窗、再在后台拉服务器列表：拉取要等网络，若先 await 再弹，
+   * 用户点完按钮会有明显的无反应时间。弹窗内自带加载中状态。
+   */
+  function openCopy(): void {
     copyError.value = ''
-    try {
-      const agents = await listAgents()
-      if (!alive) return
-      agentList.value = agents
-    } catch (err) {
-      if (!alive) return
-      copyError.value = err instanceof Error ? err.message : '服务器列表加载失败'
-    }
-    if (alive) copyShow.value = true
+    copyShow.value = true
+    agentsLoading.value = true
+    void listAgents()
+      .then((agents) => {
+        if (alive) agentList.value = agents
+      })
+      .catch((err: unknown) => {
+        if (!alive) return
+        copyError.value = err instanceof Error ? err.message : '服务器列表加载失败'
+      })
+      .finally(() => {
+        if (alive) agentsLoading.value = false
+      })
   }
 
   async function handleCopy(payload: { targetAgentId: string; targetName: string }): Promise<void> {
@@ -141,5 +153,5 @@ export function useExternalStackConfigActions(props: { agentId: string; stackNam
 
   onMounted(() => { void store.loadConfig() })
 
-  return { store, applying, preview, applyError, alreadyManaged, copyShow, copying, copyError, agentList, editorContent, agentId, stackName, handleSaveDraft, handleApply, goManagedDetail, openCopy, handleCopy }
+  return { store, applying, preview, applyError, alreadyManaged, copyShow, copying, copyError, agentList, agentsLoading, editorContent, agentId, stackName, handleSaveDraft, handleApply, goManagedDetail, openCopy, handleCopy }
 }

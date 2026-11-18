@@ -22,7 +22,10 @@ interface Props {
   /** 当前所在服务器，目标里要排除它 */
   agentId: string
   agents: Agent[]
+  /** 复制/提交进行中 */
   loading: boolean
+  /** 目标服务器清单仍在后台加载（弹窗已开，选项稍后到） */
+  agentsLoading?: boolean
   errorText: string
 }
 
@@ -102,6 +105,7 @@ function handleSubmit(): void {
           :options="agentOptions"
           placeholder="选择目标服务器"
           class="copy__select"
+          :loading="agentsLoading === true"
           :disabled="loading"
         />
       </div>

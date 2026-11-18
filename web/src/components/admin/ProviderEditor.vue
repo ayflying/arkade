@@ -20,6 +20,8 @@ const groups = ref<{
     label: string;
     value: string;
 }[]>([]);
+/** 用户组清单后台加载中，仅用于下拉框的 loading 提示 */
+const groupsLoading = ref(false);
 let version = 0;
 watch(() => props.show, async (show) => {
     if (!show) {
@@ -37,12 +39,21 @@ watch(() => props.show, async (show) => {
     autoRegister.value = p?.auto_register ?? false;
     version = p?.version || 0;
     error.value = '';
-    try {
-        groups.value = [{ label: '不加入用户组（无服务器权限）', value: '' }, ...(await listGroups()).map(g => ({ label: g.name, value: g.id }))];
-    }
-    catch (cause) {
-        error.value = cause instanceof Error ? cause.message : '读取用户组失败';
-    }
+    // 先填好表单让弹窗立即可用，用户组在后台补齐：
+    // 等接口返回再渲染会让「新增」按钮点下去有明显空档。
+    groupsLoading.value = true;
+    listGroups()
+        .then((list) => {
+            if (!show) return;
+            groups.value = [{ label: '不加入用户组（无服务器权限）', value: '' }, ...list.map(g => ({ label: g.name, value: g.id }))];
+        })
+        .catch((cause: unknown) => {
+            if (!show) return;
+            error.value = cause instanceof Error ? cause.message : '读取用户组失败';
+        })
+        .finally(() => {
+            groupsLoading.value = false;
+        });
 });
 async function save() {
     if (busy.value)
@@ -99,7 +110,7 @@ async function save() {
         <n-switch v-model:value="autoRegister" :disabled="busy" />
       </n-form-item>
       <n-form-item label="新账户加入用户组">
-        <n-select v-model:value="group" :options="groups" :disabled="busy" />
+        <n-select v-model:value="group" :options="groups" :loading="groupsLoading" :disabled="busy" />
       </n-form-item>
       <n-form-item label="启用第三方登录">
         <n-switch v-model:value="enabled" :disabled="busy" />
