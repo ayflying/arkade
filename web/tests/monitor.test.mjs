@@ -77,6 +77,8 @@ test('首样本不显示虚假零速率，过期依据已保存采集间隔且�
   assert.equal(format.metricExpired(0, 120, now), true);
   const metrics = read('./MonitorMetrics.vue');
   assert.match(metrics, /snapshot_complete/);
+  assert.match(metrics, /row\.network_available === false \? '网络统计不可用'/);
+  assert.match(metrics, /row\.block_available === false \? '磁盘统计不可用'/);
   assert.match(metrics, /stale\(row\) \? '已过期'/);
   assert.match(read('./MonitorSettings.vue'), /:interval-seconds="savedInterval"/);
 });

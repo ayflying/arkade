@@ -5,7 +5,7 @@
  * ## 权限是两个层级，页面必须同时支持
  *
  * - **详情**（挂载、网络、资源限制）需要 `manage`——它暴露宿主路径等基础设施信息；
- * - **日志** 只需要 `view`。
+ * - **容器指标与日志** 只需要 `view`。
  *
  * 所以「详情 403 但日志能看」是**正常组合**，不能因为详情失败就把整页变成错误页。
  * 这也是本页不用一个统一 loading/error 的原因。
@@ -15,14 +15,16 @@
  * 后端刻意不下发环境变量（常含密码/密钥）。前端也不会从 command 或
  * inspect 的任何字段反推——反推出来的东西既不可靠又可能泄露。
  */
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, shallowRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NAlert, NButton, NSpin, NTabPane, NTabs } from 'naive-ui'
 import PageHeader from '@/components/common/PageHeader.vue'
 import ContainerDetailFacts from '@/components/container/ContainerDetailFacts.vue'
+import ContainerDetailMetrics from '@/components/container/ContainerDetailMetrics.vue'
 import ContainerMountsTable from '@/components/container/ContainerMountsTable.vue'
 import ContainerDetailLogs from '@/components/container/ContainerDetailLogs.vue'
 import { getContainer } from '@/api/containers'
+import { useContainerMetrics } from '@/composables/useContainerMetrics'
 import { useAgentsStore } from '@/stores/agents'
 import { ApiError } from '@/types/api'
 import type { ContainerDetail } from '@/types/container'
@@ -37,13 +39,25 @@ const containerId = computed<string>(() => String(route.params.containerId ?? ''
 const agent = computed(() => agentsStore.findById(agentId.value))
 const directAddress = computed<string>(() => agent.value?.direct_address ?? '')
 
-const detail = ref<ContainerDetail | null>(null)
+const detail = shallowRef<ContainerDetail | null>(null)
 const loading = ref(false)
 const errorText = ref('')
 /** 详情权限不足：只影响概览/挂载，不影响日志 */
 const forbidden = ref(false)
 
 const activeTab = ref<'overview' | 'mounts' | 'logs'>('overview')
+const metricsEnabled = computed(() => activeTab.value === 'overview' && containerId.value !== '')
+const metrics = useContainerMetrics(agentId, metricsEnabled)
+// Links from container tables use full IDs. For legacy short links, only the
+// inspect response can safely resolve the canonical ID; the cache may omit rows.
+const metricContainerId = computed(() => detail.value?.id || containerId.value)
+const sample = computed(() => metrics.byId.value.get(metricContainerId.value))
+const sampleStale = computed(() => metrics.byStaleId.value.has(metricContainerId.value))
+const emptyMetricsStatus = metrics.emptyStatus
+
+async function refresh(): Promise<void> {
+  await Promise.all([load(), metrics.refresh()])
+}
 
 let seq = 0
 
@@ -115,7 +129,7 @@ watch(
     <page-header :title="pageTitle" :subtitle="subtitle">
       <template #actions>
         <n-button size="small" @click="back">返回容器列表</n-button>
-        <n-button size="small" :loading="loading" @click="load">刷新</n-button>
+        <n-button size="small" :loading="loading" @click="refresh">刷新</n-button>
       </template>
     </page-header>
 
@@ -128,14 +142,21 @@ watch(
       说清楚「日志仍可查看」，否则用户会以为整页都用不了而直接离开。
     -->
     <n-alert v-if="forbidden" type="warning" :bordered="false" title="无权限查看容器详情">
-      查看挂载、网络与资源限制需要该服务器的管理权限。日志不受影响，仍可在「日志」页查看。
+      查看挂载、网络配置与资源限制需要该服务器的管理权限。日志不受影响，仍可在「日志」页查看；下方仍可查看容器指标。
     </n-alert>
 
     <n-spin v-if="loading && detail === null && !forbidden" size="small" />
 
     <n-tabs v-else v-model:value="activeTab" type="line" animated>
       <n-tab-pane name="overview" tab="概览">
+        <container-detail-metrics
+          class="container-detail__metrics"
+          :sample="sample"
+          :stale="sampleStale"
+          :empty-status="emptyMetricsStatus"
+        />
         <container-detail-facts
+          v-if="!forbidden"
           :detail="detail"
           :forbidden="forbidden"
           :agent-id="agentId"
@@ -160,5 +181,11 @@ watch(
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.container-detail__metrics {
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--arkade-border-color);
 }
 </style>

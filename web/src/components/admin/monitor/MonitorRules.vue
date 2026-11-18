@@ -13,7 +13,7 @@ const times = [
 <template>
   <section>
     <h3>监控规则</h3>
-    <n-form-item label="启用后台监控"><n-switch v-model:value="config.enabled" :disabled="disabled" /></n-form-item>
+    <n-form-item label="启用告警（不影响指标采集）"><n-switch v-model:value="config.enabled" :disabled="disabled" /></n-form-item>
     <div class="rule-grid">
       <n-form-item v-for="item in times" :key="item.key" :label="item.label">
         <n-input-number v-model:value="config[item.key]" :min="item.min" :max="item.max" :precision="0" :disabled="disabled" />

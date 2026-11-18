@@ -28,7 +28,7 @@ func newMonitorSnapshotHandler(rt runtime.Runtime) Handler {
 				ID: c.ID, Name: c.Name, Image: c.Image, State: c.State, Health: c.Health,
 				ExitCode: c.ExitCode, RestartCount: c.RestartCount, StartedAt: c.StartedAt, FinishedAt: c.FinishedAt,
 				CPUPercent: c.CPUPercent, MemoryBytes: c.MemoryBytes, MemoryLimitBytes: c.MemoryLimitBytes, MemoryPercent: c.MemoryPercent,
-				NetworkRXBytes: c.NetworkRXBytes, NetworkTXBytes: c.NetworkTXBytes, BlockReadBytes: c.BlockReadBytes, BlockWriteBytes: c.BlockWriteBytes,
+				NetworkAvailable: &c.NetworkAvailable, NetworkRXBytes: c.NetworkRXBytes, NetworkTXBytes: c.NetworkTXBytes, BlockAvailable: &c.BlockAvailable, BlockReadBytes: c.BlockReadBytes, BlockWriteBytes: c.BlockWriteBytes,
 				StatsAvailable: c.StatsAvailable, Error: c.Error,
 			})
 		}

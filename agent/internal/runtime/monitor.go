@@ -26,6 +26,8 @@ type MonitorSnapshot struct {
 }
 type ContainerMetric struct {
 	inspectAvailable                                                bool
+	networkMode                                                     string
+	NetworkAvailable, BlockAvailable                                bool
 	ID, Name, Image, State, Health                                  string
 	ExitCode, RestartCount                                          int
 	StartedAt, FinishedAt                                           int64
@@ -70,8 +72,8 @@ type monitorStats struct {
 		Stats map[string]int64 `json:"stats"`
 	} `json:"memory_stats"`
 	Networks map[string]struct {
-		RX uint64 `json:"rx_bytes"`
-		TX uint64 `json:"tx_bytes"`
+		RX *uint64 `json:"rx_bytes"`
+		TX *uint64 `json:"tx_bytes"`
 	} `json:"networks"`
 	Block *struct {
 		Entries []struct {
@@ -87,6 +89,9 @@ type monitorInspect struct {
 	Config       struct {
 		Image string `json:"Image"`
 	} `json:"Config"`
+	HostConfig struct {
+		NetworkMode string `json:"NetworkMode"`
+	} `json:"HostConfig"`
 	State struct {
 		Status     string `json:"Status"`
 		ExitCode   int    `json:"ExitCode"`
@@ -184,6 +189,7 @@ dispatch:
 			}
 		}
 	}
+	m.hideSharedNetworkOwners(&out)
 	// 每轮清理消失容器，缓存规模与采集上限一致。
 	alive := make(map[string]bool, len(list))
 	for _, c := range list {
@@ -197,6 +203,35 @@ dispatch:
 	}
 	m.mu.Unlock()
 	return out
+}
+
+// Sharing a network namespace also makes the owner's counters non-attributable.
+// A partial inventory cannot rule out an unobserved namespace joiner.
+func (m *MonitorCollector) hideSharedNetworkOwners(snapshot *MonitorSnapshot) {
+	shared := make(map[string]bool)
+	for _, c := range snapshot.Containers {
+		if c.State == "running" || c.State == "paused" || c.State == "restarting" {
+			if ref, ok := strings.CutPrefix(c.networkMode, "container:"); ok && ref != "" {
+				shared[strings.TrimPrefix(ref, "/")] = true
+			}
+		}
+	}
+	for i := range snapshot.Containers {
+		c := &snapshot.Containers[i]
+		if !snapshot.Complete || shared[c.ID] || shared[c.Name] || hasSharedIDPrefix(c.ID, shared) {
+			c.NetworkAvailable = false
+			c.NetworkRXBytes, c.NetworkTXBytes = 0, 0
+		}
+	}
+}
+
+func hasSharedIDPrefix(id string, shared map[string]bool) bool {
+	for n := 1; n < len(id); n++ {
+		if shared[id[:n]] {
+			return true
+		}
+	}
+	return false
 }
 
 func monitorUnix(s string) int64 {
@@ -241,6 +276,7 @@ func (m *MonitorCollector) collect(ctx context.Context, c ContainerMetric) Conta
 		c.Image = d.Config.Image
 	}
 	c.State = d.State.Status
+	c.networkMode = d.HostConfig.NetworkMode
 	c.ExitCode = d.State.ExitCode
 	c.RestartCount = d.RestartCount
 	c.StartedAt = monitorUnix(d.State.StartedAt)
@@ -256,6 +292,18 @@ func (m *MonitorCollector) collect(ctx context.Context, c ContainerMetric) Conta
 	if err := m.engine.client.monitorGet(ctx, base+"/stats?stream=false&one-shot=true", &s); err != nil {
 		c.Error = err.Error()
 		return c
+	}
+	c.collectNetwork(s)
+	if s.Block != nil && s.Block.Entries != nil {
+		c.BlockAvailable = true
+		for _, b := range s.Block.Entries {
+			switch strings.ToLower(b.Op) {
+			case "read":
+				c.BlockReadBytes += b.Value
+			case "write":
+				c.BlockWriteBytes += b.Value
+			}
+		}
 	}
 	prev := s.PreCPU
 	m.mu.Lock()
@@ -295,23 +343,24 @@ func (m *MonitorCollector) collect(ctx context.Context, c ContainerMetric) Conta
 	c.MemoryBytes = usage
 	c.MemoryLimitBytes = *s.Memory.Limit
 	c.MemoryPercent = float64(usage) / float64(c.MemoryLimitBytes) * 100
-	// 兼容引擎可能完全省略网络/块设备统计。缺失与真实零不可混淆。
-	if s.Networks == nil || s.Block == nil || s.Block.Entries == nil {
-		c.Error = "stats unavailable: network or block accounting missing"
-		return c
-	}
-	for _, n := range s.Networks {
-		c.NetworkRXBytes += n.RX
-		c.NetworkTXBytes += n.TX
-	}
-	for _, b := range s.Block.Entries {
-		switch strings.ToLower(b.Op) {
-		case "read":
-			c.BlockReadBytes += b.Value
-		case "write":
-			c.BlockWriteBytes += b.Value
-		}
-	}
 	c.StatsAvailable = true
 	return c
+}
+
+func (c *ContainerMetric) collectNetwork(s monitorStats) {
+	// Docker uses a network name for private user-defined namespaces. Empty mode
+	// is unknown; host, container:<ref>, and Podman-style ns:<path> are not private.
+	if c.networkMode == "" || c.networkMode == "host" || strings.Contains(c.networkMode, ":") || len(s.Networks) == 0 {
+		return
+	}
+	var rx, tx uint64
+	for _, n := range s.Networks {
+		if n.RX == nil || n.TX == nil || *n.RX > math.MaxUint64-rx || *n.TX > math.MaxUint64-tx {
+			return
+		}
+		rx += *n.RX
+		tx += *n.TX
+	}
+	c.NetworkAvailable = true
+	c.NetworkRXBytes, c.NetworkTXBytes = rx, tx
 }

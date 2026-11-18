@@ -40,6 +40,8 @@ export interface ConfigInput {
   };
 }
 export interface Metric {
+  network_available?: boolean;
+  block_available?: boolean;
   agent_id: string;
   agent_name: string;
   container_id: string;

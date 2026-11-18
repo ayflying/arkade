@@ -22,6 +22,10 @@ func bindOperationalRoutes(s *ghttp.Server, d Deps) {
 	resourcesDeps := resourcescontroller.Deps{DB: d.DB, Ops: d.Ops, Session: session, Log: d.Log}
 	if d.MonitorEngine != nil {
 		resourcesDeps.SuppressMonitor = d.MonitorEngine.Suppress
+		resourcesDeps.ContainerMetrics = d.MonitorEngine.ContainerMetrics
+	}
+	if d.Registry != nil {
+		resourcesDeps.AgentOnline = d.Registry.IsOnline
 	}
 	bindNativeModule(s, d, resourcescontroller.New(resourcesDeps))
 	bindNativeModule(s, d, imagescontroller.New(imagescontroller.Deps{DB: d.DB, Registry: d.Registry, Tasks: d.ImageTasks, Session: session, Log: d.Log}))

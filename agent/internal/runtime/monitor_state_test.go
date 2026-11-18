@@ -57,8 +57,11 @@ func TestMonitorCPUResetAndAccountingMissing(t *testing.T) {
 				}
 			})
 			s := m.Snapshot(context.Background())
-			if !s.Complete || s.Containers[0].StatsAvailable || s.Containers[0].Error == "" {
-				t.Fatalf("missing accounting falsely available: %+v", s)
+			c := s.Containers[0]
+			wantStats := name != "cpu-reset" && name != "memory-missing"
+			if !s.Complete || c.StatsAvailable != wantStats || (c.Error == "") != wantStats ||
+				c.NetworkAvailable != (name != "network-missing") || c.BlockAvailable != (name != "block-missing") {
+				t.Fatalf("accounting availability not independent: %+v", s)
 			}
 		})
 	}

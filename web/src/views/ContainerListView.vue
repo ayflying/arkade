@@ -18,12 +18,14 @@ import { NAlert, NButton, NDataTable, NSpace, NTag } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import AgentStatusTag from '@/components/agent/AgentStatusTag.vue'
 import ContainerLogDrawer from '@/components/container/ContainerLogDrawer.vue'
+import ContainerMetricCell from '@/components/container/ContainerMetricCell.vue'
 import ContainerOriginTag from '@/components/container/ContainerOriginTag.vue'
 import ContainerPortCell from '@/components/container/ContainerPortCell.vue'
 import ContainerRowActions from '@/components/container/ContainerRowActions.vue'
 import ContainerStateTag from '@/components/container/ContainerStateTag.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
+import { useContainerMetrics } from '@/composables/useContainerMetrics'
 import { useContainers } from '@/composables/useContainers'
 import { usePolling } from '@/composables/usePolling'
 import { useAgentsStore } from '@/stores/agents'
@@ -75,6 +77,17 @@ const logContainer = ref<Container | null>(null)
  * agent 信息未知时按「不可操作」处理：宁可等列表加载完，也不发一个可能必然失败的请求。
  */
 const online = computed(() => isAgentOnline(agent.value))
+const hasContainers = computed(() => containers.value.length > 0)
+const metrics = useContainerMetrics(agentId, hasContainers)
+
+function renderMetricCell(row: Container, group: 'resources' | 'network') {
+  return h(ContainerMetricCell, {
+    group,
+    sample: metrics.byId.value.get(row.id),
+    stale: metrics.byStaleId.value.has(row.id),
+    emptyStatus: metrics.emptyStatus.value
+  })
+}
 
 /** 页面标题：优先服务器名称，未知时退回 id */
 const title = computed(() => agent.value?.name ?? agentId.value)
@@ -138,6 +151,18 @@ const columns = useResponsiveColumns(computed<DataTableColumns<Container>>(() =>
     key: 'origin',
     width: 110,
     render: (row) => h(ContainerOriginTag, { origin: row.origin })
+  },
+  {
+    title: '资源用量',
+    key: 'resourceMetrics',
+    width: 146,
+    render: (row) => renderMetricCell(row, 'resources')
+  },
+  {
+    title: '网络速率',
+    key: 'networkMetrics',
+    width: 156,
+    render: (row) => renderMetricCell(row, 'network')
   },
   {
     title: '端口',
@@ -285,7 +310,7 @@ async function handleDelete(container: Container): Promise<void> {
 /** 手动刷新容器列表 */
 async function handleRefresh(showToast: boolean): Promise<void> {  // 顺带刷新服务器状态：用户可能在别处把服务器重启/下线了
   void agentsStore.refresh()
-  const ok = await load()
+  const [, ok] = await Promise.all([metrics.refresh(), load()])
   if (ok && showToast) {
     toastSuccess('容器列表已刷新')
   }
@@ -373,13 +398,13 @@ onMounted(async () => {
     </div>
 
     <!--
-      表格容器：窄屏下六列（名称/镜像/状态/来源/端口/操作）总宽超出视口，
+      表格容器：窄屏下列宽总和超出视口，
       由 NDataTable 的 scroll-x 在内部横向滚动；容器上的 min-width: 0
       见 global.css 的 .arkade-table-scroll 说明（缺了它横向滚动会失效）。
     -->
     <div class="table-card arkade-table-scroll">
       <p v-if="containers.length > 0" class="arkade-table-scroll__hint">
-        左右滑动查看端口和操作
+        左右滑动查看容器指标、端口和操作
       </p>
       <n-data-table
         v-if="containers.length > 0 || loading"
@@ -390,7 +415,7 @@ onMounted(async () => {
         :bordered="false"
         :single-line="false"
         size="medium"
-        :scroll-x="1180"
+        :scroll-x="1482"
       />
       <empty-state
         v-else-if="loaded"

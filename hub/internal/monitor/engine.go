@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"arkade/hub/internal/store"
@@ -78,6 +79,7 @@ type Engine struct {
 	suppressionMu    sync.Mutex
 	suppressions     map[string]time.Time
 	metrics          metricCache
+	staleAfter       atomic.Int64
 }
 
 func NewEngine(db *store.DB, source Source, getConfig func(context.Context) (Config, error), notify func(context.Context, Event) error, log *slog.Logger) *Engine {
@@ -289,6 +291,7 @@ func (e *Engine) Tick(ctx context.Context) error {
 	}
 	now := e.now()
 	ts := now.Unix()
+	e.staleAfter.Store(metricStaleAfter(c.IntervalSeconds))
 	e.deliveryEligible = make(map[string]bool)
 	// Configuration changes and intentional operations never generate recovery.
 	excludedKeys := make(map[string]bool)
@@ -309,8 +312,6 @@ func (e *Engine) Tick(ctx context.Context) error {
 		e.containers = map[string]containerState{}
 		e.received = map[string]int64{}
 		e.offlineSince = map[string]int64{}
-		e.metrics.clear()
-		return nil
 	}
 	if e.source == nil {
 		return gerror.New("monitor source is nil")
@@ -333,6 +334,10 @@ func (e *Engine) Tick(ctx context.Context) error {
 		}
 		active[a.ID] = true
 		if !a.Online {
+			e.metrics.markStale(a.ID, nil)
+			if !c.Enabled {
+				continue
+			}
 			if e.offlineSince[a.ID] == 0 {
 				e.offlineSince[a.ID] = ts
 			}
@@ -358,15 +363,26 @@ func (e *Engine) Tick(ctx context.Context) error {
 			continue
 		}
 		delete(e.offlineSince, a.ID)
-		if err = e.evaluate(ctx, c, a.ID, "", "offline", false, true, "Agent 已恢复连接", ts, true); err != nil {
-			return err
+		if c.Enabled {
+			if err = e.evaluate(ctx, c, a.ID, "", "offline", false, true, "Agent 已恢复连接", ts, true); err != nil {
+				return err
+			}
 		}
 		result, collected := results[a.ID]
 		if !collected {
+			e.metrics.markStale(a.ID, nil)
 			e.pauseResources(ts, a.ID)
 			continue
 		}
 		snapshot, snapshotErr := result.snapshot, result.err
+		if snapshotErr == nil && snapshot.Error == "" {
+			e.cacheSnapshot(a, snapshot, c, result.receivedAt)
+		} else {
+			e.metrics.markStale(a.ID, nil)
+		}
+		if !c.Enabled {
+			continue
+		}
 		if snapshotErr == nil && snapshot.Error != "" {
 			snapshotErr = gerror.New(snapshot.Error)
 		}
@@ -389,17 +405,13 @@ func (e *Engine) Tick(ctx context.Context) error {
 			seen[m.ID] = true
 			if contains(c.ExcludedContainers, m.ID) || contains(c.ExcludedContainers, m.Name) || e.suppressed(a.ID, m.ID, now) {
 				e.resetContainer(ctx, a.ID, m.ID, ts)
-				e.metrics.removeContainer(a.ID, m.ID)
 				continue
 			}
-			e.metrics.put(a.ID, m, now)
-			e.metrics.annotate(a.ID, m.ID, a.Name, snapshot.Complete)
 			if err = e.evaluateContainer(ctx, c, a.ID, m, ts); err != nil {
 				return err
 			}
 		}
 		if snapshot.Complete {
-			e.metrics.retainAgentContainers(a.ID, seen)
 			for key, v := range e.containers {
 				if len(key) > len(a.ID) && key[:len(a.ID)+1] == a.ID+"\x00" && !seen[key[len(a.ID)+1:]] {
 					if ts-v.Seen > 86400 {
@@ -422,7 +434,11 @@ func (e *Engine) Tick(ctx context.Context) error {
 			delete(e.containers, key)
 		}
 	}
+	e.metrics.retainAgents(active)
 	e.metrics.prune(now.Add(-24 * time.Hour).Unix())
+	if !c.Enabled {
+		return nil
+	}
 	return e.dispatchPhase(ctx, c, ts)
 }
 
@@ -462,8 +478,9 @@ func (e *Engine) dispatchPhase(ctx context.Context, c Config, ts int64) error {
 }
 
 type collectionResult struct {
-	snapshot envelope.MonitorSnapshot
-	err      error
+	snapshot   envelope.MonitorSnapshot
+	receivedAt time.Time
+	err        error
 }
 
 // 有界并发配合轮转游标，避免慢 Agent 阻塞其他节点或使队尾长期饥饿。
@@ -486,7 +503,7 @@ func (e *Engine) collect(ctx context.Context, agents []Agent, c Config) map[stri
 				snapshot, err := e.source.Snapshot(call, a.ID)
 				cancel()
 				mu.Lock()
-				results[a.ID] = collectionResult{snapshot: snapshot, err: err}
+				results[a.ID] = collectionResult{snapshot: snapshot, receivedAt: e.now(), err: err}
 				mu.Unlock()
 			}
 		}()

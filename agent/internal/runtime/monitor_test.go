@@ -23,7 +23,7 @@ func monitorFixture(t *testing.T, serve func(http.ResponseWriter, *http.Request)
 	return (&engine{client: c}).NewMonitorCollector()
 }
 
-const monitorInspectFixture = `{"Id":"full-id","Name":"/web","Config":{"Image":"nginx","Env":["PASSWORD=secret"]},"RestartCount":3,"State":{"Status":"running","StartedAt":"2024-01-01T00:00:00Z","FinishedAt":"0001-01-01T00:00:00Z","Health":{"Status":"healthy"}}}`
+const monitorInspectFixture = `{"Id":"full-id","Name":"/web","HostConfig":{"NetworkMode":"bridge"},"Config":{"Image":"nginx","Env":["PASSWORD=secret"]},"RestartCount":3,"State":{"Status":"running","StartedAt":"2024-01-01T00:00:00Z","FinishedAt":"0001-01-01T00:00:00Z","Health":{"Status":"healthy"}}}`
 const monitorStatsFixture = `{"cpu_stats":{"cpu_usage":{"total_usage":500},"system_cpu_usage":2000,"online_cpus":4},"precpu_stats":{"cpu_usage":{"total_usage":100},"system_cpu_usage":1000},"memory_stats":{"usage":800,"limit":2000,"stats":{"inactive_file":200}},"networks":{"eth0":{"rx_bytes":123,"tx_bytes":456},"eth1":{"rx_bytes":10,"tx_bytes":20}},"blkio_stats":{"io_service_bytes_recursive":[{"op":"Read","value":70},{"op":"Write","value":80},{"op":"Total","value":150}]}}`
 
 func TestMonitorHTTPFormula(t *testing.T) {
