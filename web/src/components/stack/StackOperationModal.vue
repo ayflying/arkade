@@ -288,8 +288,9 @@ function onShow(): void {
     hasTask: task.value !== null,
     taskFinished: runner.finished.value,
     startAttempted: runner.hasStartAttempted(),
-    autoStart: props.autoStart,
-    autoStarted
+    autoStart: props.autoStart && props.online,
+    autoStarted,
+    restartFinished: props.action === 'pull'
   })
 
   /*
@@ -314,6 +315,8 @@ function onShow(): void {
       return
     case 'start-new':
       awaitingStart.value = false
+      // 只有已确认结束的拉取可以换新请求；未完成或未知状态不清掉原请求。
+      if (task.value !== null && !runner.reset()) return
       autoStarted = true
       void runner.start()
       return
@@ -435,6 +438,7 @@ const logLabel = computed(() => `「${props.stackName}」${meta.value.label}的�
     preset="card"
     :title="`${meta.label} · ${props.stackName}`"
     class="op-modal"
+    style="width: min(860px, calc(100% - 24px))"
     :bordered="false"
     :mask-closable="false"
     @update:show="(v: boolean) => { if (!v) close() }"
@@ -698,7 +702,7 @@ const logLabel = computed(() => `「${props.stackName}」${meta.value.label}的�
 
 /* 固定高度 + 内滚动：长日志不会把弹窗撑爆 */
 .op-modal__log {
-  height: 320px;
+  height: min(320px, 36vh);
   margin: 0 0 12px;
   padding: 8px 10px;
   overflow: auto;
@@ -764,6 +768,7 @@ const logLabel = computed(() => `「${props.stackName}」${meta.value.label}的�
 
 .op-modal__footer {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   gap: 8px;

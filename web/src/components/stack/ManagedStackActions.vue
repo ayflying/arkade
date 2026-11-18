@@ -111,7 +111,8 @@ async function handleAction(action: StackOperationAction): Promise<void> {
   const meta = STACK_OPERATION_META[action]
 
   if (!meta.dangerous) {
-    openModal(action)
+    // 点击「更新镜像」就是启动意图：仅拉取，不重建或重启容器。
+    openModal(action, action === 'pull')
     return
   }
 

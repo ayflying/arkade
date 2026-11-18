@@ -24,6 +24,8 @@ export interface EntryState {
   autoStart: boolean
   /** autoStart 是否已经触发过 */
   autoStarted: boolean
+  /** 仅用于再次点击「更新镜像」：已结束的任务可以直接换成新任务。 */
+  restartFinished?: boolean
 }
 
 /** 打开弹窗后应该做什么 */
@@ -47,8 +49,8 @@ export type EntryAction =
  */
 export function decideEntry(state: EntryState): EntryAction {
   if (state.hasTask) {
-    // 未结束 → 接着看；已结束 → 什么都不做（要重跑必须用户明确点）
-    return state.taskFinished ? 'do-nothing' : 'resume'
+    if (!state.taskFinished) return 'resume'
+    return state.autoStart && state.restartFinished ? 'start-new' : 'do-nothing'
   }
 
   /*

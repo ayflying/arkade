@@ -112,6 +112,20 @@ function check(name, ok, detail) {
   check('终态: 不定格', shouldSnapshot(action) === false)
 }
 
+/* ───────── 更新镜像：主按钮直接开始，重开运行中任务只继续读取 ───────── */
+
+{
+  const pull = { autoStart: true, autoStarted: true, startAttempted: true, restartFinished: true }
+  const finished = decideEntry({ ...pull, hasTask: true, taskFinished: true })
+  check('更新镜像: 上次已结束，再点主按钮直接开始新任务', finished === 'start-new' && shouldSnapshot(finished))
+  check('更新镜像: 上次未结束，打开只恢复读取', decideEntry({ ...pull, hasTask: true, taskFinished: false }) === 'resume')
+  check('更新镜像: 没拿到上次结果，不自动发新请求', decideEntry({ ...pull, hasTask: false, taskFinished: false }) === 'retry-same-key')
+  const actions = readFileSync(join(here, '..', 'src/components/stack/ManagedStackActions.vue'), 'utf8')
+  const modal = readFileSync(join(here, '..', 'src/components/stack/StackOperationModal.vue'), 'utf8')
+  check('更新镜像: 详情按钮直接开启自动执行，仅对拉取生效', /openModal\(action, action === 'pull'\)/.test(actions))
+  check('操作弹窗: 桌面限宽，手机保留两侧留白', /width: min\(860px, calc\(100% - 24px\)\)/.test(modal))
+}
+
 /* ───────── 5. 状态未知（POST 过但没任务）→ 同 key 重试，不换内容 ───────── */
 
 {
