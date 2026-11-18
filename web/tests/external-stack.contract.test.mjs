@@ -334,6 +334,19 @@ const storeSrc = readFileSync(
 
 const sectionSrc = readFileSync(join(here, '..', 'src', 'components', 'stack', 'ExternalStackConfigSection.vue'), 'utf8')
 const detailSrc = readFileSync(join(here, '..', 'src', 'views', 'StackDetailView.vue'), 'utf8')
+const importModalSrc = readFileSync(join(here, '..', 'src', 'components', 'stack', 'StackImportModal.vue'), 'utf8')
+check(
+  '手动接管: 原配置不可读时仍可打开导入，并锁定当前项目',
+  /v-if="store\.configState\.value === 'unreadable'/.test(sectionSrc) &&
+    /:disabled="!online" @click="importShow = true"/.test(sectionSrc) &&
+    /:agent-id="agentId"\s+:project-name="stackName\.value"\s+lock-project-name/.test(sectionSrc) &&
+    /:readonly="lockProjectName"/.test(importModalSrc) && /immediate: true/.test(importModalSrc)
+)
+check(
+  '手动接管: 只有确认接管后才刷新详情，未完成时保留输入',
+  /@adopted="emit\('changed'\)"/.test(sectionSrc) &&
+    /if \(fullyOk\) \{\s+clearSensitive\(\)\s+emit\('update:show', false\)\s+emit\('adopted'\)/.test(importModalSrc)
+)
 const unifiedStoreSrc = readFileSync(join(here, '..', 'src', 'composables', 'useStackDetail.ts'), 'utf8')
 
 /*

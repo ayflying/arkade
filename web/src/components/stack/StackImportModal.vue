@@ -39,6 +39,8 @@ interface Props {
   agentId: string
   /** 外部项目名（预填） */
   projectName: string
+  /** 从详情打开时固定项目，避免接管同服务器上的另一编排。 */
+  lockProjectName?: boolean
 }
 
 const props = defineProps<Props>()
@@ -47,6 +49,8 @@ const emit = defineEmits<{
   (e: 'update:show', value: boolean): void
   /** 导入成功：通知列表刷新 */
   (e: 'imported'): void
+  /** 只有 Agent 确认接管后才切换详情视图，避免中途卸载并丢掉输入。 */
+  (e: 'adopted'): void
 }>()
 
 /** 用户粘贴的内容 */
@@ -89,7 +93,9 @@ watch(
       preview.value = null
       errorText.value = ''
     }
-  }
+  },
+  // 详情页按需挂载；首次渲染时 show 就可能已经为 true。
+  { immediate: true }
 )
 
 /** 关闭并清空（.env 可能有密码，不能在关掉后还留着） */
@@ -212,6 +218,7 @@ async function handleImport(): Promise<void> {
     if (fullyOk) {
       clearSensitive()
       emit('update:show', false)
+      emit('adopted')
     } else {
       // 保留输入；预检结果作废，必须重新预检才能再次导入
       preview.value = null
@@ -262,7 +269,7 @@ onUnmounted(() => {
 
     <div class="import__field">
       <label class="import__label">编排名</label>
-      <n-input v-model:value="name" placeholder="与服务器上的项目名一致" :disabled="importing" />
+      <n-input v-model:value="name" placeholder="与服务器上的项目名一致" :readonly="lockProjectName" :disabled="importing" />
     </div>
 
     <div class="import__field">

@@ -1,9 +1,12 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import { NAlert, NButton } from 'naive-ui'
+import StackImportModal from './StackImportModal.vue'
 import ExternalStackConfigPanel from '@/components/external/ExternalStackConfigPanel.vue'
 import ExternalStackCopyModal from '@/components/external/ExternalStackCopyModal.vue'
 import { useExternalStackConfigActions } from '@/composables/useExternalStackConfigActions'
-const props = defineProps<{ agentId: string; stackName: string }>()
+const props = defineProps<{ agentId: string; stackName: string; online: boolean }>()
+const importShow = ref(false)
 const emit = defineEmits<{ changed: [] }>()
 const { store, applying, preview, applyError, alreadyManaged, copyShow, copying, copyError, agentList, agentsLoading, editorContent, stackName, handleSaveDraft, handleApply, goManagedDetail, openCopy, handleCopy } = useExternalStackConfigActions(props, () => emit('changed'))
 </script>
@@ -23,6 +26,24 @@ const { store, applying, preview, applyError, alreadyManaged, copyShow, copying,
             @save-draft="handleSaveDraft"
             @update:content="editorContent = $event"
           />
+
+    <!-- 不依赖磁盘原文：复用列表页的粘贴、预检和确认流程。403 不提供入口。 -->
+    <div v-if="store.configState.value === 'unreadable' || (store.configReadable.value && store.draftOnly.value)" class="ext-detail__actions">
+      <n-button type="primary" size="small" :disabled="!online" @click="importShow = true">
+        粘贴配置接管
+      </n-button>
+      <span class="ext-detail__action-hint">
+        {{ online ? '粘贴原编排文件即可预检，接管不会启动、停止或重建容器。' : '服务器在线后可预检并接管。' }}
+      </span>
+    </div>
+    <stack-import-modal
+      v-if="importShow"
+      v-model:show="importShow"
+      :agent-id="agentId"
+      :project-name="stackName.value"
+      lock-project-name
+      @adopted="emit('changed')"
+    />
 
           <!--
             登记与复制只在对配置可读时出现：没有配置内容就没什么可登记。
