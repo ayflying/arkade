@@ -23,6 +23,7 @@ import AppBreadcrumb from '@/components/common/AppBreadcrumb.vue'
 import AppIcon from '@/components/common/AppIcon.vue'
 import AutoRefreshToggle from '@/components/common/AutoRefreshToggle.vue'
 import MobileMenuDrawer from '@/components/common/MobileMenuDrawer.vue'
+import RuntimeVersionFooter from '@/components/common/RuntimeVersionFooter.vue'
 import SidebarBrand from '@/components/common/SidebarBrand.vue'
 import SiteMenu from '@/components/common/SiteMenu.vue'
 import ThemeToggle from '@/components/common/ThemeToggle.vue'
@@ -244,6 +245,7 @@ async function handleLogout(): Promise<void> {
           <router-view />
         </div>
       </n-layout-content>
+      <runtime-version-footer />
     </n-layout>
   </n-layout>
 
@@ -264,6 +266,7 @@ async function handleLogout(): Promise<void> {
 /* 外层容器撑满视口高度，内部各自滚动 */
 .app-shell {
   height: 100vh;
+  height: 100dvh;
   background: var(--arkade-page-bg);
 }
 
@@ -322,6 +325,7 @@ async function handleLogout(): Promise<void> {
   /* 关键：flex 子项默认 min-width:auto，内部宽表格会把侧边栏挤扁 */
   min-width: 0;
   height: 100vh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
 }

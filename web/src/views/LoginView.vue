@@ -13,6 +13,7 @@
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NAlert, NButton, NForm, NFormItem, NInput } from 'naive-ui'
+import RuntimeVersionFooter from '@/components/common/RuntimeVersionFooter.vue'
 import { ApiError } from '@/types/api'
 import { useAuthStore } from '@/stores/auth'
 import { useAuthOptions } from '@/composables/useAuthOptions'
@@ -68,6 +69,7 @@ async function handleSubmit(): Promise<void> {
 </script>
 
 <template>
+  <div class="login-shell">
   <div class="login-page">
     <div class="login-card">
       <div class="login-brand">
@@ -125,14 +127,23 @@ async function handleSubmit(): Promise<void> {
       <p class="login-footnote">登录状态通过 Cookie 维持，关闭浏览器后需重新登录。</p>
     </div>
   </div>
+    <runtime-version-footer />
+  </div>
 </template>
 
 <style scoped>
+.login-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
 .login-page {
+  flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 100vh;
   padding: 24px;
   background: linear-gradient(135deg, var(--arkade-login-bg-1) 0%, var(--arkade-login-bg-2) 45%, var(--arkade-login-bg-3) 100%);
 }
