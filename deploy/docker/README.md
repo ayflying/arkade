@@ -78,7 +78,7 @@ docker compose --env-file .env -f compose.yml up -d
 
 ## 镜像、备份与验证
 
-默认使用 Docker Hub 的 `ayflying/arkade-hub:latest`、`ayflying/arkade-agent:latest`，也可直接改 YAML 为 GHCR 镜像。生产固定 `sha-<完整提交号>` 或摘要；本地代码与文档不代表远端镜像已发布。开发者构建上下文为仓库根目录：
+默认使用 Docker Hub 的 `ayflying/arkade-hub:latest`、`ayflying/arkade-agent:latest`，也可直接改 YAML 为 GHCR 镜像。生产固定完整版本号（例如 `0.0.7`）或摘要；本地代码与文档不代表远端镜像已发布。开发者构建上下文为仓库根目录：
 
 ```sh
 docker build -f hub/Dockerfile -t arkade-hub:local .

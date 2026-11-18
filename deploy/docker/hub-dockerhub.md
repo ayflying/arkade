@@ -39,4 +39,4 @@ docker compose --env-file .env ps
 
 仅支持 PostgreSQL。Hub 对配置的业务库执行版本化迁移；已有账号不因初始密码变量改变而重置。备份现有 PostgreSQL 和整个 `arkade-hub-data` 卷，后者包含设置主密钥与本机工作文件；数据库与主密钥必须配套恢复，业务容器数据另行备份。
 
-支持 Linux `amd64` / `arm64`。`latest` 随默认分支 `master` 更新，生产固定 `sha-<完整提交号>` 或摘要。镜像由 GitHub Actions 构建并发布 Docker Hub 与 GHCR；构建记录见 https://github.com/ayflying/arkade/actions 。配置检查不代表镜像已发布、数据库可达或服务器已升级。
+支持 Linux `amd64` / `arm64`。`latest` 随默认分支 `master` 更新，生产固定完整版本号（例如 `0.0.7`）或摘要。镜像由 GitHub Actions 构建并发布 Docker Hub 与 GHCR；构建记录见 https://github.com/ayflying/arkade/actions 。配置检查不代表镜像已发布、数据库可达或服务器已升级。

@@ -35,6 +35,6 @@ docker compose --env-file .env ps
 
 ## 标签与架构
 
-支持 Linux `amd64` 和 `arm64`。`latest` 随 GitHub 默认分支 `master` 更新；生产建议固定 `sha-<完整提交号>` 或镜像摘要。
+支持 Linux `amd64` 和 `arm64`。`latest` 随 GitHub 默认分支 `master` 更新；生产建议固定完整版本号（例如 `0.0.7`）或镜像摘要。
 
 镜像由 GitHub Actions 构建，同时推送 Docker Hub 和 GHCR；不是 Docker Hub Automated Builds。构建和发布记录见 https://github.com/ayflying/arkade/actions 。

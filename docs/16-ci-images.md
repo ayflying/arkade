@@ -3,7 +3,7 @@
 工作流：`.github/workflows/images.yml`。使用 GitHub Actions 构建，镜像发布到 GitHub Container Registry（GHCR），可以在 GitHub 的 Packages 页面查看，不把镜像二进制提交进 Git 仓库。
 
 **部署链路就是这个闭环**：本地改代码 → 推送 `master` → CI 跑测试并构建发布镜像 → 部署机 `docker compose pull && up -d`。
-部署机不编译、不需要源码，镜像来源统一，生产固定提交标签或摘要。
+部署机不编译、不需要源码，镜像来源统一，生产固定完整版本标签或摘要。
 
 ## 镜像地址
 
@@ -24,12 +24,12 @@ CI 将该版本注入两个二进制；从仓库根目录执行 Docker 构建时
 
 | 事件 | 行为 |
 | --- | --- |
-| 推送到 `master` | 测试、构建，发布 `latest`、`VERSION` 中的版本标签和 `sha-<完整提交号>` |
-| 推送 `v*` 标签 | 测试、构建，发布原标签和提交号；符合语义版本的标签额外发布版本号与主次版本号 |
+| 推送到 `master` | 测试、构建，发布 `latest` 和 `VERSION` 中的完整版本标签 |
+| 推送 `v*` 标签 | 测试、构建，仅发布 `VERSION` 中的完整版本标签 |
 | PR 到 `master` | 测试与镜像构建，不登录 GHCR、不推送镜像 |
-| Actions → Run workflow | 对选择的分支/标签执行构建发布；只有默认分支更新 `latest` |
+| Actions → Run workflow | 仅默认分支和 Git 发布标签可发布镜像；只有默认分支更新 `latest` |
 
-例如 `v1.2.3` 会生成 `v1.2.3`、`1.2.3`、`1.2` 和 `sha-...`，不会用版本标签覆盖开发分支的 `latest`。发布 Git 标签必须为 `v` 加上版本文件的完整值（例如文件为 `1.2.3` 时标签为 `v1.2.3`），不一致时拒绝发布。不建议使用浮动标签部署生产。
+例如 Git 标签 `v1.2.3` 只发布镜像标签 `1.2.3`，不更新 `latest`。镜像通过 OCI revision 元数据记录完整提交号，不再生成 `sha-…` 标签。发布 Git 标签必须为 `v` 加上版本文件的完整值（例如文件为 `1.2.3` 时标签为 `v1.2.3`），不一致时拒绝发布。不建议使用浮动标签部署生产。
 
 每次运行先执行三套 Go 模块测试与 vet、Web 构建及全部契约测试，全部通过后才并行构建 Hub、Agent。测试容器不提供 Docker CLI 和 socket，以免既有“Docker 不可用”的测试假设被 GitHub Runner 内置 Docker 干扰；实际编排生命周期由测试里的假 Docker 执行器验证。镜像构建使用 Buildx/QEMU 和 GitHub Actions 缓存。
 
@@ -52,7 +52,7 @@ docker pull ghcr.io/ayflying/arkade-hub:latest
 docker pull ghcr.io/ayflying/arkade-agent:latest
 ```
 
-生产建议固定 `sha-<完整提交号>` 或摘要，避免下一次推送 `master` 后浮动标签变化。私有包需要拥有 `read:packages` 的账号凭据，使用 `docker login ghcr.io --password-stdin`，不要把 Token 放在命令行、Compose 文件或 Git 中。
+生产建议固定完整版本号（例如 `0.0.7`）或摘要，避免下一次推送 `master` 后浮动标签变化。私有包需要拥有 `read:packages` 的账号凭据，使用 `docker login ghcr.io --password-stdin`，不要把 Token 放在命令行、Compose 文件或 Git 中。
 
 ### 部署默认就用 CI 镜像
 
