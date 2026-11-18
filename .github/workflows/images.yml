@@ -55,16 +55,15 @@ jobs:
       - name: Guard PostgreSQL-only dependencies and pure-Go build
         if: matrix.module == 'hub'
         working-directory: hub
-        env:
-          CGO_ENABLED: '0'
         run: |
+          # Test and vet 已用作业级 CGO_ENABLED=0 跑过完整的 PostgreSQL 集成测试。
+          # 此处只检查依赖边界和纯 Go 构建，不重复执行集成测试。
           # Hub only supports PostgreSQL. Do not reintroduce SQLite as a test fallback.
           go list -deps -test ./... > /tmp/arkade-hub-deps.txt
           if grep -E 'modernc.org/sqlite|github.com/(glebarez/go-sqlite|mattn/go-sqlite3|gogf/gf/contrib/drivers/sqlite)|migrate/v4/database/sqlite' /tmp/arkade-hub-deps.txt; then
             echo '发现 SQLite 依赖；Hub 应仅使用 PostgreSQL。' >&2
             exit 1
           fi
-          go test ./... -count=1 -timeout=10m
           go build ./...
 
   web-tests:
@@ -152,7 +151,10 @@ jobs:
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
+      # 编译阶段使用 BUILDPLATFORM；仅目标镜像的 apk 安装与 compose 检查仍需模拟。
       - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
       - uses: docker/setup-buildx-action@v3
       - name: Log in to GitHub Container Registry
         if: github.event_name != 'pull_request'

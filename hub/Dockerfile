@@ -8,7 +8,8 @@
 #   docker build -f hub/Dockerfile -t arkade-hub:dev .
 
 # ---------- 阶段一：前端构建 ----------
-FROM node:22-alpine AS webbuild
+# 前端产物与目标架构无关：在构建机原生运行 Node，两种镜像共用同一份产物。
+FROM --platform=$BUILDPLATFORM node:22-alpine AS webbuild
 
 WORKDIR /src/web
 
@@ -22,7 +23,7 @@ COPY web/ ./
 RUN pnpm build
 
 # ---------- 阶段二：Go 构建 ----------
-FROM golang:1.24-alpine AS gopkg
+FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS gopkg
 
 WORKDIR /src
 
@@ -44,7 +45,9 @@ COPY hub ./
 # -trimpath 去掉本机路径，-s -w 去掉调试符号。
 COPY VERSION /src/VERSION
 ARG VERSION
-RUN VERSION="${VERSION:-$(cat /src/VERSION)}" && CGO_ENABLED=0 GOOS=linux go build \
+ARG TARGETOS
+ARG TARGETARCH
+RUN VERSION="${VERSION:-$(cat /src/VERSION)}" && CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" go build \
         -trimpath \
         -ldflags "-s -w -X main.version=${VERSION}" \
         -o /out/arkade-hub ./cmd/hub

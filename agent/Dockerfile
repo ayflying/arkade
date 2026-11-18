@@ -6,7 +6,8 @@
 #   docker build -f agent/Dockerfile -t arkade-agent:dev .
 
 # ---------- 构建阶段 ----------
-FROM golang:1.24-alpine AS builder
+# 编译器在构建机原生运行，输出架构由 BuildKit 的目标平台参数决定。
+FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS builder
 
 WORKDIR /src
 
@@ -22,7 +23,9 @@ COPY agent ./
 # 静态二进制：Agent 要能直接丢到任意 Linux 服务器运行，不依赖 glibc。
 COPY VERSION /src/VERSION
 ARG VERSION
-RUN VERSION="${VERSION:-$(cat /src/VERSION)}" && CGO_ENABLED=0 GOOS=linux go build \
+ARG TARGETOS
+ARG TARGETARCH
+RUN VERSION="${VERSION:-$(cat /src/VERSION)}" && CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" go build \
         -trimpath \
         -ldflags "-s -w -X arkade/agent/internal/cli.Version=${VERSION}" \
         -o /out/arkade-agent ./cmd/agent
