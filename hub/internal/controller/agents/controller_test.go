@@ -62,12 +62,13 @@ func TestAgentLifecycle(t *testing.T) {
 	}
 	_, err = c.Create(ctx, &api.CreateReq{Name: "z-host"})
 	requireError(t, err, 409, "已存在同名的服务器，请换一个名称")
-	display, note, address := "  renamed  ", "", "[2001:db8::1]"
+	// 2026-11 起访问地址必须是带协议的完整地址（旧纯主机不再接受）
+	display, note, address := "  renamed  ", "", " HTTPS://[2001:0DB8:0:0::1] "
 	patched, err := c.Patch(ctx, &api.PatchReq{AgentID: id, DisplayName: &display, Note: &note, DirectAddress: &address})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if patched.Agent.DisplayName != "renamed" || patched.Agent.Note != "" || patched.Agent.DirectAddress != "2001:db8::1" {
+	if patched.Agent.DisplayName != "renamed" || patched.Agent.Note != "" || patched.Agent.DirectAddress != "https://[2001:db8::1]" {
 		t.Fatalf("patch=%+v", patched)
 	}
 	disabled, err := c.Disable(ctx, &api.DisableReq{AgentID: id})

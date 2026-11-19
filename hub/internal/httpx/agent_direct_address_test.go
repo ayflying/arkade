@@ -35,12 +35,13 @@ func TestDirectAddressPatchPersistsAndClears(t *testing.T) {
 	cookies := e.login(t)
 	e.seedAgent(t, "direct-test")
 	path := "/api/agents/direct-test"
-	rec, _ := e.do(t, http.MethodPatch, path, `{"direct_address":" [2001:db8::1] "}`, cookies)
+	// 2026-11 起必须是带协议的完整地址；IPv6 用方括号
+	rec, _ := e.do(t, http.MethodPatch, path, `{"direct_address":" HTTPS://[2001:0DB8:0:0::1] "}`, cookies)
 	if rec.Code != 200 {
 		t.Fatal(rec.Body.String())
 	}
 	a, err := e.db.GetAgent(context.Background(), "direct-test")
-	if err != nil || a.DirectAddress != "2001:db8::1" {
+	if err != nil || a.DirectAddress != "https://[2001:db8::1]" {
 		t.Fatalf("%+v %v", a, err)
 	}
 	rec, _ = e.do(t, http.MethodPatch, path, `{"note":"leave address"}`, cookies)
@@ -48,7 +49,7 @@ func TestDirectAddressPatchPersistsAndClears(t *testing.T) {
 		t.Fatal(rec.Body.String())
 	}
 	a, _ = e.db.GetAgent(context.Background(), "direct-test")
-	if a.DirectAddress != "2001:db8::1" {
+	if a.DirectAddress != "https://[2001:db8::1]" {
 		t.Fatal("omitted field reset")
 	}
 	rec, _ = e.do(t, http.MethodPatch, path, `{"direct_address":""}`, cookies)
