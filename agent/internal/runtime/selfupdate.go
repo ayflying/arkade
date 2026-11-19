@@ -56,8 +56,8 @@ const (
 	labelSelfComposeProject = "com.docker.compose.project"
 	labelSelfComposeService = "com.docker.compose.service"
 
-	// defaultSelfComposeFile 是标签缺失时退化的配置文件名。
-	defaultSelfComposeFile = "compose.yml"
+	// defaultSelfComposeFile 已移除：配置文件缺失时不再猜文件名，
+	// 而是少传一个 --file 交给 compose 在编排目录里自动发现。
 
 	// selfUpdateMaxLabelLen 限制从标签读到的字符串长度，防御异常值。
 	selfUpdateMaxLabelLen = 512
@@ -134,14 +134,9 @@ type SelfUpdateRuntime interface {
 // 以 root 权限、挂着 docker socket 的容器命令里，多一道白名单是廉价的。
 var selfUpdateNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$`)
 
-// SelfContainerInfo 用三步定位自己：
+// SelfContainerInfo 定位自己所在的容器，再读它的编排标签。
 //
-//  1. hostname —— 容器默认把 hostname 设成容器 ID 前 12 位，一步命中；
-//  2. /proc/self/cgroup —— hostname 被显式覆盖时，cgroup 路径里仍带完整 ID；
-//  3. 都不行 → 给出固定中文原因。
-//
-// 不用"按镜像名猜"：同一镜像可能跑着多个容器（比如多实例部署），
-// 猜错会把**另一个**容器当成自己重建，那是不可接受的误伤。
+// 定位方式见 detectSelfContainerID 的注释。
 func (e *engine) SelfContainerInfo(ctx context.Context) (SelfContainerInfo, error) {
 	id, err := e.detectSelfContainerID(ctx)
 	if err != nil {
@@ -149,9 +144,9 @@ func (e *engine) SelfContainerInfo(ctx context.Context) (SelfContainerInfo, erro
 	}
 
 	var raw struct {
-		ID    string `json:"Id"`
-		Name  string `json:"Name"`
-		Image string `json:"Image"`
+		ID     string `json:"Id"`
+		Name   string `json:"Name"`
+		Image  string `json:"Image"`
 		Config struct {
 			Image  string            `json:"Image"`
 			Labels map[string]string `json:"Labels"`
@@ -197,50 +192,134 @@ func (e *engine) SelfContainerInfo(ctx context.Context) (SelfContainerInfo, erro
 	if strings.Contains(info.ConfigFile, ",") {
 		return SelfContainerInfo{}, selfUpdateBlocked("当前编排使用了多个配置文件，暂不支持自更新")
 	}
-	if info.ConfigFile == "" {
-		// 老版本 compose 只写 working_dir。退化为目录下的约定文件名。
-		info.ConfigFile = path.Join(info.WorkingDir, defaultSelfComposeFile)
-	}
-	if !isSafeHostPath(info.ConfigFile) {
-		return SelfContainerInfo{}, selfUpdateBlocked("当前编排的配置文件路径不安全，已拒绝自更新")
-	}
-	// 配置文件必须在工作目录内：否则 helper 挂载了工作目录却读不到配置，
-	// 或读到的其实是另一个项目的配置。
-	if !strings.HasPrefix(info.ConfigFile, strings.TrimSuffix(info.WorkingDir, "/")+"/") {
-		return SelfContainerInfo{}, selfUpdateBlocked("当前编排的配置文件不在其工作目录内，已拒绝自更新")
+	// 配置文件名缺失时**不去猜**：老版本 compose 可能只写 working_dir，
+	// 而目录里到底是 compose.yml / compose.yaml / docker-compose.yml
+	// 只有 compose 自己知道。少传一个 --file，让它按 --project-directory
+	// 自动发现，比猜一个可能不存在的文件名稳得多（猜错会白失败一次）。
+	if info.ConfigFile != "" {
+		if !isSafeHostPath(info.ConfigFile) {
+			return SelfContainerInfo{}, selfUpdateBlocked("当前编排的配置文件路径不安全，已拒绝自更新")
+		}
+		// 配置文件必须在工作目录内：否则 helper 挂载了工作目录却读不到配置，
+		// 或读到的其实是另一个项目的配置。
+		if !strings.HasPrefix(info.ConfigFile, strings.TrimSuffix(info.WorkingDir, "/")+"/") {
+			return SelfContainerInfo{}, selfUpdateBlocked("当前编排的配置文件不在其工作目录内，已拒绝自更新")
+		}
 	}
 	return info, nil
 }
 
-// detectSelfContainerID 依次尝试 hostname 与 cgroup。
+// detectSelfContainerID 依次尝试三条线索定位自己所在的容器。
+//
+// 为什么需要三条：这三条线索各自都有"在某些环境里拿不到"的情况，
+// 而任何一条拿不到都不该让整个功能失效。
+//
+//  1. hostname —— 容器默认拿容器 ID 前 12 位当 hostname，最省事。
+//     但编排里显式写了 `hostname:` 就把它覆盖了，此时这个名字
+//     既不是 ID 也不一定是容器名，解析不出来。
+//  2. /proc/self/mountinfo —— Docker 必定把 /etc/hostname、/etc/hosts、
+//     /etc/resolv.conf 从 `<data-root>/containers/<完整 ID>/` 挂进来，
+//     所以挂载来源里就带着自己的完整 ID。
+//     这是**唯一与 cgroup 版本无关**的线索，也是本机实测能救回来的那条。
+//  3. /proc/self/cgroup —— 只在 cgroup v1 或 `cgroupns=host` 时带 ID。
+//     Docker 20.10 起 cgroup v2 默认用**私有** cgroup 命名空间，
+//     此时这个文件里只有 `0::/`，一个 ID 都没有——
+//     把它当主线索会在绝大多数新环境上直接失败（这正是线上踩到的坑）。
+//
+// 不用"按镜像名猜"：同一镜像可能跑着多个容器（比如多实例部署），
+// 猜错会把**另一个**容器当成自己重建，那是不可接受的误伤。
 func (e *engine) detectSelfContainerID(ctx context.Context) (string, error) {
-	host := strings.TrimSpace(os.Getenv("HOSTNAME"))
-	if host == "" {
-		if h, err := os.Hostname(); err == nil {
-			host = strings.TrimSpace(h)
+	host := selfHostname()
+	if host != "" {
+		// 先确认这个 hostname 真的能解析成一个容器，再采用它。
+		if id := e.resolveContainerID(ctx, host); id != "" {
+			return id, nil
 		}
 	}
-	if host != "" {
-		// 先确认这个 hostname 真的对应一个容器，再采用它。
-		var probe struct {
-			ID string `json:"Id"`
-		}
-		if err := e.client.getJSON(ctx, pathContainerPrefix+url.PathEscape(host)+"/json", &probe); err == nil && probe.ID != "" {
-			return probe.ID, nil
+	if id := containerIDFromMountinfo(); id != "" {
+		// 自己的挂载命名空间里只可能出现自己的 etc 文件来源，
+		// 但拿到 ID 后仍然过一遍引擎，顺便换回规范写法。
+		if resolved := e.resolveContainerID(ctx, id); resolved != "" {
+			return resolved, nil
 		}
 	}
 	if id := containerIDFromCgroup(); id != "" {
-		return id, nil
+		if resolved := e.resolveContainerID(ctx, id); resolved != "" {
+			return resolved, nil
+		}
 	}
+	// 把 hostname 写进原因：失败时这是唯一能远程看到的线索，
+	// 否则只能靠猜用户那边的部署形态。
 	return "", selfUpdateBlocked(
-		"无法确认自己运行在哪个容器里（hostname 与 cgroup 都没有容器 ID）。" +
-			"请确认执行面运行在容器中，或手动执行 docker compose pull 后再 up -d")
+		"无法确认自己运行在哪个容器里（hostname=%q，mountinfo 与 cgroup 中都没有容器 ID）。"+
+			"请确认执行面运行在容器中，或手动执行 docker compose pull 后再 up -d", host)
+}
+
+// selfHostname 取本进程看到的 hostname。
+//
+// 环境变量优先：Docker 总会设置 HOSTNAME，且它与容器的实际 hostname 一致；
+// 而 os.Hostname() 在某些精简镜像里可能读不到。
+func selfHostname() string {
+	if h := strings.TrimSpace(os.Getenv("HOSTNAME")); h != "" {
+		return h
+	}
+	h, err := os.Hostname()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(h)
+}
+
+// resolveContainerID 用 ref（完整 ID、ID 前缀或名称）向引擎确认容器存在。
+// 取不到就返回空串，由调用方继续试下一条线索。
+func (e *engine) resolveContainerID(ctx context.Context, ref string) string {
+	var probe struct {
+		ID string `json:"Id"`
+	}
+	if err := e.client.getJSON(ctx, pathContainerPrefix+url.PathEscape(ref)+"/json", &probe); err != nil {
+		return ""
+	}
+	return probe.ID
+}
+
+// selfMountinfoPath 是记录挂载来源的文件路径。
+//
+// 拆成变量而不是写死，是为了让测试能替换它——测试进程自己的
+// mountinfo 里通常没有容器 ID，写死就无法构造边界用例。
+var selfMountinfoPath = "/proc/self/mountinfo"
+
+// containerDirInMounts 从挂载来源里抠出容器目录 `<data-root>/containers/<64 位 ID>`。
+//
+// 只认带 `containers/` 前缀的形态，不用裸 64 位十六进制：
+// 裸匹配可能撞上卷路径或设备名里的哈希段，把别的容器 ID 当成自己。
+var containerDirInMounts = regexp.MustCompile(`containers/([0-9a-f]{64})`)
+
+// containerIDFromMountinfo 从 /proc/self/mountinfo 里取自己的容器 ID。
+func containerIDFromMountinfo() string {
+	data, err := os.ReadFile(selfMountinfoPath)
+	if err != nil {
+		return ""
+	}
+	return firstContainerIDFromMounts(string(data))
+}
+
+// firstContainerIDFromMounts 从 mountinfo 文本里取出第一个容器 ID。
+//
+// 单独拆出来是为了能直接测各种 data-root 形态（默认的 /var/lib/docker、
+// 群晖/fnOS 那类自定义路径、以及带 `containers/` 字样的干扰项）。
+func firstContainerIDFromMounts(content string) string {
+	m := containerDirInMounts.FindStringSubmatch(content)
+	if len(m) < 2 {
+		return ""
+	}
+	return m[1]
 }
 
 // selfCgroupPaths 是可能含容器 ID 的 cgroup 描述文件。
 //
-// cgroup v1 记 `/docker/<64 位 ID>`，v2 记 `/system.slice/docker-<ID>.scope`，
-// 两种都能用同一条正则捞出来。
+// cgroup v1 记 `/docker/<64 位 ID>`，v2 且 cgroupns=host 时记
+// `/system.slice/docker-<ID>.scope`，两种都能用同一条正则捞出来。
+// 注意 v2 + 私有 cgroup 命名空间时这里是空的，所以只能当兜底。
 var selfCgroupPaths = []string{"/proc/self/cgroup", "/proc/1/cgroup"}
 
 var containerIDPattern = regexp.MustCompile(`[0-9a-f]{64}`)
@@ -335,7 +414,11 @@ func (e *engine) RunDetachedComposeUp(ctx context.Context, req DetachedComposeUp
 	if !selfUpdateNamePattern.MatchString(req.Service) || !selfUpdateNamePattern.MatchString(req.Project) {
 		return "", selfUpdateBlocked("服务名或项目名不合法，已拒绝自更新")
 	}
-	if !isSafeHostPath(req.WorkingDir) || !isSafeHostPath(req.ConfigFile) {
+	if !isSafeHostPath(req.WorkingDir) {
+		return "", selfUpdateBlocked("编排路径不合法，已拒绝自更新")
+	}
+	// ConfigFile 允许为空（交给 compose 自动发现），但一旦非空就必须安全。
+	if req.ConfigFile != "" && !isSafeHostPath(req.ConfigFile) {
 		return "", selfUpdateBlocked("编排路径不合法，已拒绝自更新")
 	}
 	if req.ImageID == "" || !strings.HasPrefix(req.Name, selfUpdateHelperPrefix) {
@@ -351,13 +434,7 @@ func (e *engine) RunDetachedComposeUp(ctx context.Context, req DetachedComposeUp
 		// 直接用 docker 本体作为入口：镜像里本来就有 CLI 与 compose 插件，
 		// 不需要注入二进制，也就不需要"读我方可执行文件"这一步。
 		Entrypoint: []string{"docker"},
-		Cmd: []string{
-			"compose",
-			"--project-name", req.Project,
-			"--project-directory", req.WorkingDir,
-			"--file", req.ConfigFile,
-			"up", "-d", "--no-deps", "--pull", "always", req.Service,
-		},
+		Cmd:        composeUpArgs(req),
 		// root：只有 root 能打开宿主 socket。
 		User: "0:0",
 		Env: []string{
@@ -416,6 +493,26 @@ func (e *engine) RunDetachedComposeUp(ctx context.Context, req DetachedComposeUp
 		return "", fmt.Errorf("启动自更新容器失败: %w", serr)
 	}
 	return id, nil
+}
+
+// composeUpArgs 拼出 helper 容器里要执行的那条 compose 命令。
+//
+// 固定 argv、不经过 shell：项目名 / 服务名 / 路径都只作为**独立的参数项**
+// 传入，不会被拼进命令行里解释，因此不存在注入。
+//
+// `--file` 只在拿到确定的配置文件时才传。缺失时交给 compose 在
+// `--project-directory` 下自己发现（compose.yml / compose.yaml /
+// docker-compose.yml 都认），比我们猜一个文件名更可靠。
+func composeUpArgs(req DetachedComposeUp) []string {
+	args := []string{
+		"compose",
+		"--project-name", req.Project,
+		"--project-directory", req.WorkingDir,
+	}
+	if req.ConfigFile != "" {
+		args = append(args, "--file", req.ConfigFile)
+	}
+	return append(args, "up", "-d", "--no-deps", "--pull", "always", req.Service)
 }
 
 // CleanupSelfUpdateHelpers 删除残留的一次性自更新容器。
