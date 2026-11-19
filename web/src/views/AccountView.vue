@@ -5,6 +5,7 @@ import { getAccount, updateAccount } from '@/api/account';
 import { useAuthStore } from '@/stores/auth';
 import PasswordForm from '@/components/account/PasswordForm.vue';
 import IdentitySettings from '@/components/account/IdentitySettings.vue';
+import McpKeySettings from '@/components/admin/McpKeySettings.vue';
 const auth = useAuthStore();
 const displayName = ref(''), error = ref(''), success = ref(''), busy = ref(false), loaded = ref(false);
 async function load() {
@@ -57,6 +58,9 @@ onMounted(load);
   </n-card>
   <n-card v-if="loaded && !auth.user?.must_change_password" title="第三方身份绑定">
     <identity-settings :local-password="auth.user?.local_password === true" />
+  </n-card>
+  <n-card v-if="loaded && auth.user && !auth.user.must_change_password" title="MCP 接入">
+    <mcp-key-settings :key="auth.user.id" />
   </n-card>
   </n-space>
 </template>

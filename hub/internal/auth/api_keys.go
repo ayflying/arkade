@@ -76,36 +76,36 @@ func validAPIKeyID(id string) bool {
 	return err == nil
 }
 
-func (s *Service) CreateAPIKey(ctx context.Context, userID, name string) (store.AdminAPIKey, string, error) {
+func (s *Service) CreateAPIKey(ctx context.Context, userID, name string) (store.APIKey, string, error) {
 	name = strings.TrimSpace(name)
 	if !utf8.ValidString(name) || name == "" || utf8.RuneCountInString(name) > 80 || strings.ContainsFunc(name, unicode.IsControl) {
-		return store.AdminAPIKey{}, "", ErrInvalidAPIKeyName
+		return store.APIKey{}, "", ErrInvalidAPIKeyName
 	}
 	var id [16]byte
 	if _, err := rand.Read(id[:]); err != nil {
-		return store.AdminAPIKey{}, "", gerror.Wrap(err, "生成 MCP 密钥 ID 失败")
+		return store.APIKey{}, "", gerror.Wrap(err, "生成 MCP 密钥 ID 失败")
 	}
 	secret, err := newToken()
 	if err != nil {
-		return store.AdminAPIKey{}, "", gerror.Wrap(err, "生成 MCP 密钥失败")
+		return store.APIKey{}, "", gerror.Wrap(err, "生成 MCP 密钥失败")
 	}
-	k := store.AdminAPIKey{ID: hex.EncodeToString(id[:]), Name: name, CreatedAt: time.Now().UTC().Truncate(time.Second)}
+	k := store.APIKey{ID: hex.EncodeToString(id[:]), Name: name, CreatedAt: time.Now().UTC().Truncate(time.Second)}
 	token := apiKeyPrefix + k.ID + "." + secret
-	if err := s.db.InsertAdminAPIKey(ctx, userID, k, hashToken(token)); err != nil {
-		return store.AdminAPIKey{}, "", err
+	if err := s.db.InsertAPIKey(ctx, userID, k, hashToken(token)); err != nil {
+		return store.APIKey{}, "", err
 	}
 	return k, token, nil
 }
 
-func (s *Service) ListAPIKeys(ctx context.Context, userID string) ([]store.AdminAPIKey, error) {
-	return s.db.ListAdminAPIKeys(ctx, userID)
+func (s *Service) ListAPIKeys(ctx context.Context, userID string) ([]store.APIKey, error) {
+	return s.db.ListAPIKeys(ctx, userID)
 }
 
 func (s *Service) RevokeAPIKey(ctx context.Context, userID, id string) error {
 	if !validAPIKeyID(id) {
 		return store.ErrNotFound
 	}
-	return s.db.RevokeAdminAPIKey(ctx, userID, id)
+	return s.db.RevokeAPIKey(ctx, userID, id)
 }
 
 // APIKeyDisplayPrefix is derived solely from the public ID, not from the secret.
@@ -125,7 +125,7 @@ func (s *Service) AuthenticateAPIKey(ctx context.Context, token string) (user.Us
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	keyID := token[len(apiKeyPrefix) : len(apiKeyPrefix)+32]
-	u, err := s.db.AuthenticateAdminAPIKey(ctx, keyID, hashToken(token))
+	u, err := s.db.AuthenticateAPIKey(ctx, keyID, hashToken(token))
 	if errors.Is(err, store.ErrNotFound) {
 		return user.User{}, "", ErrInvalidAPIKey
 	}

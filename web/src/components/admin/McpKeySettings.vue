@@ -31,7 +31,7 @@ function errorText(cause: unknown, fallback: string): string {
   // Never render raw response/error text from credential-management calls.
   if (cause instanceof ApiError) {
     if (cause.status === 401) return '登录已过期，请重新登录。'
-    if (cause.status === 403) return '只有系统管理员可以管理自己的 MCP 密钥。'
+    if (cause.status === 403) return '当前账户无权执行此操作。'
     if (cause.status === 0) return `无法连接服务器。${fallback}`
   }
   return fallback
@@ -116,8 +116,8 @@ onMounted(load)
 
 <template>
   <div class="mcp-settings">
-    <n-alert type="warning" title="AI 可直接执行运维操作">
-      持有密钥的客户端可以用你的管理员身份调用 Arkade 提供的 MCP 工具。Arkade 不会逐次要求批准；错误指令也可能执行并影响正在运行的服务。只将密钥交给可信客户端，不再使用或发现泄露时立即撤销。
+    <n-alert type="warning" title="MCP 客户端使用你当前的权限">
+      持有密钥的客户端可在你当前的权限范围内，通过 Arkade MCP 工具读取数据和执行操作。Arkade 不会逐次要求批准；如果你有运维权限，错误指令可能影响正在运行的服务。只将密钥交给可信客户端，不再使用或发现泄露时立即撤销。
     </n-alert>
 
     <section class="mcp-section">
@@ -197,7 +197,6 @@ onMounted(load)
 .mcp-settings {
   display: grid;
   gap: 20px;
-  max-width: 920px;
   min-width: 0;
 }
 

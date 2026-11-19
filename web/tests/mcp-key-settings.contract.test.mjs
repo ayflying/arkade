@@ -48,19 +48,32 @@ test('MCP config points to the same-origin endpoint and uses a bearer header', a
   assert.equal(mcpKeyName('🛠'.repeat(81)), null)
 })
 
-test('MCP settings compile and the one-time reveal is isolated in the admin tab', () => {
+test('MCP key management is available from personal settings and the admin tab', () => {
+  const accountPath = 'views/AccountView.vue'
   const settingsPath = 'views/SettingsView.vue'
   const panelPath = 'components/admin/McpKeySettings.vue'
-  for (const filename of [settingsPath, panelPath]) {
+  for (const filename of [accountPath, settingsPath, panelPath]) {
     const { descriptor, errors } = parse(read(filename), { filename })
     assert.deepEqual(errors, [])
     compileScript(descriptor, { id: filename })
     assert.deepEqual(compileTemplate({ source: descriptor.template.content, filename, id: filename }).errors, [])
   }
-  assert.match(read('router/administration.ts'), /name: 'settings'.*adminOnly: true/)
+  const routes = read('router/administration.ts')
+  const accountRoute = routes.split('\n').find(line => line.includes("name: 'account'"))
+  assert.match(accountRoute, /path: 'account'/)
+  assert.doesNotMatch(accountRoute, /adminOnly|public/)
+  assert.match(read('components/common/UserMenu.vue'), /key === 'account'\) void router\.push\('\/account'\)/)
+  assert.match(read(accountPath), /<n-card v-if="loaded && auth\.user && !auth\.user\.must_change_password" title="MCP 接入">\s*<mcp-key-settings :key="auth\.user\.id"/)
+  assert.match(routes, /name: 'settings'.*adminOnly: true/)
   assert.match(read(settingsPath), /v-if="auth\.isAdmin" name="mcp"/)
   assert.match(read(settingsPath), /v-if="activeTab === 'mcp'" :key="auth\.user\?\.id"/)
-  const panel = read(panelPath)
+})
+
+test('shared MCP settings explain effective permissions and keep the one-time reveal local', () => {
+  const panel = read('components/admin/McpKeySettings.vue')
+  assert.match(panel, /MCP 客户端使用你当前的权限/)
+  assert.match(panel, /cause\.status === 403\) return '当前账户无权执行此操作。'/)
+  assert.doesNotMatch(panel, /管理员/)
   assert.match(panel, /keys\.value = \[created\.key, \.\.\.keys\.value\]/)
   assert.match(panel, /function dismissToken\(\) \{\s*token\.value = ''/)
   assert.match(panel, /onBeforeUnmount\(\(\) => \{\s*disposed = true\s*dismissToken\(\)/)

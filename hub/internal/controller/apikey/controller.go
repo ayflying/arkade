@@ -39,13 +39,13 @@ func (c *Controller) actor(ctx context.Context) (user.User, error) {
 	if !ok {
 		return user.User{}, controller.ErrUnauthorized
 	}
-	if u.Disabled || u.Role != user.RoleAdmin || u.MustChangePassword {
-		return user.User{}, controller.Failure("forbidden", "该操作仅管理员可用")
+	if u.Disabled || u.MustChangePassword {
+		return user.User{}, controller.Failure("forbidden", store.ErrAPIKeyOwnerIneligible.Error())
 	}
 	return u, nil
 }
 
-func view(k store.AdminAPIKey) api.KeyView {
+func view(k store.APIKey) api.KeyView {
 	return api.KeyView{ID: k.ID, Name: k.Name, Prefix: auth.APIKeyDisplayPrefix(k.ID), CreatedAt: k.CreatedAt}
 }
 
@@ -55,8 +55,8 @@ func failure(err error) error {
 		return controller.Failure("bad_request", auth.ErrInvalidAPIKeyName.Error())
 	case errors.Is(err, store.ErrNotFound):
 		return controller.Failure("not_found", "MCP 密钥不存在")
-	case errors.Is(err, store.ErrAdminAPIKeyOwnerIneligible):
-		return controller.Failure("forbidden", "该操作仅管理员可用")
+	case errors.Is(err, store.ErrAPIKeyOwnerIneligible):
+		return controller.Failure("forbidden", store.ErrAPIKeyOwnerIneligible.Error())
 	default:
 		return controller.ErrInternal
 	}

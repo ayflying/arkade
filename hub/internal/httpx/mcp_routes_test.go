@@ -30,11 +30,6 @@ func TestMCPAdminKeyAndTools(t *testing.T) {
 	e := newTestEnv(t)
 	cookies := e.login(t)
 	const keys = "/api/mcp/keys"
-	e.createUser(t, cookies, "mcp-reader", testPassword, "user")
-	viewer := e.loginAs(t, "mcp-reader", testPassword)
-	if r := mcpTestRequest(e.router, "POST", keys, "", `{"name":"不应签发"}`, viewer...); r.Code != 403 {
-		t.Fatalf("非管理员不能创建密钥：%d", r.Code)
-	}
 	const init = `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}`
 	const list = `{"jsonrpc":"2.0","id":2,"method":"tools/list"}`
 	const call = `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"arkade_list_agents","arguments":{}}}`

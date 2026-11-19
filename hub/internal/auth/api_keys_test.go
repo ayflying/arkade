@@ -54,8 +54,8 @@ func TestAPIKeyLifecycle(t *testing.T) {
 	}
 	t.Cleanup(func() { raw.Close() })
 	s := NewService(db, time.Hour)
-	for _, id := range []string{"owner", "other"} {
-		u := user.User{ID: id, Username: id, DisplayName: id, Role: user.RoleAdmin, PasswordHash: "not-needed", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	for id, role := range map[string]user.Role{"owner": user.RoleUser, "other": user.RoleAdmin} {
+		u := user.User{ID: id, Username: id, DisplayName: id, Role: role, PasswordHash: "not-needed", CreatedAt: time.Now(), UpdatedAt: time.Now()}
 		if err := db.CreateUser(ctx, u); err != nil {
 			t.Fatal(err)
 		}
@@ -66,7 +66,14 @@ func TestAPIKeyLifecycle(t *testing.T) {
 			t.Fatalf("invalid token accepted: %v", err)
 		}
 	}
-	create := func() (store.AdminAPIKey, string) {
+	assertActor := func(key store.APIKey, token string, role user.Role) {
+		t.Helper()
+		u, id, err := s.AuthenticateAPIKey(ctx, token)
+		if err != nil || id != key.ID || u.ID != "owner" || u.Role != role || u.PasswordHash != "" {
+			t.Fatalf("identity invalid: id=%q role=%q err=%v", id, u.Role, err)
+		}
+	}
+	create := func(role user.Role) (store.APIKey, string) {
 		t.Helper()
 		key, token, err := s.CreateAPIKey(ctx, "owner", "  测试  ")
 		if err != nil {
@@ -75,13 +82,22 @@ func TestAPIKeyLifecycle(t *testing.T) {
 		if key.Name != "测试" || !strings.HasPrefix(token, APIKeyDisplayPrefix(key.ID)) || len(token) < 50 {
 			t.Fatal("unexpected token metadata")
 		}
-		u, id, err := s.AuthenticateAPIKey(ctx, token)
-		if err != nil || id != key.ID || u.ID != "owner" || u.Role != user.RoleAdmin || u.PasswordHash != "" {
-			t.Fatalf("identity invalid: id=%q err=%v", id, err)
-		}
+		assertActor(key, token, role)
 		return key, token
 	}
-	key, token := create()
+	update := func(set string) {
+		t.Helper()
+		if _, err := raw.ExecContext(ctx, `UPDATE users SET `+set+` WHERE id='owner'`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertCannotIssue := func() {
+		t.Helper()
+		if _, _, err := s.CreateAPIKey(ctx, "owner", "forbidden"); !errors.Is(err, store.ErrAPIKeyOwnerIneligible) {
+			t.Fatalf("ineligible issuance: %v", err)
+		}
+	}
+	key, token := create(user.RoleUser)
 	var digest string
 	if err := raw.QueryRowContext(ctx, `SELECT token_hash FROM admin_api_keys WHERE id = $1`, key.ID).Scan(&digest); err != nil || digest != hashToken(token) {
 		t.Fatalf("credential not stored as digest: %v", err)
@@ -99,21 +115,22 @@ func TestAPIKeyLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertInvalid(token)
-	for _, update := range [][2]string{{"disabled=1", "disabled=0"}, {"role='user'", "role='admin'"}} {
-		_, token = create()
-		if _, err := raw.ExecContext(ctx, `UPDATE users SET `+update[0]+` WHERE id='owner'`); err != nil {
-			t.Fatal(err)
-		}
-		assertInvalid(token)
-		if _, _, err := s.CreateAPIKey(ctx, "owner", "forbidden"); !errors.Is(err, store.ErrAdminAPIKeyOwnerIneligible) {
-			t.Fatalf("ineligible issuance: %v", err)
-		}
-		if _, err := raw.ExecContext(ctx, `UPDATE users SET `+update[1]+` WHERE id='owner'`); err != nil {
-			t.Fatal(err)
-		}
-		assertInvalid(token)
-	}
-	_, token = create()
+	key, token = create(user.RoleUser)
+	update("role='admin'")
+	assertActor(key, token, user.RoleAdmin)
+	update("role='user'")
+	assertInvalid(token)
+	_, token = create(user.RoleUser)
+	update("must_change_password=1")
+	assertInvalid(token)
+	assertCannotIssue()
+	update("must_change_password=0")
+	update("disabled=1")
+	assertInvalid(token)
+	assertCannotIssue()
+	update("disabled=0")
+	assertInvalid(token)
+	_, token = create(user.RoleUser)
 	if _, err := raw.ExecContext(ctx, `DELETE FROM users WHERE id='owner'`); err != nil {
 		t.Fatal(err)
 	}

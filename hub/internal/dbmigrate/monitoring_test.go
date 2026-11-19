@@ -38,7 +38,7 @@ func TestMonitoringUpgradeFromV1(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.FromVersion != 1 || r.ToVersion != 5 || r.Applied != 4 || r.Dirty {
+	if r.FromVersion != 1 || r.ToVersion != 6 || r.Applied != 5 || r.Dirty {
 		t.Fatalf("upgrade: %+v", r)
 	}
 	var count int
