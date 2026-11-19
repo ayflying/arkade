@@ -19,7 +19,8 @@
  * 目标同名会被拒 / 复制不是移动。这四条每一条被误解都会让用户
  * 得到与预期相反的结果，所以不藏进帮助文档。
  */
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
+import ExecutionTerminal from '@/components/common/ExecutionTerminal.vue'
 import { NAlert, NButton, NCheckbox, NModal, NSelect, NSpin, NTag } from 'naive-ui'
 import type { SelectOption } from 'naive-ui'
 import { useStackMigrateTask } from '@/composables/useStackMigrateTask'
@@ -178,31 +179,6 @@ const emptyHint = computed(() => {
   return '正在等待服务器输出…'
 })
 
-/* ───────── 自动滚动（只在用户位于底部时跟随） ───────── */
-
-const logRef = ref<HTMLElement | null>(null)
-const atBottom = ref(true)
-/** 用最后一条事件的 seq 触发滚动：output.length 在有去重/裁剪时不可靠 */
-const lastSeq = computed(() =>
-  segments.value.length === 0 ? 0 : (segments.value.at(-1)?.chunks.at(-1)?.seq ?? 0)
-)
-
-async function scrollToBottom(): Promise<void> {
-  await nextTick()
-  const el = logRef.value
-  if (el !== null) el.scrollTop = el.scrollHeight
-}
-
-function handleScroll(): void {
-  const el = logRef.value
-  if (el === null) return
-  atBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < 24
-}
-
-watch(lastSeq, () => {
-  if (atBottom.value) void scrollToBottom()
-})
-
 /* ───────── 生命周期 ───────── */
 
 /**
@@ -231,8 +207,6 @@ watch(
 /** 开窗入口：已有任务继续看，没有等用户点开始 */
 function onShow(): void {
   if (!props.show) return
-  atBottom.value = true
-  void scrollToBottom()
   void ensureAgents()
   if (task.value !== null && !runner.finished.value) {
     // 关窗再打开：接着读，绝不重新提交
@@ -267,10 +241,6 @@ async function ensureAgents(): Promise<void> {
  */
 watch(() => props.show, onShow, { immediate: true })
 
-onMounted(() => {
-  void scrollToBottom()
-})
-
 async function handleStart(): Promise<void> {
   if (!canStart.value) return
   confirming.value = true
@@ -286,7 +256,6 @@ async function handleStart(): Promise<void> {
     })
     if (!confirmed || !props.show || !props.online ||
       !props.agents.some((agent) => agent.id === targetAgentId.value && agent.online)) return
-    atBottom.value = true
     await runner.start()
   } finally {
     confirming.value = false
@@ -404,13 +373,6 @@ function close(): void {
       {{ startAfter ? '完成后自动启动' : '完成后不启动' }}
     </div>
 
-    <div v-if="task !== null && task.command !== ''" class="migrate-modal__command">
-      <span class="migrate-modal__command-label">
-        当前命令<template v-if="commandCount > 0">（已执行 {{ commandCount }} 条命令）</template>
-      </span>
-      <code class="migrate-modal__command-text">{{ task.command }}</code>
-    </div>
-
     <div class="migrate-modal__status">
       <n-tag size="small" :bordered="false" :type="phaseType">{{ phaseText }}</n-tag>
       <span v-if="exitText !== ''" class="migrate-modal__exit">{{ exitText }}</span>
@@ -465,42 +427,13 @@ function close(): void {
       <span v-if="droppedReasons.includes('gap')">日志中间有缺失（部分输出未能接收）。</span>
     </div>
 
-    <!--
-      日志区：与 StackOperationModal 同一套分段渲染。
-      command 事件作为步骤标题，stage 是阶段进度（不加 $ 前缀），
-      文本一律插值不经 v-html，且已剥 ANSI 转义。
-    -->
-    <div
-      ref="logRef"
-      class="migrate-modal__log"
-      role="log"
-      aria-live="polite"
-      aria-label="迁移执行日志"
-      @scroll="handleScroll"
-    >
-      <div v-if="segments.length === 0" class="migrate-modal__empty">{{ emptyHint }}</div>
-      <template v-else>
-        <div v-for="(seg, i) in segments" :key="`seg-${String(i)}`" class="migrate-modal__segment">
-          <div v-if="seg.command !== null" class="migrate-modal__step">
-            <span class="migrate-modal__step-no">第 {{ i + 1 }} 步</span>
-            <code class="migrate-modal__step-cmd">{{ seg.command }}</code>
-          </div>
-          <div
-            v-for="sc in seg.chunks.filter((c) => c.stream === 'stage')"
-            :key="`stage-${String(sc.seq)}`"
-            class="migrate-modal__stage"
-          >
-            {{ sc.text }}
-          </div>
-          <pre v-if="seg.chunks.some((c) => c.stream !== 'stage')" class="migrate-modal__lines">{{
-            seg.chunks
-              .filter((c) => c.stream !== 'stage')
-              .map((c) => c.text)
-              .join('\n')
-          }}</pre>
-        </div>
-      </template>
-    </div>
+    <ExecutionTerminal
+      :segments="segments"
+      :current-command="task?.command"
+      :empty-hint="emptyHint"
+      :active="props.show"
+      label="迁移执行日志"
+    />
 
     <div class="migrate-modal__footer">
       <n-button
@@ -620,26 +553,6 @@ function close(): void {
   color: var(--arkade-text-tertiary);
 }
 
-.migrate-modal__command {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 8px;
-  margin-bottom: 8px;
-  font-size: 12px;
-}
-
-.migrate-modal__command-label {
-  color: var(--arkade-text-tertiary);
-}
-
-.migrate-modal__command-text {
-  font-family: var(--arkade-mono-font);
-  font-size: 12px;
-  color: var(--arkade-text-primary);
-  word-break: break-all;
-}
-
 .migrate-modal__status {
   display: flex;
   align-items: center;
@@ -665,60 +578,6 @@ function close(): void {
 
 .migrate-modal__truncated > span + span {
   margin-left: 8px;
-}
-
-.migrate-modal__log {
-  height: 260px;
-  overflow: auto;
-  padding: 10px 12px;
-  background: var(--arkade-page-bg);
-  border: 1px solid var(--arkade-border-color);
-  border-radius: 6px;
-  font-size: 12px;
-}
-
-.migrate-modal__empty {
-  color: var(--arkade-text-tertiary);
-}
-
-.migrate-modal__segment + .migrate-modal__segment {
-  margin-top: 10px;
-}
-
-.migrate-modal__step {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  margin-bottom: 4px;
-  font-size: 11px;
-  color: var(--arkade-text-tertiary);
-}
-
-.migrate-modal__step-no {
-  flex: 0 0 auto;
-}
-
-.migrate-modal__step-cmd {
-  font-family: var(--arkade-mono-font);
-  font-size: 11px;
-  color: var(--arkade-text-secondary);
-  word-break: break-all;
-}
-
-.migrate-modal__stage {
-  margin: 2px 0;
-  font-style: italic;
-  color: var(--arkade-text-tertiary);
-}
-
-.migrate-modal__lines {
-  margin: 0;
-  font-family: var(--arkade-mono-font);
-  font-size: 12px;
-  line-height: 1.55;
-  color: var(--arkade-text-primary);
-  white-space: pre-wrap;
-  word-break: break-all;
 }
 
 .migrate-modal__footer {

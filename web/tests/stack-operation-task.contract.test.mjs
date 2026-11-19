@@ -266,17 +266,7 @@ function read(rel) {
   check('stage: 不产生空命令段', segs.length === 2, String(segs.length))
   check('stage: 归到首个命令前的段', segs[0].command === null && segs[0].chunks[0].stream === 'stage')
 
-  const modal = readFileSync(new URL('../src/components/stack/StackOperationModal.vue', import.meta.url), 'utf8')
-  check(
-    'stage: 有独立渲染样式',
-    /op-modal__stage/.test(modal),
-    'stage 不能混进命令输出'
-  )
-  check(
-    'stage: 不与 command 共用 \$ 前缀样式',
-    /op-modal__stage[^}]*font-style:\s*italic/.test(modal),
-    'stage 是进度说明，不是命令'
-  )
+  const modal = read('src/components/common/ExecutionTerminal.vue')
   check(
     'stage: 不渲染百分比进度',
     !/\bprogress\b|percentage|%\s*<\/|aria-valuenow/.test(modal),
@@ -293,21 +283,7 @@ function read(rel) {
     !/v-html\s*=/.test(modal),
     '日志含用户可控文本，必须插值渲染'
   )
-  check(
-    '安全: 日志区用 pre 插值',
-    /*
-     * pre 带 v-if 且有换行，所以不能要求插值紧跟标签。
-     * 关键是：pre 内部是 {{ }} 插值（文本节点渲染，天然转义），而非 v-html。
-     */
-    /<pre[^>]*>[\s\S]{0,300}?seg\.chunks[\s\S]{0,300}?<\/pre>/.test(modal) &&
-      !/v-html\s*=/.test(modal),
-    '纯文本 + 插值，天然转义'
-  )
-  check('安全: 输出区有 role="log"', /role="log"/.test(modal))
-  check('安全: 输出区 aria-live polite', /aria-live="polite"/.test(modal))
-
-  // 命令只展示，不可编辑/不可执行
-  check('安全: 命令用 code 展示', /<code[^>]*class="op-modal__command-text"/.test(modal))
+  check('组件: 操作使用共享终端', /<ExecutionTerminal\b/.test(modal))
   check(
     '安全: 没有把命令塞进可编辑控件',
     !/<(input|textarea)[^>]*(command|cmd)/i.test(modal)

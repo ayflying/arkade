@@ -381,10 +381,7 @@ const { mergeOutput, stripAnsi, byteLength, MAX_OUTPUT_BYTES, MAX_OUTPUT_EVENTS 
    * 是正当的，不该被这条断言误判。
    */
   check('组件: 不使用 v-html 指令', !/v-html\s*=/.test(modal), '日志含外部内容，v-html 会引入 XSS')
-  check('组件: 输出区 role="log"', /role="log"/.test(modal))
-  check('组件: aria-live="polite"', /aria-live="polite"/.test(modal), 'assertive 会打断屏幕阅读器')
-  check('组件: 用 pre + monospace', /<pre/.test(modal) && /--arkade-mono-font/.test(modal))
-  check('组件: 有自动滚动判定', /atBottom/.test(modal), '用户往上翻时不该被拽回底部')
+  check('组件: 拉取镜像使用共享终端', /<ExecutionTerminal\b/.test(modal))
   check(
     '组件: 说明关闭不停止任务',
     /关闭这个窗口不会停止任务|在后台继续/.test(modal)

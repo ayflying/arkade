@@ -20,7 +20,8 @@
  *
  * 只在用户本来就在底部时跟随。用户往上翻历史时突然被拽回底部是最恼人的交互。
  */
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
+import ExecutionTerminal from '@/components/common/ExecutionTerminal.vue'
 import { NAlert, NButton, NCheckbox, NModal, NSpin, NTag } from 'naive-ui'
 import { useStackOperationTask } from '@/composables/useStackOperationTask'
 import { getStackOperationTask, startStackOperation } from '@/api/stackOperationTasks'
@@ -160,20 +161,6 @@ const {
   errorText
 } = runner
 
-const logRef = ref<HTMLElement | null>(null)
-const atBottom = ref(true)
-
-/**
- * 最后一个事件的 seq。
- *
- * 自动滚动不能 watch `output.length`：达到条数上限后长度恒定不变，
- * 新内容一直进来但长度不动，滚动就彻底失效。seq 单调递增，是可靠信号。
- */
-const lastSeq = computed(() => {
-  const list = output.value
-  return list.length === 0 ? 0 : list[list.length - 1].seq
-})
-
 /** 终态后重跑需确认 */
 const showNewTaskConfirm = ref(false)
 /** 首次打开时是否需要用户点按钮（危险动作由父级确认后传 autoStart） */
@@ -254,24 +241,6 @@ watch(
   { immediate: true }
 )
 
-async function scrollToBottom(): Promise<void> {
-  await nextTick()
-  const el = logRef.value
-  if (el === null) return
-  el.scrollTop = el.scrollHeight
-}
-
-/** 记录是否在底部（24px 容差，避免取整误差） */
-function handleScroll(): void {
-  const el = logRef.value
-  if (el === null) return
-  atBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight <= 24
-}
-
-watch(lastSeq, () => {
-  if (atBottom.value) void scrollToBottom()
-})
-
 /**
  * 打开弹窗的入口逻辑（供 watch 与 onMounted 共用）。
  *
@@ -281,8 +250,6 @@ watch(lastSeq, () => {
  */
 function onShow(): void {
   if (!props.show) return
-  atBottom.value = true
-  void scrollToBottom()
 
   const action = decideEntry({
     hasTask: task.value !== null,
@@ -336,10 +303,6 @@ function onShow(): void {
  * （watch 依赖的 ref 都在上方定义完毕，初始化顺序安全。）
  */
 watch(() => props.show, onShow, { immediate: true })
-
-onMounted(() => {
-  void scrollToBottom()
-})
 
 /**
  * 任务进入终态时通知父级。
@@ -474,15 +437,7 @@ const logLabel = computed(() => `「${props.stackName}」${meta.value.label}的�
       将先保存配置再立即部署（compose up），可能创建或重建容器。这不是草稿保存。
     </n-alert>
 
-    <div v-if="task !== null" class="op-modal__command">
-      <span class="op-modal__command-label">
-        当前命令<template v-if="commandCount > 0">（已执行 {{ commandCount }} 条命令）</template>
-      </span>
-      <code class="op-modal__command-text">{{ task.command }}</code>
-      <span v-if="task.working_dir !== ''" class="op-modal__workdir">
-        工作目录 {{ task.working_dir }}
-      </span>
-    </div>
+    <p v-if="task?.working_dir" class="op-modal__workdir">工作目录 {{ task.working_dir }}</p>
 
     <div class="op-modal__status">
       <n-tag size="small" :bordered="false" :type="phaseType">{{ phaseText }}</n-tag>
@@ -555,45 +510,13 @@ const logLabel = computed(() => `「${props.stackName}」${meta.value.label}的�
       <span v-if="droppedReasons.includes('gap')">日志中间有缺失（部分输出未能接收）。</span>
     </div>
 
-    <!--
-      分段渲染：command 事件作为步骤标题，后面跟该步输出。
-      文本一律插值（不经 v-html），且已剥 ANSI 转义。
-    -->
-    <div
-      ref="logRef"
-      class="op-modal__log"
-      role="log"
-      aria-live="polite"
-      :aria-label="logLabel"
-      @scroll="handleScroll"
-    >
-      <div v-if="segments.length === 0" class="op-modal__empty">{{ emptyHint }}</div>
-      <template v-else>
-        <div v-for="(seg, i) in segments" :key="`seg-${String(i)}`" class="op-modal__segment">
-          <div v-if="seg.command !== null" class="op-modal__step">
-            <span class="op-modal__step-no">第 {{ i + 1 }} 步</span>
-            <code class="op-modal__step-cmd">{{ seg.command }}</code>
-          </div>
-          <!--
-            stage 事件是阶段进度说明（如备份复制文件），没有对应命令：
-            用单独的弱化样式显示，绝不加 `$` 前缀——那会让人以为执行了程序。
-          -->
-          <div
-            v-for="sc in seg.chunks.filter((c) => c.stream === 'stage')"
-            :key="`stage-${String(sc.seq)}`"
-            class="op-modal__stage"
-          >
-            {{ sc.text }}
-          </div>
-          <pre v-if="seg.chunks.some((c) => c.stream !== 'stage')" class="op-modal__lines">{{
-            seg.chunks
-              .filter((c) => c.stream !== 'stage')
-              .map((c) => c.text)
-              .join('\n')
-          }}</pre>
-        </div>
-      </template>
-    </div>
+    <ExecutionTerminal
+      :segments="segments"
+      :current-command="task?.command"
+      :empty-hint="emptyHint"
+      :active="props.show"
+      :label="logLabel"
+    />
 
     <div class="op-modal__footer">
       <n-button
@@ -645,31 +568,8 @@ const logLabel = computed(() => `「${props.stackName}」${meta.value.label}的�
   margin-bottom: 10px;
 }
 
-.op-modal__command {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-bottom: 10px;
-}
-
-.op-modal__command-label {
-  color: var(--arkade-text-tertiary);
-  font-size: 12px;
-}
-
-.op-modal__command-text {
-  display: block;
-  padding: 6px 8px;
-  font-family: var(--arkade-mono-font);
-  font-size: 12px;
-  color: var(--arkade-text-secondary);
-  background: var(--arkade-page-bg);
-  border: 1px solid var(--arkade-border-color);
-  border-radius: 4px;
-  word-break: break-all;
-}
-
 .op-modal__workdir {
+  margin: 0 0 8px;
   color: var(--arkade-text-tertiary);
   font-size: 12px;
   word-break: break-all;
@@ -700,73 +600,8 @@ const logLabel = computed(() => `「${props.stackName}」${meta.value.label}的�
   margin-bottom: 6px;
 }
 
-/* 固定高度 + 内滚动：长日志不会把弹窗撑爆 */
-.op-modal__log {
-  height: min(320px, 36vh);
-  margin: 0 0 12px;
-  padding: 8px 10px;
-  overflow: auto;
-  font-family: var(--arkade-mono-font);
-  font-size: 12px;
-  line-height: 1.55;
-  color: var(--arkade-text-primary);
-  background: var(--arkade-page-bg);
-  border: 1px solid var(--arkade-border-color);
-  border-radius: 4px;
-}
-
-.op-modal__segment + .op-modal__segment {
-  margin-top: 6px;
-}
-
-/* 步骤标题与普通输出区分开，一眼看出多命令在逐步执行 */
-.op-modal__step {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  padding: 2px 0;
-  border-top: 1px dashed var(--arkade-border-color);
-  margin-top: 6px;
-}
-
-.op-modal__segment:first-child .op-modal__step {
-  border-top: none;
-  margin-top: 0;
-}
-
-.op-modal__step-no {
-  flex-shrink: 0;
-  color: var(--arkade-text-tertiary);
-  font-size: 11px;
-}
-
-.op-modal__step-cmd {
-  color: var(--arkade-link-color, var(--arkade-primary));
-  word-break: break-all;
-}
-
-.op-modal__lines {
-  margin: 0;
-  white-space: pre-wrap;
-  word-break: break-all;
-  font-family: inherit;
-}
-
-/*
- * 阶段进度行：弱化、不占命令样式。
- * 没有百分比——stage 事件本身不带进度数值，画假进度条会误导。
- */
-.op-modal__stage {
-  color: var(--arkade-text-tertiary);
-  font-style: italic;
-  padding: 1px 0;
-}
-
-.op-modal__empty {
-  color: var(--arkade-text-tertiary);
-}
-
 .op-modal__footer {
+  margin-top: 12px;
   display: flex;
   flex-wrap: wrap;
   align-items: center;

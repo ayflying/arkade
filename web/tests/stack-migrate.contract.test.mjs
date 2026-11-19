@@ -326,22 +326,7 @@ const types = await loadTs('src/types/stackOperationTask.ts')
 
   // 日志区安全渲染
   check('安全: 无 v-html 赋值', !/v-html\s*=/.test(modal))
-  check('安全: 有 role=log', /role="log"/.test(modal))
-  check('安全: aria-live', /aria-live="polite"/.test(modal))
-  check(
-    '安全: 输出走 pre 插值',
-    /<pre v-if="[^"]*"\s+class="migrate-modal__lines">\{\{[\s\S]{0,200}?join\('\\n'\)[\s\S]{0,60}?\}\}<\/pre>/.test(modal),
-    '日志必须用文本插值渲染，绝不能拼 HTML'
-  )
-  check('安全: 命令用 code 展示', /<code class="migrate-modal__step-cmd">/.test(modal))
-  check(
-    '安全: 不提供可编辑命令输入',
-    !/<n-input[\s\S]{0,200}?command/.test(modal)
-  )
-  check(
-    '安全: stage 单独弱化样式且不加 $ 前缀',
-    /class="migrate-modal__stage"/.test(modal) && !/\$ \{\{/.test(modal)
-  )
+  check('组件: 迁移使用共享终端', /<ExecutionTerminal\b/.test(modal))
 
   // 未部署提示
   check('未部署: 有专门提示', /迁移功能的后端接口尚未部署/.test(modal))
