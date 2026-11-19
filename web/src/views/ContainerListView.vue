@@ -115,7 +115,7 @@ const columns = useResponsiveColumns(computed<DataTableColumns<Container>>(() =>
   {
     title: '名称',
     key: 'name',
-    minWidth: 160,
+    minWidth: 180,
     ellipsis: { tooltip: true },
     /*
      * 名称可点击进详情。以前只能看列表，想查挂载和网络没有入口；
@@ -124,7 +124,7 @@ const columns = useResponsiveColumns(computed<DataTableColumns<Container>>(() =>
     render: (row) =>
       h(
         'a',
-        { class: 'arkade-link arkade-cell-mono', onClick: () => goDetail(row.id) },
+        { class: 'arkade-link arkade-cell-name', onClick: () => goDetail(row.id) },
         row.name !== '' ? row.name : row.id
       )
   },

@@ -228,6 +228,28 @@ body {
   color: var(--arkade-text-secondary);
 }
 
+/*
+ * 表格里的「主名称」单元格（容器名这类可点击进入详情的标识）。
+ *
+ * 与 .arkade-cell-mono 的区别只在字号与字重：名称是用户扫表时定位目标的第一线索，
+ * 12px 灰色等宽字需要凑近才认得出，15px + 中等字重能一眼分辨。
+ * 颜色不在这里定：名称通常是链接，交给 .arkade-link 的主色，避免两条规则互相覆盖
+ * （两者同为单类选择器，后定义的 .arkade-link 会赢，写了也是死代码）。
+ * 仍保留等宽字体与单行省略——名称是技术字符串，等宽更利于区分 `-`、`_`
+ * 这类易混字符，长名称超出后由 ellipsis 与 tooltip 兜底。
+ */
+.arkade-cell-name {
+  display: inline-block;
+  max-width: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+  font-family: var(--arkade-mono-font);
+  font-size: 15px;
+  font-weight: 500;
+}
+
 .arkade-cell-muted {
   font-size: 12px;
   color: var(--arkade-text-tertiary);
