@@ -81,6 +81,12 @@ const (
 	// 密钥一旦落进审计就等于永久泄漏（备份里已有副本，无法撤回）。
 	ActionAgentCreate     = "agent.create"
 	ActionAgentTokenReset = "agent.token_reset"
+	// ActionAgentSelfUpdate 是"让这台服务器更新自己的组件镜像"。
+	//
+	// 单独立一个动作而不是复用 agent.update：前者改的是 Hub 里的登记信息，
+	// 后者会重建目标机器上的容器（对「本机」而言就是重启 Hub 自己），
+	// 后果完全不同，混在一起排查时无法区分。
+	ActionAgentSelfUpdate = "agent.self_update"
 
 	// 用户与用户组
 	ActionUserCreate  = "user.create"

@@ -175,6 +175,36 @@ export type ResetAgentTokenResponse = {
 }
 
 /**
+ * POST /api/agents/{id}/self-update 响应体：更新该服务器的 Arkade 组件镜像。
+ *
+ * ## 这是「受理结果」，不是「执行结果」
+ *
+ * 更新会把目标容器重建掉——当目标是内置本机时，重建的正是 Hub 自己，
+ * 这个请求的应答根本发不出去。因此后端只回答「已提交」，
+ * 成败要靠**列表轮询**看它是否带着新版本回来判断。
+ *
+ * `blockers` 非空表示这个部署方式不能自更新（例如不是用 compose 启动的），
+ * 属于**结论**而不是故障，必须原样展示给用户，否则他只会看到"更新失败"
+ * 却不知道为什么。
+ */
+export type SelfUpdateAgentResponse = {
+  /** 提交时的服务器视图（用于就地刷新那一行） */
+  agent: Agent
+  /** 是否已提交重建 */
+  accepted: boolean
+  /** 不能自更新的固定中文原因，非空即表示这个部署不支持 */
+  blockers: string[]
+  /** 本次更新的幂等键 */
+  request_id: string
+  /** 当前运行的镜像引用，例如 ayflying/arkade-hub:latest */
+  current_image: string
+  /** 执行重建的一次性容器名（排查用） */
+  helper_container_name: string
+  /** 后端写好的中文说明，直接展示，不要在前端重拼 */
+  message: string
+}
+
+/**
  * POST /api/agents 请求体：预创建服务器。
  *
  * `name` 是显示名且必填；`note` / `labels` 可选。

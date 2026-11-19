@@ -34,6 +34,8 @@ export interface AgentColumnHandlers {
   onResetToken: (agent: Agent) => void
   onToggleDisabled: (agent: Agent) => void
   onDelete: (agent: Agent) => void
+  /** 更新该服务器上的 Arkade 组件镜像（会重建容器，需二次确认） */
+  onSelfUpdate: (agent: Agent) => void
   isBusy: (agentId: string) => boolean
 }
 
@@ -117,8 +119,8 @@ export function createAgentColumns(handlers: AgentColumnHandlers): DataTableColu
     {
       title: '操作',
       key: 'actions',
-      // 五个按钮横排，给足宽度；窄屏靠 scroll-x 横向滚动兜底
-      width: 300,
+      // 六个按钮横排，给足宽度；窄屏靠 scroll-x 横向滚动兜底
+      width: 340,
       fixed: 'right',
       render: (row) =>
         h(AgentRowActions, {
@@ -128,7 +130,8 @@ export function createAgentColumns(handlers: AgentColumnHandlers): DataTableColu
           onEdit: () => handlers.onEdit(row),
           'onReset-token': () => handlers.onResetToken(row),
           'onToggle-disabled': () => handlers.onToggleDisabled(row),
-          onDelete: () => handlers.onDelete(row)
+          onDelete: () => handlers.onDelete(row),
+          'onSelf-update': () => handlers.onSelfUpdate(row)
         })
     }
   ]

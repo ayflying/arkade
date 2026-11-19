@@ -170,6 +170,12 @@ var auditRoutes = map[string]auditRoute{
 		Action:      audit.ActionAgentTokenReset,
 		TargetParam: "agentID",
 	},
+	// 自更新：重建目标服务器上的容器，是可追溯的高影响操作。
+	// 只记 agent_id，不记镜像名/临时容器名——那些值已能从服务器详情复原。
+	"/api/agents/{agentID}/self-update": {
+		Action:      audit.ActionAgentSelfUpdate,
+		TargetParam: "agentID",
+	},
 
 	// ---- 用户 ----
 	"/api/users": {

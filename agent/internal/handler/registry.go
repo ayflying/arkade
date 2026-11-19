@@ -270,6 +270,13 @@ func registerAll(reg *Registry, rt runtime.Runtime, composeMgr *compose.Manager,
 	// 编排配置来源读取：只读，不执行 compose、不写工作区，因此不依赖 composeMgr。
 	reg.Register(envelope.MethodComposeSource, newComposeSourceHandler(rt))
 
+	// 自更新：更新"执行器自己所在容器"的镜像。
+	//
+	// 同样只依赖运行时（要有引擎 socket 才能起一次性容器），与编排工作区无关，
+	// 因此注册在 composeMgr 提前返回之前——本机执行器即使没有编排工作区，
+	// 也仍然应该能更新自己。
+	reg.Register(envelope.MethodSelfUpdate, newSelfUpdateHandler(rt))
+
 	if composeMgr == nil {
 		return
 	}

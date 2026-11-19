@@ -6,6 +6,7 @@ import type {
   CreateAgentResponse,
   DeleteAgentResponse,
   ResetAgentTokenResponse,
+  SelfUpdateAgentResponse,
   UpdateAgentRequest,
   UpdateAgentResponse
 } from '@/types/agent'
@@ -122,4 +123,35 @@ export async function disableAgent(agentId: string): Promise<Agent> {
 export async function enableAgent(agentId: string): Promise<Agent> {
   const res = await httpPost<AgentToggleResponse>(`${agentPath(agentId)}/enable`)
   return res.agent
+}
+
+/**
+ * 让某台服务器更新自己所在容器的镜像。
+ *
+ * ## 这是「受理」不是「完成」
+ *
+ * 更新会把目标容器重建掉（对内置本机而言就是重启 Hub 自己），
+ * 因此**不可能**同步拿到成败：
+ * - 请求可能正常返回 accepted=true，也可能因为 Hub 正在重启而直接断连；
+ *   两种都可能是"已经开始了"，调用方不要因为抛错就断言失败。
+ * - 真正的结果要靠列表轮询：看它是否带着**新的 version** 重新上线。
+ *
+ * 注意 `docker compose up` 用的是编排文件里写的镜像 tag，
+ * 所以如果用户把 tag 固定成了某个旧版本，更新后版本不会变。
+ * 这种情况不是 bug，必须在提示里讲清「去改 tag」而不是让用户反复点。
+ */
+export async function selfUpdateAgent(agentId: string): Promise<SelfUpdateAgentResponse> {
+  const res = await httpPost<SelfUpdateAgentResponse>(`${agentPath(agentId)}/self-update`)
+  // 兜底：后端异常返回 null 时不让调用方崩在字段读取上
+  return (
+    res ?? {
+      agent: {} as Agent,
+      accepted: false,
+      blockers: ['更新请求没有返回结果，请查看服务器状态后重试'],
+      request_id: '',
+      current_image: '',
+      helper_container_name: '',
+      message: '更新请求没有返回结果'
+    }
+  )
 }

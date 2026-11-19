@@ -38,6 +38,7 @@ const emit = defineEmits<{
   (e: 'reset-token'): void
   (e: 'toggle-disabled'): void
   (e: 'delete'): void
+  (e: 'self-update'): void
 }>()
 
 const disabled = computed(() => isAgentDisabled(props.agent))
@@ -63,6 +64,26 @@ const enterHint = computed(() =>
     ? '这台服务器还没有接入过，暂时没有容器信息。请先在服务器上启动 Agent'
     : '查看该服务器上的容器'
 )
+
+/** 是否在线：更新需要 Agent 真的连着才能下发 */
+const isOnline = computed(() => props.agent.status === 'online')
+
+/**
+ * 「更新」按钮的说明文案。
+ *
+ * 三种情况分开说清楚，因为它们的**下一步动作完全不同**：
+ * - 在线 → 可以更新（但要提醒会短暂中断）；
+ * - 离线 → 连命令都发不出去，先恢复在线；
+ * - 被禁用 → 操作入口整体关闭，先去启用。
+ */
+const updateHint = computed(() => {
+  if (disabled.value) return '该服务器已被禁用，请先启用后再更新'
+  if (!isOnline.value) return '服务器当前离线，恢复在线后才能更新'
+  return '更新这台服务器上的 Arkade 组件镜像（会短暂中断，数据不受影响）'
+})
+
+/** 更新按钮是否可点：只有在线且未被禁用才下发命令 */
+const updateDisabled = computed(() => props.busy || disabled.value || !isOnline.value)
 </script>
 
 <template>
@@ -82,6 +103,15 @@ const enterHint = computed(() =>
         <n-button size="tiny" tertiary :disabled="busy" @click="emit('edit')">编辑</n-button>
       </template>
       修改显示名、备注与标签
+    </n-tooltip>
+
+    <n-tooltip trigger="hover" placement="top">
+      <template #trigger>
+        <n-button size="tiny" tertiary :disabled="updateDisabled" @click="emit('self-update')">
+          更新
+        </n-button>
+      </template>
+      {{ updateHint }}
     </n-tooltip>
 
     <n-tooltip v-if="!isLocal" trigger="hover" placement="top">
