@@ -23,7 +23,7 @@
  * 按 admin/user 角色猜会让有权限的用户永远看不到按钮。
  * 真正拦截在后端，403 由统一错误提示兜底。
  */
-import { computed, h, onMounted, ref } from 'vue'
+import { computed, h, onMounted, ref, watch } from 'vue'
 import { NButton, NTag, NTooltip } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import ResourcePage from '@/components/resource/ResourcePage.vue'
@@ -35,6 +35,7 @@ import { cancelImageTask, exportImage } from '@/api/imageTasks'
 import { deleteImage, listImages } from '@/api/resources'
 import { useCurrentAgent } from '@/composables/useCurrentAgent'
 import { useImageTasks } from '@/composables/useImageTasks'
+import { clampPage, slicePage } from '@/composables/useLocalPager'
 import { useResourceList } from '@/composables/useResourceList'
 import { useAgentsStore } from '@/stores/agents'
 import type { ImageInfo } from '@/types/resource'
@@ -60,6 +61,27 @@ const { items, loading, errorText, loaded, busyKey, refresh, runDelete } = useRe
   },
   loadErrorMessage: '加载镜像列表失败',
   deleteSuccessMessage: '镜像已删除'
+})
+
+/**
+ * 分页：每页 20 个（TABLE_PAGE_SIZE）。
+ *
+ * 镜像页还有「镜像任务」列表（不分页，属于进度信息），
+ * 这里的分页只作用于镜像表格本身。
+ * 悬空镜像统计用全量 items，不受当前页影响。
+ */
+const page = ref(1)
+const pagedItems = computed(() => slicePage(items.value, page.value))
+
+watch(
+  () => items.value.length,
+  (count) => {
+    page.value = clampPage(page.value, count)
+  }
+)
+
+watch(agentId, () => {
+  page.value = 1
 })
 
 /* ───────────────────────── 任务列表 ───────────────────────── */
@@ -376,14 +398,18 @@ onMounted(() => {
     title="本地镜像"
     :subtitle="subtitle"
     :columns="columns"
-    :data="items"
+    :data="pagedItems"
     :loading="loading"
     :loaded="loaded"
     :error-text="errorText"
     :online="isOnline"
+    :page="page"
+    :item-count="items.length"
+    unit="个"
     empty-description="这台服务器上还没有本地镜像。可以拉取镜像，或导入 docker save 导出的 tar 文件。"
     :scroll-x="1150"
     :row-key="(row: ImageInfo) => row.id"
+    @update:page="(value: number) => (page = value)"
     @refresh="refresh"
   >
     <!-- 顶部操作：拉取 / 导入 -->

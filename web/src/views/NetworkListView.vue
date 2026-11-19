@@ -9,13 +9,14 @@
  *    直接禁用删除按钮，不让用户白点；
  * 2. **有容器接入**的网络删除会被拒绝，同样提前禁用并说明原因。
  */
-import { computed, h, onMounted } from 'vue'
+import { computed, h, onMounted, ref, watch } from 'vue'
 import { NButton, NTag } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import AgentLabelList from '@/components/agent/AgentLabelList.vue'
 import ResourcePage from '@/components/resource/ResourcePage.vue'
 import { deleteNetwork, listNetworks } from '@/api/resources'
 import { useCurrentAgent } from '@/composables/useCurrentAgent'
+import { clampPage, slicePage } from '@/composables/useLocalPager'
 import { useResourceList } from '@/composables/useResourceList'
 import type { NetworkInfo } from '@/types/resource'
 import { confirmAction } from '@/utils/confirm'
@@ -39,6 +40,30 @@ const { items, loading, errorText, loaded, busyKey, refresh, runDelete } =
     loadErrorMessage: '加载网络列表失败',
     deleteSuccessMessage: '网络已删除'
   })
+
+/**
+ * 分页：每页 20 个（TABLE_PAGE_SIZE）。
+ *
+ * 只影响渲染哪一页——请求、统计口径仍基于全量 items。
+ * 删掉最后一页仅剩的条目后页码可能越界，watch 负责夹回合法页。
+ */
+const page = ref(1)
+const pagedItems = computed(() => slicePage(items.value, page.value))
+
+watch(
+  () => items.value.length,
+  (count) => {
+    page.value = clampPage(page.value, count)
+  }
+)
+
+/**
+ * 切换服务器时回到第 1 页：换了一台机器就是另一批网络，
+ * 沿用旧页码会出现「凭空第 4 页」。
+ */
+watch(agentId, () => {
+  page.value = 1
+})
 
 /**
  * 能否删除某个网络。
@@ -172,14 +197,18 @@ onMounted(() => {
     title="网络"
     :subtitle="subtitle"
     :columns="columns"
-    :data="items"
+    :data="pagedItems"
     :loading="loading"
     :loaded="loaded"
     :error-text="errorText"
     :online="isOnline"
+    :page="page"
+    :item-count="items.length"
+    unit="个"
     empty-description="这台服务器上还没有自定义网络。编排创建的网络会出现在这里。"
     :scroll-x="950"
     :row-key="(row: NetworkInfo) => row.id"
+    @update:page="(value: number) => (page = value)"
     @refresh="refresh"
   />
 </template>

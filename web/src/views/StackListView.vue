@@ -18,7 +18,7 @@
  *    不能靠"请求是否失败"判断在线状态，否则会把「本地缓存的旧列表」
  *    误当成实时数据。
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { NAlert, NButton, NTag } from 'naive-ui'
 import EmptyState from '@/components/common/EmptyState.vue'
@@ -29,6 +29,7 @@ const importShow = ref(false)
 function openImport() { importShow.value = true }
 import { listStacks } from '@/api/stacks'
 import { useCurrentAgent } from '@/composables/useCurrentAgent'
+import { clampPage } from '@/composables/useLocalPager'
 import { usePolling } from '@/composables/usePolling'
 import type { ExternalStack, StackSummary } from '@/types/stack'
 import type { StackListRow } from '@/utils/stackListModel'
@@ -101,6 +102,27 @@ const rows = computed<StackListRow[]>(() =>
 
 /** 统一后的统计：顶部副标题用 */
 const stats = computed(() => computeStats(rows.value))
+
+/**
+ * 分页：每页 20 个编排，状态放在 StackUnifiedTable 内部（受控页码）。
+ *
+ * 为什么页码放在页面而不是表格组件里：切换服务器、删除编排后要能把页码夹回合法范围，
+ * 而「切换服务器」只有页面知道（agentId）。统计口径（stats）始终是全量，
+ * 分页只决定渲染哪一页——与容器/镜像/网络/存储卷保持同一条规则。
+ */
+const page = ref(1)
+
+watch(
+  () => rows.value.length,
+  (count) => {
+    page.value = clampPage(page.value, count)
+  }
+)
+
+/** 换服务器＝换一批编排，沿用旧页码没有意义 */
+watch(agentId, () => {
+  page.value = 1
+})
 
 const subtitle = computed(() => {
   if (!loaded.value) return '正在加载编排…'
@@ -196,6 +218,7 @@ onMounted(() => {
     <div class="table-card arkade-table-scroll">
       <stack-unified-table
         v-if="rows.length > 0 || loading"
+        v-model:page="page"
         :rows="rows"
         :loading="loading"
         @open="goDetail"

@@ -12,21 +12,23 @@
  *   此时补拉一次服务器列表，保证能拿到在线状态（决定按钮是否可用）；
  * - 容器列表来自页面局部的 useContainers（页面卸载即释放）。
  */
-import { computed, h, onMounted, ref } from 'vue'
+import { computed, h, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NAlert, NButton, NDataTable, NSpace, NTag } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import AgentStatusTag from '@/components/agent/AgentStatusTag.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
+import PageHeader from '@/components/common/PageHeader.vue'
+import TablePager from '@/components/common/TablePager.vue'
 import ContainerLogDrawer from '@/components/container/ContainerLogDrawer.vue'
 import ContainerMetricCell from '@/components/container/ContainerMetricCell.vue'
 import ContainerOriginTag from '@/components/container/ContainerOriginTag.vue'
 import ContainerPortCell from '@/components/container/ContainerPortCell.vue'
 import ContainerRowActions from '@/components/container/ContainerRowActions.vue'
 import ContainerStateTag from '@/components/container/ContainerStateTag.vue'
-import EmptyState from '@/components/common/EmptyState.vue'
-import PageHeader from '@/components/common/PageHeader.vue'
 import { useContainerMetrics } from '@/composables/useContainerMetrics'
 import { useContainers } from '@/composables/useContainers'
+import { clampPage, slicePage } from '@/composables/useLocalPager'
 import { usePolling } from '@/composables/usePolling'
 import { useAgentsStore } from '@/stores/agents'
 import type { Container } from '@/types/container'
@@ -351,6 +353,35 @@ onMounted(async () => {
   }
   await load()
 })
+
+/* ───────────────────────── 分页 ───────────────────────── */
+
+/**
+ * 分页：每页 20 个容器（TABLE_PAGE_SIZE）。
+ *
+ * 关键约束：分页**只影响渲染**。
+ * - 列表轮询（usePolling → load）与指标采样（useContainerMetrics）都基于全量 containers，
+ *   改成后端分页会切断这两者；这里的轮询会把最新数据写回全量数组，
+ *   当前页内容随之自动更新，不会出现「翻页后状态不再刷新」。
+ * - 顶部摘要「共 52 个容器，运行中 20 个」统计的是全量，不是当前页。
+ *
+ * 越界处理：52 个容器停在第 3 页时删掉几个只剩 40 个，页码会越界，
+ * watch 负责夹回最后一页（而不是显示空表格）。
+ */
+const page = ref(1)
+const pagedContainers = computed(() => slicePage(containers.value, page.value))
+
+watch(
+  () => containers.value.length,
+  (count) => {
+    page.value = clampPage(page.value, count)
+  }
+)
+
+/** 切换服务器回到第 1 页：另一台机器是另一批容器 */
+watch(agentId, () => {
+  page.value = 1
+})
 </script>
 
 <template>
@@ -409,7 +440,7 @@ onMounted(async () => {
       <n-data-table
         v-if="containers.length > 0 || loading"
         :columns="columns"
-        :data="containers"
+        :data="pagedContainers"
         :loading="loading"
         :row-key="(row: Container) => row.id"
         :bordered="false"
@@ -426,6 +457,17 @@ onMounted(async () => {
         </template>
       </empty-state>
       <div v-else class="table-skeleton">正在加载容器列表…</div>
+
+      <!--
+        分页条：容器多时（如 52 个）一页只显示 20 个。
+        放在卡片内部、表格之后：分页翻的是这张表，跟着卡片收边更清楚。
+      -->
+      <table-pager
+        v-if="containers.length > 0"
+        v-model:page="page"
+        :item-count="containers.length"
+        unit="个"
+      />
     </div>
 
     <container-log-drawer

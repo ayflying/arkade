@@ -27,6 +27,8 @@ import { NAlert, NButton, NDataTable, NTag } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import EmptyState from '@/components/common/EmptyState.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
+import TablePager from '@/components/common/TablePager.vue'
+import { TABLE_PAGE_SIZE } from '@/composables/useLocalPager'
 import { useResponsiveColumns } from '@/utils/responsiveColumns'
 import type { TableRowData } from '@/types/table'
 
@@ -53,13 +55,31 @@ interface Props {
   scrollX: number
   /** 行唯一键 */
   rowKey: (row: T) => string
+  /**
+   * 资源量词，用于分页条上的「共 52 个镜像」。
+   * 各页面资源单位不同（个/条/项），默认「条」，页面按需覆盖。
+   */
+  unit?: string
+  /**
+   * 当前页与总条数：只用于显示分页条。
+   *
+   * 为什么不在这里切片：`data` 已经由页面切成当前页（页面还要用全量数据算统计），
+   * 外壳若再切一次会二次截断。这里只拿到「全量多少条」用于算页数。
+   * 两者都不传时不显示分页条（保持旧行为，例如任务列表这类不分页的表）。
+   */
+  page?: number
+  itemCount?: number
 }
 
-const props = defineProps<Props>()
+const props = withDefaults(defineProps<Props>(), {
+  unit: '条'
+})
 const shownColumns = useResponsiveColumns(toRef(props, 'columns'))
 
 const emit = defineEmits<{
   (e: 'refresh'): void
+  /** 当前页变化：由页面自己持有页码并切片，外壳只转发事件 */
+  (e: 'update:page', page: number): void
 }>()
 </script>
 
@@ -116,6 +136,20 @@ const emit = defineEmits<{
       <div v-else class="table-skeleton">
         <n-tag :bordered="false" size="small">正在加载…</n-tag>
       </div>
+
+      <!--
+        分页条：只在页面传入 page/itemCount 时出现。
+        放在表格卡片内部、表格之后：分页属于这张表，跟着卡片一起收边，
+        比悬在卡片下面更清楚「翻页翻的是哪张表」。
+      -->
+      <table-pager
+        v-if="page !== undefined && itemCount !== undefined && data.length > 0"
+        :page="page"
+        :item-count="itemCount"
+        :page-size="TABLE_PAGE_SIZE"
+        :unit="unit"
+        @update:page="(value: number) => emit('update:page', value)"
+      />
     </div>
 
     <!--

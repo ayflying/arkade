@@ -20,20 +20,29 @@ import { computed, h } from 'vue'
 import { NDataTable, NTag, NTooltip } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import StackStateTag from '@/components/stack/StackStateTag.vue'
+import TablePager from '@/components/common/TablePager.vue'
+import { slicePage } from '@/composables/useLocalPager'
 import type { StackListRow } from '@/utils/stackListModel'
 import { formatAbsoluteTime, formatRelativeTime } from '@/utils/formatTime'
 
 interface Props {
   rows: StackListRow[]
   loading?: boolean
+  /** 当前页（受控，由页面持有，便于换服务器时重置） */
+  page?: number
 }
 
-const props = withDefaults(defineProps<Props>(), { loading: false })
+const props = withDefaults(defineProps<Props>(), { loading: false, page: 1 })
 
 const emit = defineEmits<{
   /** 查看详情：所有行都进同一个详情页 */
   (e: 'open', name: string): void
+  /** 翻页：由页面更新自己的页码 */
+  (e: 'update:page', page: number): void
 }>()
+
+/** 当前页的行：分页不改变 rows 本身，统计仍基于全量（见 StackListView 的 stats） */
+const pagedRows = computed(() => slicePage(props.rows, props.page))
 
 /**
  * 登记状态标签。
@@ -161,17 +170,31 @@ const EMPTY_TEXT = '这台服务器上还没有可显示的编排'
 </script>
 
 <template>
-  <n-data-table
-    :columns="columns"
-    :data="props.rows"
-    :loading="props.loading"
-    :bordered="false"
-    :single-line="false"
-    size="medium"
-    :row-key="(row: StackListRow) => row.key"
-    :scroll-x="900"
-    :locale="{ emptyText: EMPTY_TEXT }"
-  />
+  <div class="stack-unified">
+    <n-data-table
+      :columns="columns"
+      :data="pagedRows"
+      :loading="props.loading"
+      :bordered="false"
+      :single-line="false"
+      size="medium"
+      :row-key="(row: StackListRow) => row.key"
+      :scroll-x="900"
+      :locale="{ emptyText: EMPTY_TEXT }"
+    />
+    <!--
+      分页条在组件内部：编排表是唯一被两个视图复用的表
+      （列表页 + 后续可能的内嵌场景），分页跟着表走才不会漏。
+      只有一页时组件自身会隐藏，这里不必再判。
+    -->
+    <table-pager
+      v-if="props.rows.length > 0"
+      :page="props.page"
+      :item-count="props.rows.length"
+      unit="个"
+      @update:page="(value: number) => emit('update:page', value)"
+    />
+  </div>
 </template>
 
 <style scoped>
