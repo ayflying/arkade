@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"reflect"
 	"regexp"
@@ -13,6 +14,7 @@ import (
 	images "arkade/hub/api/imagetasks/v1"
 	resources "arkade/hub/api/resources/v1"
 	stacks "arkade/hub/api/stacks/v1"
+	"arkade/protocol/composehash"
 
 	"github.com/google/jsonschema-go/jsonschema"
 )
@@ -98,6 +100,54 @@ func TestCatalogContracts(t *testing.T) {
 		if !seenRoutes[route] {
 			t.Errorf("missing tool for %s", route)
 		}
+	}
+}
+
+// TestCatalogConfigHashMatchesProjectHash 验证 MCP schema 里哈希字段的长度
+// 约束与 composehash.Project 的真实输出一致。
+//
+// 这是回归用例：曾经 schema 声明 64 位而实际哈希是 16 位，客户端传 16 位
+// 违反 pattern、传 64 位又和 Agent 算出的值对不上，导致所有需要回传
+// config_hash 的 MCP 工具（import_stack、adopt_external_stack 等）不可用。
+// 直接在测试里比较两边，哈希长度一旦变化就会立刻失败。
+func TestCatalogConfigHashMatchesProjectHash(t *testing.T) {
+	wantLen := len(composehash.Project("services:\n  app:\n    image: alpine\n", ""))
+	if wantLen != 16 {
+		t.Fatalf("项目哈希长度变成 %d，需同步更新 MCP schema、前端约定与文档", wantLen)
+	}
+
+	hashFields := map[string]bool{
+		"expected_content_hash": true,
+		"expected_config_hash":  true,
+		"source_hash":           true,
+	}
+	wantPattern := fmt.Sprintf("^[a-f0-9]{%d}$", wantLen)
+	checked := 0
+	for _, tool := range Catalog() {
+		props, ok := tool.InputSchema["properties"].(map[string]any)
+		if !ok {
+			continue
+		}
+		for name, raw := range props {
+			if !hashFields[name] {
+				continue
+			}
+			checked++
+			schema, ok := raw.(map[string]any)
+			if !ok {
+				t.Fatalf("%s/%s: schema 不是对象", tool.Name, name)
+			}
+			if schema["pattern"] != wantPattern {
+				t.Errorf("%s/%s: pattern=%v，应为 %s", tool.Name, name, schema["pattern"], wantPattern)
+			}
+			if schema["minLength"] != wantLen || schema["maxLength"] != wantLen {
+				t.Errorf("%s/%s: minLength=%v maxLength=%v，应均为 %d",
+					tool.Name, name, schema["minLength"], schema["maxLength"], wantLen)
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("未找到任何哈希字段，测试已与 Catalog 脱节")
 	}
 }
 

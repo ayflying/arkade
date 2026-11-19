@@ -88,8 +88,15 @@ func catalogEnvContent(description string) catalogField {
 	return catalogString("env_content", description, false, 0, 1<<20)
 }
 
+// catalogConfigHash 是项目配置哈希字段的 schema。
+//
+// 长度必须与 composehash.Project 的真实输出一致：**sha256 前 16 位**。
+// 曾经这里写成 64 位，于是 MCP 客户端无论传什么都过不了参数校验
+// （传 16 位违反 pattern，传 64 位又和 Agent 算出的哈希对不上），
+// import_stack / adopt_external_stack 这类工具因此完全不可用。
+// 改动长度时请同步 composehash.Project，并让 catalog_test 的比较继续成立。
 func catalogConfigHash(key, description string, required bool) catalogField {
-	return catalogPattern(key, description, "^[a-f0-9]{64}$", required, 64, 64)
+	return catalogPattern(key, description, "^[a-f0-9]{16}$", required, 16, 16)
 }
 
 func catalogTail() catalogField {
