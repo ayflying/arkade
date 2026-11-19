@@ -38,7 +38,7 @@ func TestMonitoringUpgradeFromV1(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.FromVersion != 1 || r.ToVersion != 2 || r.Applied != 1 || r.Dirty {
+	if r.FromVersion != 1 || r.ToVersion != 3 || r.Applied != 2 || r.Dirty {
 		t.Fatalf("upgrade: %+v", r)
 	}
 	var count int
@@ -57,6 +57,6 @@ func TestMonitoringUpgradeFromV1(t *testing.T) {
 		t.Fatalf("monitor history must not require live agent/incident FK: %v", err)
 	}
 	if _, err = Run(ctx, dsn); err != nil {
-		t.Fatalf("v2 verification: %v", err)
+		t.Fatalf("latest verification: %v", err)
 	}
 }

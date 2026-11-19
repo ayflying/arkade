@@ -7,14 +7,14 @@ import (
 	"testing"
 )
 
-func TestFreshPostgresMigrationV2(t *testing.T) {
+func TestFreshPostgresMigrationCurrent(t *testing.T) {
 	db := newTestDB(t)
 	var version int
 	var dirty bool
 	if err := rawDBOf(t, db).QueryRowContext(context.Background(), `SELECT version, dirty FROM `+dbmigrate.MigrationsTable).Scan(&version, &dirty); err != nil {
 		t.Fatal(err)
 	}
-	if version != 2 || dirty {
+	if version != 3 || dirty {
 		t.Fatalf("migration cursor version=%d dirty=%v", version, dirty)
 	}
 	var n int
