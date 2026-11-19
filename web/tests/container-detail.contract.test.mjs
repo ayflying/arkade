@@ -543,8 +543,8 @@ check(
   !/暂不能接管的原因/.test(stackListSrc)
 )
 check(
-  '文案: 统一表明确区分配置来源和登记状态',
-  /title: '配置来源'/.test(stackListSrc) && /title: '登记状态'/.test(stackListSrc)
+  '编排列表保留登记状态，不再显示配置来源列',
+  !/title: '配置来源'/.test(stackListSrc) && /title: '登记状态'/.test(stackListSrc)
 )
 
 /* ───────── 契约对齐：时间字段与资源上限语义 ───────── */

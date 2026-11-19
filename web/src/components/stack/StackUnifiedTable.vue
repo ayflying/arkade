@@ -57,11 +57,6 @@ const REG_META: Record<StackListRow['regState'], { label: string; type: 'success
   unregistered: { label: '未登记', type: 'default' }
 }
 
-/** 配置来源文案：直接说「改配置去哪里」，不说实现细节 */
-function sourceLabel(row: StackListRow): string {
-  return row.source === 'arkade' ? 'Arkade' : '服务器原目录'
-}
-
 /** 运行/总容器：null 表示未知，显示「—」 */
 function containerText(row: StackListRow): string {
   if (row.running === null && row.total === null) return '—'
@@ -111,12 +106,6 @@ const columns = computed<DataTableColumns<StackListRow>>(() => [
         { size: 'small', bordered: false, type: runningType(row) },
         { default: () => containerText(row) }
       )
-  },
-  {
-    title: '配置来源',
-    key: 'source',
-    width: 130,
-    render: (row) => sourceLabel(row)
   },
   {
     title: '登记状态',
@@ -182,7 +171,7 @@ const EMPTY_TEXT = '这台服务器上还没有可显示的编排'
       :single-line="false"
       size="medium"
       :row-key="(row: StackListRow) => row.key"
-      :scroll-x="900"
+      :scroll-x="760"
       :locale="{ emptyText: EMPTY_TEXT }"
     />
     <!--
