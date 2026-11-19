@@ -16,8 +16,7 @@ func catalogResources() []Tool {
 	}
 	tools := []Tool{
 		catalogTool("list_containers", "列出指定服务器上的容器、镜像引用及状态。", http.MethodGet, catalogContainerList, true, false, nil, nil, catalogAgentID()),
-		catalogTool("inspect_container", "查看指定容器的状态、网络、端口和挂载等详细信息；不要向无关位置转发敏感配置。", http.MethodGet, catalogContainer, true, false, nil, nil, container()...),
-		catalogTool("get_container_logs", "读取指定容器最近的日志，不持续跟踪；日志可能含凭据或个人数据。", http.MethodGet, catalogContainer+"/logs", true, false, []string{"tail"}, nil, container(catalogTail())...),
+		catalogTool("inspect_container", "查看指定容器的状态等摘要，不返回环境变量、命令、宿主机路径或网络地址。", http.MethodGet, catalogContainer, true, false, nil, nil, container()...),
 		catalogTool("list_container_metrics", "查看服务器最近一次容器 CPU、内存及网络采样；留意 stale 和指标可用性字段。", http.MethodGet, catalogAgent+"/container-metrics", true, false, nil, nil, catalogAgentID()),
 		catalogTool("start_container", "启动指定现有容器；它会按已有配置挂载卷、启用端口，可能与正在运行的服务冲突。", http.MethodPost, catalogContainer+"/start", false, false, nil, nil, container()...),
 		catalogTool("stop_container", "停止指定容器，容器内的服务立即不可用，进行中的连接或作业可能中断。", http.MethodPost, catalogContainer+"/stop", false, true, nil, nil, container()...),
@@ -50,7 +49,7 @@ func catalogVolumeFileTools() []Tool {
 	create.FixedBody["create_only"] = true
 	return []Tool{
 		volumeOperation("list_volume_files", "列出已有存储卷内的目录项，只在指定卷内操作。", "list", true, false),
-		volumeOperation("read_volume_file", "读取卷内文件，返回 Base64 正文与 SHA-256；内容可能含凭据。覆盖文件前可读取当前校验值。", "read", true, false),
+		volumeOperation("read_volume_file", "查询卷内文件的大小与 SHA-256 校验值，不返回文件正文。覆盖前可查询当前校验值。", "read", true, false),
 		create,
 		volumeOperation("replace_volume_file", "以新内容替换卷内文件；必须提供读取时的 SHA-256 防止并发覆盖。替换会改变挂载此卷的服务所见数据。", "write", false, true, content(),
 			catalogPattern("expected_sha256", "从 arkade_read_volume_file 取得的原文件 SHA-256。", "^[A-Fa-f0-9]{64}$", true, 64, 64)),

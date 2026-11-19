@@ -81,11 +81,11 @@ func catalogStackName(key string) catalogField {
 }
 
 func catalogComposeContent() catalogField {
-	return catalogString("content", "完整 Compose YAML（非空，最多 1 MiB）；不要把其中的凭据转发到无关位置。", true, 1, 1<<20)
+	return catalogString("content", "完整 Compose YAML（非空，最多 1 MiB）；不要在 MCP 提交真实凭据，请用服务端密钥引用或 Arkade 网页。", true, 1, 1<<20)
 }
 
 func catalogEnvContent(description string) catalogField {
-	return catalogString("env_content", description, false, 0, 1<<20)
+	return catalogString("env_content", description+" 不要通过 MCP 提交真实凭据。", false, 0, 1<<20)
 }
 
 // catalogConfigHash 是项目配置哈希字段的 schema。
@@ -97,10 +97,6 @@ func catalogEnvContent(description string) catalogField {
 // 改动长度时请同步 composehash.Project，并让 catalog_test 的比较继续成立。
 func catalogConfigHash(key, description string, required bool) catalogField {
 	return catalogPattern(key, description, "^[a-f0-9]{16}$", required, 16, 16)
-}
-
-func catalogTail() catalogField {
-	return catalogInteger("tail", "返回的尾部行数，省略时为 200。", false, 1, 2000)
 }
 
 func catalogConfirm() map[string]any { return map[string]any{"confirmation": true} }

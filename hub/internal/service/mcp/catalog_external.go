@@ -13,7 +13,7 @@ func catalogExternalStacks() []Tool {
 	}
 	return []Tool{
 		catalogTool("get_external_stack", "查看发现的外部 Compose 项目及关联容器。", http.MethodGet, catalogExternalStack, true, false, nil, nil, external()...),
-		catalogTool("get_external_stack_config", "读取外部 Compose 配置、阻塞原因及已有草稿。返回内容可能含凭据。", http.MethodGet, catalogExternalStack+"/config", true, false, nil, nil, external()...),
+		catalogTool("get_external_stack_config", "查看外部编排的配置校验值和草稿版本，不返回配置、草稿正文或诊断原文。", http.MethodGet, catalogExternalStack+"/config", true, false, nil, nil, external()...),
 		catalogTool("save_external_stack_draft", "将外部 Compose 配置草稿保存到 Hub，不改宿主文件、不重启或重建容器；使用草稿版本防止覆盖其他编辑。", http.MethodPut, catalogExternalStack+"/draft", false, false, nil, nil,
 			external(catalogComposeContent(), catalogConfigHash("source_hash", "可选的源配置哈希，取自读取外部配置的结果。", false), catalogInteger("expected_version", "首次创建用 0，编辑时用草稿当前版本。", true, 0, 0))...),
 		catalogTool("retry_external_stack_adopt", "清除该项目的自动发现结论，后台将在下一轮重新读取配置并尝试自动接管；不会立即部署服务。", http.MethodPost, catalogExternalStack+"/retry-adopt", false, false, nil, nil, external()...),

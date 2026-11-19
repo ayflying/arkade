@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"arkade/hub/internal/store"
 )
@@ -62,6 +63,19 @@ func TestMCPAdminKeyAndTools(t *testing.T) {
 	}
 	seedTargetAgent(t, e, "mcp-source", "测试源端")
 	seedTargetAgent(t, e, "mcp-target", "测试目标端")
+	now := time.Now()
+	const marker = "privacy-fixture-not-a-real-secret"
+	if err := e.db.CreateComposeStack(t.Context(), store.ComposeStack{
+		ID: "mcp-privacy-stack", AgentID: "mcp-source", Name: "private-demo", Version: 7,
+		Content: "services: {} # " + marker, EnvContent: "PASSWORD=" + marker,
+		ConfigHash: "0123456789abcdef", CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	const configCall = `{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"arkade_get_stack_config","arguments":{"agentID":"mcp-source","name":"private-demo"}}}`
+	if r := mcpTestRequest(e.router, "POST", "/mcp", created.Token, configCall); r.Code != 200 || strings.Contains(r.Body.String(), marker) || strings.Contains(r.Body.String(), `"isError":true`) || !strings.Contains(r.Body.String(), `\"version\":7`) {
+		t.Fatalf("MCP 未仅返回配置元数据：HTTP %d", r.Code)
+	}
 	const migrate = `{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"arkade_migrate_stack","arguments":{"agentID":"mcp-source","name":"demo","target_agent_id":"mcp-target","confirmation":"demo","request_id":"mcp-migrate-test"}}}`
 	if r := mcpTestRequest(e.router, "POST", "/mcp", created.Token, migrate); r.Code != 200 || strings.Contains(r.Body.String(), `"isError":true`) || !strings.Contains(r.Body.String(), `task_id`) {
 		t.Fatalf("有效密钥应能直接提交迁移任务：%d %s", r.Code, r.Body)

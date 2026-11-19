@@ -15,9 +15,7 @@ func catalogStacks() []Tool {
 	return []Tool{
 		catalogTool("list_stacks", "列出指定服务器的已纳管编排和发现的外部 Compose 项目。", http.MethodGet, catalogStackList, true, false, nil, nil, catalogAgentID()),
 		catalogTool("get_stack", "查看已纳管编排的状态、版本、配置哈希及关联容器。", http.MethodGet, catalogStack, true, false, nil, nil, stack()...),
-		catalogTool("get_stack_config", "读取当前编排 YAML 和环境文件供编辑；响应可能含凭据。", http.MethodGet, catalogStack+"/config", true, false, nil, nil, stack()...),
-		catalogTool("get_stack_logs", "读取指定编排最近的日志，不持续跟踪；日志可能含凭据或个人数据。", http.MethodGet, catalogStack+"/logs", true, false, []string{"service", "tail"}, nil,
-			stack(catalogString("service", "仅查看指定 Compose 服务；省略则查看整个项目。", false, 0, 0), catalogTail())...),
+		catalogTool("get_stack_config", "查看编排配置的版本；项目校验值可通过 arkade_get_stack 查询，不返回 YAML 或环境文件正文。", http.MethodGet, catalogStack+"/config", true, false, nil, nil, stack()...),
 		catalogTool("list_stack_containers", "列出当前编排的服务容器状态。", http.MethodGet, catalogStack+"/ps", true, false, nil, nil, stack()...),
 		catalogTool("create_stack", "创建编排并立即尝试部署；可能拉取镜像、创建容器、挂载卷和暴露端口。检查 sync_ok；Hub 保存成功不代表部署成功。", http.MethodPost, catalogStackList, false, false, nil, nil,
 			catalogAgentID(), catalogStackName("name"), catalogComposeContent(), catalogEnvContent("可选的 .env 文件正文，最多 1 MiB。")),
@@ -32,8 +30,8 @@ func catalogStacks() []Tool {
 			stack(catalogRequestID(), catalogField{"action", map[string]any{"type": "string", "enum": []string{"down", "stop", "restart", "pull", "rebuild", "backup"}, "description": "选择一项已有的 Compose 运维动作；部署和删除另有独立工具。"}, true},
 				catalogField{"services", map[string]any{"type": "array", "items": map[string]any{"type": "string", "minLength": 1}, "description": "仅 stop/restart 可指定服务；省略则操作整个项目。"}, false},
 				catalogBool("remove_volumes", "仅 down 可选；启用可永久删除项目卷，默认保留。"), catalogBool("include_volumes", "仅 backup 可选；把卷数据也写入备份归档。"))...),
-		catalogTool("get_stack_operation", "查询指定项目的运维或迁移任务；after 可用上次的 next_cursor 仅读取新增输出。任务日志可能含敏感信息。", http.MethodGet, catalogStackTask+"/{taskID}", true, false, []string{"after"}, nil,
-			stack(catalogPattern("taskID", "任务返回的 task_id。", "^[A-Za-z0-9_-]+$", true, 8, 128), catalogInteger("after", "只读取该输出游标之后的事件；省略从头读取。", false, 0, 0))...),
+		catalogTool("get_stack_operation", "查询指定项目的运维或迁移任务状态，不返回任务输出或错误原文。", http.MethodGet, catalogStackTask+"/{taskID}", true, false, []string{"after"}, nil,
+			stack(catalogPattern("taskID", "任务返回的 task_id。", "^[A-Za-z0-9_-]+$", true, 8, 128), catalogInteger("after", "兼容旧客户端的游标参数；不返回任务输出。", false, 0, 0))...),
 		catalogTool("migrate_stack", "向不同的目标服务器迁移编排；源项目保留。目标会接收配置和镜像、可选卷数据并可启动服务；失败可能残留已导入的资源，检查任务的 migrate.residual。", http.MethodPost, catalogStack+"/migrate", false, true, nil, nil,
 			stack(catalogString("target_agent_id", "不同于源服务器的目标服务器 ID。", true, 1, 0), catalogBool("include_volumes", "是否迁移受支持的项目卷数据；无法迁移的挂载需单独处理。"), catalogBool("start_after", "迁移后在目标启动服务；源仍保留，注意双重运行。"), catalogString("confirmation", "原 API 要求的编排名复述，必须和路径参数 name 完全相同。", true, 1, 64), catalogString("request_id", "可选的幂等请求标识，建议使用 UUID；仅重试完全相同的迁移时复用。", false, 1, 128))...),
 	}

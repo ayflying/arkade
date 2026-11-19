@@ -287,9 +287,9 @@ func writeAuditRecord(w auditWriter, log *slog.Logger, r *http.Request, rec *sta
 		}
 	}
 
-	// Credential endpoints never persist arbitrary response error strings: provider
-	// SDK/validation errors can contain reflected secrets or remote URLs.
-	if credentialAuditPath(r.URL.Path) && result == audit.ResultFailed {
+	// MCP and credential routes must not persist raw error strings or sync hints:
+	// agent diagnostics and provider errors can echo credentials or private URLs.
+	if (fromMCP || credentialAuditPath(r.URL.Path)) && result == audit.ResultFailed {
 		errMsg = "操作失败"
 	}
 

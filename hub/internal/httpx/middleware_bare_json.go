@@ -134,16 +134,26 @@ func writeBareError(r *ghttp.Request, d Deps, err error) {
 		commit(r, d.Log, http.StatusNoContent, nil, "", "")
 		return
 	}
+	// MCP 下游错误可能包含配置、文件或命令输出，不写入通用接口日志。
+	_, fromMCP := r.Context().Value(mcpInternalKey{}).(mcpActor)
 	// 控制器显式声明的业务错误：状态与 code 都由它给出。
 	var ce *controller.Error
 	if errors.As(err, &ce) {
 		if ce.Err() != nil {
-			d.Log.Error("接口返回业务错误", "code", ce.Code, "err", ce.Err())
+			if fromMCP {
+				d.Log.Error("MCP 工具接口返回业务错误", "status", ce.Status)
+			} else {
+				d.Log.Error("接口返回业务错误", "code", ce.Code, "err", ce.Err())
+			}
 		}
 		commit(r, d.Log, ce.Status, nil, ce.Code, ce.Message)
 		return
 	}
 	// 未归类错误一律按内部错误处理，绝不把原始 err 写进响应。
-	d.Log.Error("接口返回未归类错误", "err", err)
+	if fromMCP {
+		d.Log.Error("MCP 工具接口返回未归类错误")
+	} else {
+		d.Log.Error("接口返回未归类错误", "err", err)
+	}
 	commit(r, d.Log, http.StatusInternalServerError, nil, "internal", "服务器内部错误")
 }

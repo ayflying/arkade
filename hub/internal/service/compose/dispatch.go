@@ -15,7 +15,7 @@ func DispatchUp(ctx context.Context, db *store.DB, ops *agentlink.Ops, log *slog
 		if cerr.Code == envelope.CodeAgentOffline {
 			msg = "编排已保存，但 Agent 当前离线，稍后可重新下发"
 		}
-		log.Warn("下发编排失败，记录已保留", "agent", agent, "name", rec.Name, "err", cerr)
+		log.Warn("下发编排失败，记录已保留", "agent", agent, "name", rec.Name, "code", cerr.Code)
 		return envelope.ComposeOpResult{}, false, msg
 	}
 	if err := db.MarkComposeStackSynced(ctx, agent, rec.Name); err != nil {
