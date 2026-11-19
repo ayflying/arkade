@@ -1,8 +1,9 @@
 <script setup lang="ts">
 /** Shared summary-only table for managed and external projects. No inspect requests. */
 import { computed, h } from 'vue'
+import type { VNode } from 'vue'
 import { RouterLink } from 'vue-router'
-import { containerNetworkLines } from './stackDetailModel'
+import { containerNetworkView, networkAddressText } from './stackDetailModel'
 import { NDataTable, NEmpty } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import ContainerPortCell from '@/components/container/ContainerPortCell.vue'
@@ -19,6 +20,26 @@ interface Props {
 }
 
 const props = defineProps<Props>()
+
+/**
+ * 渲染「网络」或「容器 IP」单元格。
+ *
+ * `host` / `none` 这两种不是「地址未知」，而是**这个容器根本没有容器 IP**，
+ * 必须用文字说清楚；显示成「—」会让用户以为读取失败去翻日志。
+ */
+function renderNetworkCell(row: Container, field: 'name' | 'address'): string | VNode {
+  const view = containerNetworkView(row)
+  if (view.kind === 'host') return h('span', { class: 'arkade-cell-muted' }, '主机网络')
+  if (view.kind === 'none') return h('span', { class: 'arkade-cell-muted' }, '—')
+  // 一个容器可能加入多个网络：每个网络一行，顺序与 docker 返回一致
+  return h(
+    'div',
+    view.entries.map((entry) => {
+      const text = field === 'name' ? entry.name || '—' : networkAddressText(entry) || '—'
+      return h('div', { class: 'arkade-cell-mono' }, text)
+    })
+  )
+}
 
 const columns = computed<DataTableColumns<Container>>(() => [
   {
@@ -49,10 +70,25 @@ const columns = computed<DataTableColumns<Container>>(() => [
     render: (row) => h(ContainerStateTag, { state: row.state })
   },
   {
-    title: '网络 / 容器 IP',
+    /*
+     * 网络与容器 IP 分成两列。
+     *
+     * 以前合成一格「网络 / 容器 IP」显示成 `allinssl_default / 172.29.0.2`：
+     * 网络名一长就把地址挤没了，而地址才是排查时要抄走的那个值；
+     * 两格也能各自复制，不用整格复制再手工切。
+     */
+    title: '网络',
     key: 'networks',
-    minWidth: 220,
-    render: (row) => h('div', containerNetworkLines(row).map(line => h('div', { class: 'arkade-cell-mono' }, line)))
+    minWidth: 200,
+    ellipsis: { tooltip: true },
+    render: (row) => renderNetworkCell(row, 'name')
+  },
+  {
+    title: '容器 IP',
+    key: 'containerIp',
+    minWidth: 170,
+    ellipsis: { tooltip: true },
+    render: (row) => renderNetworkCell(row, 'address')
   },
   {
     title: '端口',

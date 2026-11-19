@@ -11,10 +11,24 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const source = path => readFileSync(resolve(root, path), 'utf8')
 const require = createRequire(import.meta.url)
 const model = await import('../src/components/stack/stackDetailModel.ts')
-assert.deepEqual(model.containerNetworkLines({}), ['—'])
-assert.deepEqual(model.containerNetworkLines({ network_mode: 'host', networks: [{ name: 'host', ip_address: '' }] }), ['主机网络'])
-assert.deepEqual(model.containerNetworkLines({ networks: [{ name: 'bridge', ip_address: '172.18.0.2', ipv6_address: 'fd00::2' }] }), ['bridge / 172.18.0.2 / fd00::2'])
-assert.deepEqual(model.containerNetworkLines({ networks: [{ name: 'private', ip_address: '' }] }), ['private / —'])
+// 网络与容器 IP 拆成两列后，模型也要给出结构化结果而不是拼好的一整串：
+// 拼成一串时网络名一长就会把地址挤没，两格才能各自复制。
+assert.deepEqual(model.containerNetworkView({}), { kind: 'none' })
+assert.deepEqual(model.containerNetworkView({ network_mode: 'host', networks: [{ name: 'host', ip_address: '' }] }), { kind: 'host' })
+assert.deepEqual(
+  model.containerNetworkView({ networks: [{ name: 'allinssl_default', ip_address: '172.29.0.2' }] }),
+  { kind: 'networks', entries: [{ name: 'allinssl_default', ipv4: '172.29.0.2', ipv6: '' }] }
+)
+// 一个容器加入多个网络：两个字段各自成行，行序与 docker 返回一致
+assert.deepEqual(
+  model.containerNetworkView({ networks: [
+    { name: 'bridge', ip_address: '172.18.0.2', ipv6_address: 'fd00::2' },
+    { name: 'private', ip_address: '' }
+  ] }).entries.map(e => [e.name, model.networkAddressText(e)]),
+  [['bridge', '172.18.0.2'], ['private', '']]
+)
+// 只有 IPv6 时不能显示空白：地址列退回 IPv6
+assert.equal(model.networkAddressText({ name: 'x', ipv4: '', ipv6: 'fd00::9' }), 'fd00::9')
 assert.equal(model.sameStackTarget(['a', 'one'], ['a', 'two']), false)
 assert.equal(model.sameStackTarget(['a', 'one'], ['b', 'one']), false)
 assert.equal(model.sameStackTarget(['a', 'one'], ['a', 'one']), true)
