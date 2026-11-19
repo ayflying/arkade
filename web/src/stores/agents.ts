@@ -11,6 +11,8 @@ import { computed, ref } from 'vue'
 import { listAgents } from '@/api/agents'
 import { ApiError } from '@/types/api'
 import type { Agent } from '@/types/agent'
+import { createThrottledSync, SYNC_MIN_INTERVAL_MS } from '@/utils/syncThrottle'
+import type { ThrottledSyncOptions } from '@/utils/syncThrottle'
 
 export const useAgentsStore = defineStore('agents', () => {
   const agents = ref<Agent[]>([])
@@ -58,6 +60,39 @@ export const useAgentsStore = defineStore('agents', () => {
   }
 
   /**
+   * 静默重新校准服务器状态。
+   *
+   * ## 为什么必须有
+   *
+   * `isOnline` 是从本 store 的缓存推导出来的，而 store 只在两个时机更新：
+   * 打开服务器列表页，或首次深链进入时补拉一次。页面一旦打开，状态就**定格**了：
+   * Hub 重启、本机执行器重新注册、远程 Agent 重连之后，页面仍然认为服务器离线，
+   * 启动/保存并部署等操作按钮全部被禁用，只能手动刷新整页才恢复。
+   *
+   * 所以「订阅在线状态」的页面需要一个不改变加载态、可反复调用的校准入口，
+   * 统一放在这里，避免每个页面各自调 refresh() 造成骨架闪烁与错误横幅。
+   *
+   * ## 并发与频率
+   *
+   * 实际请求交给 createThrottledSync：在途请求去重 + 最小间隔节流。
+   * 布局、页面、面包屑同时持有 useCurrentAgent 也不会把后端打出一串并发请求。
+   *
+   * refresh(true) 是静默刷新：不置 loading、不写 errorText。
+   * 它失败时返回 false 而不抛错，而节流器靠「抛出」判定失败，所以这里转换一次：
+   * 把 false 翻成异常，避免一次失败被当成成功、随后又被节流挡住好几秒。
+   */
+  const statusSyncOptions: ThrottledSyncOptions = {
+    minIntervalMs: SYNC_MIN_INTERVAL_MS,
+    run: async () => {
+      if (!(await refresh(true))) throw new Error('服务器状态同步失败')
+    }
+  }
+  const statusSync = createThrottledSync(statusSyncOptions)
+  function syncStatus(minIntervalMs?: number): Promise<boolean> {
+    return statusSync.trigger(minIntervalMs)
+  }
+
+  /**
    * 用后端返回的完整对象就地替换某台服务器。
    *
    * 用途：PATCH / disable / enable 都已返回更新后的完整 Agent，
@@ -92,5 +127,5 @@ export const useAgentsStore = defineStore('agents', () => {
     agents.value = [agent, ...agents.value]
   }
 
-  return { agents, loading, errorText, loaded, onlineCount, refresh, findById, replace, insert }
+  return { agents, loading, errorText, loaded, onlineCount, refresh, syncStatus, findById, replace, insert }
 })

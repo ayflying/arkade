@@ -20,11 +20,19 @@
  *
  * 解决：`ensureAgentsLoaded()` 在列表从未加载成功过时补拉一次。
  * 用 store 里的 `loaded` 标志判断，避免每个页面都重复请求。
+ *
+ * ## 在线状态必须持续校准（第二个真 bug）
+ *
+ * 只补拉一次仍然不够：页面开着期间 Hub 可能重启、内置执行器重新注册、
+ * 远程 Agent 重连。store 不动，`isOnline` 就一直是旧值，页面会长期误报离线。
+ * 因此本 composable 额外挂载 `useAgentStatusSync()`：挂载即校准一次，
+ * 之后按自动刷新的节奏周期校准（请求由 store 节流去重）。
  */
 
 import { computed, type ComputedRef } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAgentsStore } from '@/stores/agents'
+import { useAgentStatusSync } from '@/composables/useAgentStatusSync'
 import type { Agent } from '@/types/agent'
 
 export interface UseCurrentAgentReturn {
@@ -50,6 +58,13 @@ export function useCurrentAgent(): UseCurrentAgentReturn {
   const route = useRoute()
   const agentsStore = useAgentsStore()
 
+  /*
+   * 挂上「在线状态校准」：挂载即校准一次，之后跟随自动刷新周期。
+   * 放在这里而不是各页面：所有服务器页面都经由本 composable 取 isOnline，
+   * 写一处即可全部生效，也不会出现某个页面漏接、行为不一致。
+   */
+  useAgentStatusSync()
+
   const agentId = computed<string | null>(() => {
     const rawId = route.params.id
     // vue-router 的 params.id 可能是 string | string[]，数组时取第一个
@@ -72,6 +87,10 @@ export function useCurrentAgent(): UseCurrentAgentReturn {
    * 只在「从未成功加载过」时请求：`loaded` 由 store 在成功响应后置 true，
    * 因此重复进入不同操作页不会反复请求。
    * 失败不抛异常——页面会退化为「未找到该服务器」的提示，总好过整页报错。
+   *
+   * 注意与 `syncStatus` 的分工：本方法只负责「首次把列表装进 store」，
+   * 之后的**状态**校准由 useAgentStatusSync 周期调用 store.syncStatus 负责；
+   * 不要在这里加轮询，否则每个页面都会多一条自己的定时器。
    */
   async function ensureAgentsLoaded(): Promise<void> {
     if (agentsStore.loaded || agentsStore.loading) return
