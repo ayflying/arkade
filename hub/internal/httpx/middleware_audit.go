@@ -251,6 +251,14 @@ func writeAuditRecord(w auditWriter, log *slog.Logger, r *http.Request, rec *sta
 		detail = subAction + "：提交编排执行任务；受理不代表执行成功，请查看任务结果"
 	}
 
+	actor, fromMCP := r.Context().Value(mcpInternalKey{}).(mcpActor)
+	if fromMCP {
+		if detail != "" {
+			detail += "；"
+		}
+		detail += "MCP 工具：" + actor.tool + "；密钥 ID：" + actor.keyID
+	}
+
 	result := audit.ResultSuccess
 	errMsg := ""
 	// 判定失败的依据有两层：

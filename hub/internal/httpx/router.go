@@ -223,6 +223,7 @@ func NewRouter(d Deps) *ghttp.Server {
 	// 独立模块由各自 API 的 g.Meta 声明路由，入口只负责装配。
 	bindManagementRoutes(s, d)
 	bindIdentityRoutes(s, d)
+	bindMCPRoutes(s, d)
 
 	// ---------- 兜底 ----------
 	//

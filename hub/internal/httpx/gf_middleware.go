@@ -142,6 +142,12 @@ func gfChainWithSanitizer(
 // 返回 false 表示已提前拒绝、不应继续。
 func authenticatorGF(svc *auth.Service) func(*ghttp.Request) bool {
 	return func(r *ghttp.Request) bool {
+		if actor, ok := r.Context().Value(mcpInternalKey{}).(mcpActor); ok {
+			// Only the authenticated MCP dispatcher can construct this context;
+			// public API callers cannot opt into it with headers or parameters.
+			r.Request = r.Request.WithContext(context.WithValue(r.Context(), ctxKeyUser, actor.user))
+			return true
+		}
 		token := extractToken(r.Request)
 		u, err := svc.Authenticate(r.Context(), token)
 		if err != nil {

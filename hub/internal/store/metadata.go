@@ -19,6 +19,7 @@ import (
 func businessTables() []string {
 	return []string{
 		dao.Users.Table(),
+		dao.AdminApiKeys.Table(),
 		dao.Agents.Table(),
 		dao.AgentTokens.Table(),
 		dao.AuditLogs.Table(),

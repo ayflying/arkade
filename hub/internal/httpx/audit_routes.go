@@ -36,6 +36,9 @@ type auditRoute struct {
 // 中间件本身也会按 HTTP 方法先筛一遍，这里是第二道保险：
 // 即使有人误把 GET 路由登记进来，也不会被记录。
 var auditRoutes = map[string]auditRoute{
+	"/api/mcp/keys": {Action: audit.ActionAPIKeyCreate},
+	// Do not log the unvalidated path segment: it could be a pasted credential.
+	"/api/mcp/keys/{keyID}":                          {Action: audit.ActionAPIKeyRevoke},
 	"/api/auth/register":                             {Action: audit.ActionUserRegister},
 	"/api/account":                                   {Action: audit.ActionProfileUpdate},
 	"/api/account/password":                          {Action: audit.ActionPasswordChange},

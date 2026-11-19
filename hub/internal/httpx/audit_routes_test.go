@@ -113,7 +113,9 @@ func TestEveryMutatingRouteHasAuditAction(t *testing.T) {
 		}
 		// 登录接口在未认证分组外，auditMiddleware 覆盖不到，
 		// 且它是"获取凭证"而非业务操作，不纳入审计范围。
-		if routePattern == "/api/auth/login" {
+		// MCP 是协议入口；写工具分发到真实业务路由，由对应业务审计记录，
+		// 不把协议握手、列表或通知误记成业务写操作。
+		if routePattern == "/api/auth/login" || routePattern == "/mcp" {
 			continue
 		}
 		resolved := resolveAuditRoute(routePattern, method, routePattern)

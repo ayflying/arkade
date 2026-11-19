@@ -24,6 +24,7 @@ func TestAllActionsHaveLabels(t *testing.T) {
 		ActionAgentUpdate, ActionAgentDelete, ActionAgentDisable, ActionAgentEnable,
 		ActionUserCreate, ActionUserUpdate, ActionUserDelete, ActionUserLogin, ActionUserLogout,
 		ActionGroupCreate, ActionGroupUpdate, ActionGroupDelete,
+		ActionAPIKeyCreate, ActionAPIKeyRevoke,
 	}
 	for _, a := range all {
 		if !Known(a) {

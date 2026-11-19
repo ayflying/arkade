@@ -49,6 +49,7 @@ Arkade（中文名：容器方舟）是一个用于管理多台服务器上容�
 - [05 已决策项](docs/05-decisions.md) — 已拍板的技术与范围决策（开发以此为准）
 - [20 容器监控与通知](<docs/20-container-monitoring.md>) — 后台启用步骤、钉钉/SMTP、告警边界与主密钥备份
 - [21 内置本机执行](<docs/21-embedded-local.md>) — 本机/远程拓扑、运行权限、开关与持久化
+- [22 用 AI 管理 Arkade](<docs/22-mcp.md>) — MCP 密钥、客户端接入、可用运维工具与风险
 
 ## 目录结构
 

@@ -1,0 +1,116 @@
+package httpx
+
+import (
+	"context"
+	"net/http"
+	"net/url"
+	"strings"
+
+	api "arkade/hub/api/mcp/v1"
+	"arkade/hub/internal/auth"
+	"arkade/hub/internal/controller"
+	apikeyctl "arkade/hub/internal/controller/apikey"
+	"arkade/hub/internal/httpwire"
+	mcpsvc "arkade/hub/internal/service/mcp"
+	"arkade/hub/internal/user"
+
+	"github.com/gogf/gf/v2/net/ghttp"
+)
+
+const maxMCPRequest = 8 << 20
+
+type mcpActorKey struct{}
+type mcpInternalKey struct{}
+type mcpActor struct {
+	user       user.User
+	keyID      string
+	remoteAddr string
+	tool       string
+}
+
+// The nested request must not inherit GoFrame's outer request or any of its
+// routing/body context. Preserve cancellation and deadlines only.
+type mcpRequestContext struct{ context.Context }
+
+func (mcpRequestContext) Value(any) any { return nil }
+
+func bindMCPRoutes(s *ghttp.Server, d Deps) {
+	bindNativeModule(s, d, apikeyctl.New(d.Auth, newSessionAccessor()))
+	h := mcpsvc.NewHandler(d.HubVersion, func(ctx context.Context, req *http.Request, out http.ResponseWriter, tool string) {
+		actor, ok := ctx.Value(mcpActorKey{}).(mcpActor)
+		if !ok {
+			http.Error(out, "MCP 身份已失效", http.StatusUnauthorized)
+			return
+		}
+		actor.tool = tool
+		inner := context.WithValue(mcpRequestContext{ctx}, mcpInternalKey{}, actor)
+		req = req.WithContext(inner)
+		req.RemoteAddr = actor.remoteAddr
+		s.ServeHTTP(out, req)
+	})
+	s.Group("/", func(group *ghttp.RouterGroup) {
+		group.Middleware(gfChainWithSanitizer(d.Log,
+			func(req *ghttp.Request) { writeBareResult(req, d) }, nil,
+			func(_ *ghttp.Request, req *http.Request) (*http.Request, error) {
+				return httpwire.HideRawBody(req), nil
+			},
+			recoverer(d.Log), requestLogger(d.Log), securityHeaders))
+		group.Bind(&mcpTransport{auth: d.Auth, handler: h})
+	})
+}
+
+type mcpTransport struct {
+	auth    *auth.Service
+	handler http.Handler
+}
+
+func (m *mcpTransport) Transport(ctx context.Context, _ *api.TransportReq) (*api.TransportRes, error) {
+	gf := ghttp.RequestFromCtx(ctx)
+	req := httpwire.RestoreRawBody(ctx)
+	w := gf.Response.Writer
+	w.Header().Set("Cache-Control", "no-store")
+	if !mcpOriginAllowed(req) {
+		http.Error(w, "拒绝跨站 MCP 请求", http.StatusForbidden)
+		return nil, controller.ErrResponseCommitted
+	}
+	token, _ := auth.ParseAPIKeyAuthorization(req.Header)
+	actor, keyID, err := m.auth.AuthenticateAPIKey(ctx, token)
+	if err != nil {
+		w.Header().Set("WWW-Authenticate", "Bearer")
+		http.Error(w, "MCP 密钥无效或已撤销", http.StatusUnauthorized)
+		return nil, controller.ErrResponseCommitted
+	}
+	if req.ContentLength > maxMCPRequest {
+		http.Error(w, "MCP 请求超过大小限制", http.StatusRequestEntityTooLarge)
+		return nil, controller.ErrResponseCommitted
+	}
+	if req.Body != nil {
+		req.Body = http.MaxBytesReader(w, req.Body, maxMCPRequest)
+	}
+	inner := context.WithValue(ctx, mcpActorKey{}, mcpActor{user: actor, keyID: keyID, remoteAddr: req.RemoteAddr})
+	req = req.Clone(inner)
+	// Never give the protocol SDK or nested requests the original credential.
+	req.Header.Del("Authorization")
+	req.Header.Del("Cookie")
+	m.handler.ServeHTTP(w, req)
+	return nil, controller.ErrResponseCommitted
+}
+
+func mcpOriginAllowed(req *http.Request) bool {
+	origins := req.Header.Values("Origin")
+	if len(origins) == 0 {
+		return true
+	}
+	if len(origins) != 1 || req.Header.Get("Sec-Fetch-Site") == "cross-site" {
+		return false
+	}
+	orig, err := url.Parse(origins[0])
+	if err != nil || orig.User != nil || orig.Host == "" || orig.Path != "" || orig.RawQuery != "" || orig.Fragment != "" || orig.ForceQuery {
+		return false
+	}
+	scheme := "http"
+	if isHTTPS(req) {
+		scheme = "https"
+	}
+	return orig.Scheme == scheme && strings.EqualFold(orig.Host, req.Host)
+}

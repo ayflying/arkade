@@ -10,10 +10,18 @@ require (
 	github.com/coreos/go-oidc/v3 v3.14.1
 	github.com/gogf/gf/v2 v2.9.6
 	github.com/golang-migrate/migrate/v4 v4.19.1
+	github.com/google/jsonschema-go v0.4.2
 	github.com/gorilla/websocket v1.5.3
 	github.com/lib/pq v1.10.9
+	github.com/modelcontextprotocol/go-sdk v1.3.1
 	golang.org/x/crypto v0.45.0
 	golang.org/x/oauth2 v0.30.0
+)
+
+require (
+	github.com/segmentio/asm v1.1.3 // indirect
+	github.com/segmentio/encoding v0.5.3 // indirect
+	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 )
 
 require (
