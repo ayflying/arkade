@@ -20,7 +20,7 @@
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { NAlert, NButton, NTag } from 'naive-ui'
+import { NAlert, NButton, NInput, NTag } from 'naive-ui'
 import EmptyState from '@/components/common/EmptyState.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import StackUnifiedTable from '@/components/stack/StackUnifiedTable.vue'
@@ -33,7 +33,7 @@ import { clampPage } from '@/composables/useLocalPager'
 import { usePolling } from '@/composables/usePolling'
 import type { ExternalStack, StackSummary } from '@/types/stack'
 import type { StackListRow } from '@/utils/stackListModel'
-import { buildStackRows, computeStats } from '@/utils/stackListModel'
+import { buildStackRows, computeStats, filterRows } from '@/utils/stackListModel'
 import { ApiError } from '@/types/api'
 
 const router = useRouter()
@@ -104,6 +104,27 @@ const rows = computed<StackListRow[]>(() =>
 const stats = computed(() => computeStats(rows.value))
 
 /**
+ * 搜索关键词。
+ *
+ * 匹配规则在 utils/stackListModel.filterRows 里（名称 + 服务名，只做子串包含），
+ * 那里有独立测试。这里只负责持有输入值，不重复实现一遍匹配逻辑——
+ * 两处实现迟早会不一致。
+ */
+const keyword = ref('')
+
+/**
+ * 过滤后的行：搜索为空时就是全量。
+ *
+ * 统计口径（stats / driftCount / subtitle）**始终基于未过滤的全量**：
+ * 搜索只影响"这一次看到哪几行"，不该把"共 12 个编排"改成"共 2 个"，
+ * 否则用户会以为自己少了十个编排。命中数单独在副标题里补一句。
+ */
+const filteredRows = computed<StackListRow[]>(() => filterRows(rows.value, keyword.value))
+
+/** 是否处于搜索态（用于区分"没有编排"和"没有匹配"两种空状态） */
+const searching = computed(() => keyword.value.trim() !== '')
+
+/**
  * 分页：每页 20 个编排，状态放在 StackUnifiedTable 内部（受控页码）。
  *
  * 为什么页码放在页面而不是表格组件里：切换服务器、删除编排后要能把页码夹回合法范围，
@@ -113,11 +134,22 @@ const stats = computed(() => computeStats(rows.value))
 const page = ref(1)
 
 watch(
-  () => rows.value.length,
+  () => filteredRows.value.length,
   (count) => {
     page.value = clampPage(page.value, count)
   }
 )
+
+/**
+ * 关键词一变就回到第一页。
+ *
+ * 不重置的话：用户在第 3 页搜索只命中 2 个，clampPage 会把它夹到第 1 页——
+ * 看起来正确，但当命中数刚好还有 3 页时，用户会停在"搜索结果第 3 页"，
+ * 前面两页的命中被自己错过了。
+ */
+watch(keyword, () => {
+  page.value = 1
+})
 
 /** 换服务器＝换一批编排，沿用旧页码没有意义 */
 watch(agentId, () => {
@@ -130,7 +162,10 @@ const subtitle = computed(() => {
   // 未登记单独说明：它们不在 Arkade 的管理范围内，混进总数会误导
   const unregText = stats.value.unregistered > 0 ? `，${stats.value.unregistered} 个未登记` : ''
   const unsyncText = stats.value.unsynced > 0 ? `，${stats.value.unsynced} 个未同步` : ''
-  return `${displayName.value} · ${stats.value.total} 个编排（运行中 ${stats.value.running} 个）${unregText}${unsyncText}${driftText}`
+  // 搜索时补一句命中数：总数仍报全量，避免用户以为编排丢了
+  const query = keyword.value.trim()
+  const matchText = query !== '' ? `；匹配「${query}」的 ${filteredRows.value.length} 个` : ''
+  return `${displayName.value} · ${stats.value.total} 个编排（运行中 ${stats.value.running} 个）${unregText}${unsyncText}${driftText}${matchText}`
 })
 
 /** 进入详情：所有行都走同一个详情页（统一的编排入口） */
@@ -211,18 +246,47 @@ onMounted(() => {
     </div>
 
     <!--
+      搜索工具栏。
+      常驻而不是收进"高级筛选"里：编排数量会随使用增长，找某一个项目是高频动作；
+      与容器列表页的搜索框保持一致（同样尺寸、同样位置），用户不用重新学。
+    -->
+    <div class="stack-page__toolbar">
+      <n-input
+        v-model:value="keyword"
+        class="stack-page__search"
+        size="small"
+        clearable
+        placeholder="搜索编排名称 / 服务名"
+      />
+    </div>
+
+    <!--
       统一编排表：已纳管与服务器原目录里的项目合成一张，按名称对齐。
       以前拆成上下两张表，用户要在两个地方找同一个项目；
       同名项目还会重复出现。合并规则见 utils/stackListModel。
     -->
     <div class="table-card arkade-table-scroll">
       <stack-unified-table
-        v-if="rows.length > 0 || loading"
+        v-if="filteredRows.length > 0 || loading"
         v-model:page="page"
-        :rows="rows"
+        :rows="filteredRows"
         :loading="loading"
         @open="goDetail"
       />
+      <!--
+        两种"空"必须分开说：
+        - 有编排但没搜到 → 是搜索条件的问题，给清空按钮；
+        - 本来就没有编排 → 是这台服务器的问题，给新建入口。
+        混成一句"没有数据"会让用户在明明有十几个编排时以为数据丢了。
+      -->
+      <empty-state
+        v-else-if="loaded && searching"
+        :description="`没有匹配「${keyword.trim()}」的编排`"
+      >
+        <template #extra>
+          <n-button size="small" @click="keyword = ''">清空搜索</n-button>
+        </template>
+      </empty-state>
       <empty-state v-else-if="loaded" description="这台服务器上还没有容器编排。新建一个编排来批量管理多个容器。">
         <template #extra>
           <n-button size="small" type="primary" @click="goCreate">新建编排</n-button>
@@ -239,6 +303,20 @@ onMounted(() => {
 <style scoped>
 .stack-page__alert {
   margin-bottom: 16px;
+}
+
+/* 工具栏：搜索固定宽度靠左，与容器列表页保持同一档尺寸 */
+.stack-page__toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.stack-page__search {
+  width: 260px;
+  flex-shrink: 0;
 }
 
 /* 错误提示 + 重试按钮并排 */

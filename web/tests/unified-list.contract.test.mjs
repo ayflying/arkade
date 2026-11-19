@@ -12,12 +12,17 @@
  *
  * 所以这里的断言全部打在**真实输入 → 真实输出**上，不 mock 数据结构。
  */
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   buildStackRows,
   computeStats,
   filterRows,
   isRowRunning
 } from '../src/utils/stackListModel.ts'
+
+const here = dirname(fileURLToPath(import.meta.url))
 
 let passed = 0
 const failures = []
@@ -240,6 +245,23 @@ function external(over) {
   check('空: 两边都空返回空数组', buildStackRows([], []).length === 0)
   const stats = computeStats([])
   check('空: 统计全 0', stats.total === 0 && stats.running === 0)
+}
+
+/* ───────── 页面接线 ───────── */
+
+{
+  /*
+   * filterRows 早就写好了却一直没接到页面上，所以这些断言要盯住"接线"本身：
+   * 函数单测全绿、界面上却没有搜索框，是这个项目里发生过的真实情况。
+   */
+  const pageSrc = readFileSync(join(here, '..', 'src', 'views', 'StackListView.vue'), 'utf8')
+  check('接线: 页面导入并使用 filterRows', /filterRows\s*[,}]/.test(pageSrc) && /filterRows\(rows\.value, keyword\.value\)/.test(pageSrc))
+  check('接线: 表格数据源是过滤后的行', /:rows="filteredRows"/.test(pageSrc))
+  check('接线: 搜索框可清空且有中文占位', /v-model:value="keyword"/.test(pageSrc) && /clearable/.test(pageSrc) && /搜索编排名称 \/ 服务名/.test(pageSrc))
+  check('接线: 搜索后回到第一页', /watch\(keyword,[\s\S]{0,80}page\.value = 1/.test(pageSrc))
+  // 统计口径必须是全量：搜索不该把"共 12 个编排"改成"共 2 个"
+  check('接线: 统计仍基于全量行', /computeStats\(rows\.value\)/.test(pageSrc) && !/computeStats\(filteredRows/.test(pageSrc))
+  check('接线: 无匹配与无编排分开提示', /没有匹配/.test(pageSrc) && /还没有容器编排/.test(pageSrc))
 }
 
 /* ───────── 结果 ───────── */
