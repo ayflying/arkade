@@ -145,6 +145,7 @@ var labels = map[string]string{
 	ActionAgentEnable:     "启用服务器",
 	ActionAgentCreate:     "添加服务器",
 	ActionAgentTokenReset: "重置服务器接入密钥",
+	ActionAgentSelfUpdate: "更新服务器组件",
 
 	ActionUserCreate:  "创建用户",
 	ActionUserUpdate:  "修改用户",
