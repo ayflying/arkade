@@ -20,19 +20,11 @@
  *
  * ## 为什么不是简单的复制框
  *
- * 光给一个 token 用户还是部署不起来。真正卡人的是「这个 token 往哪放、
- * compose 怎么写映射、配置文件要不要挂」。所以这里直接给出**可复制的完整片段**，
- * 并且把两个最容易踩的坑（变量名映射、配置文件必须存在）写在明面上。
+ * 直接给出可复制的单文件部署配置。
  */
 import { computed, ref, watch } from 'vue'
-import { NAlert, NButton, NInput, NModal, NRadioButton, NRadioGroup, NTag } from 'naive-ui'
-import {
-  AGENT_CONFIG_MOUNT_PATH,
-  buildSnippets,
-  guessHubUrl,
-  validateEnvSafeText,
-  validateHubUrl
-} from '@/utils/agentDeploy'
+import { NAlert, NButton, NInput, NModal, NTag } from 'naive-ui'
+import { buildComposeSnippet, guessHubUrl, validateHubUrl } from '@/utils/agentDeploy'
 import type { Enrollment } from '@/types/agent'
 import { toastError, toastSuccess } from '@/utils/feedback'
 
@@ -40,7 +32,7 @@ interface Props {
   show: boolean
   /** 一次性密钥；关闭后由本组件与父组件共同清空 */
   enrollment: Enrollment | null
-  /** 服务器显示名，用于生成 .env 里的 ARKADE_AGENT_NAME */
+  /** 服务器显示名，用于生成编排里的 ARKADE_AGENT_NAME */
   agentName: string
   /** 是否是重置密钥（影响文案与提醒：旧密钥已失效） */
   isReset?: boolean
@@ -54,11 +46,6 @@ const emit = defineEmits<{
   (e: 'closed'): void
 }>()
 
-/** 片段类型：.env / compose / config */
-type SnippetKind = 'env' | 'compose' | 'config'
-
-const snippetKind = ref<SnippetKind>('env')
-
 /**
  * 本地副本。
  *
@@ -69,40 +56,14 @@ const token = ref('')
 
 /** Hub 地址：从当前页面推断初值，用户可改 */
 const hubUrl = ref('')
-/** 镜像名：默认本地构建名，用户可改 */
-const image = ref('arkade-agent:debug')
-
 /** 是否已确认「我已知晓密钥只显示一次」——勾选后才显示片段，降低误关风险 */
 const acknowledged = ref(false)
 
-/** 片段按需生成：token 为空时不生成，避免空密钥被复制出去 */
-const snippets = computed(() => {
-  if (token.value === '') return { env: '', config: '', compose: '' }
-  return buildSnippets({
-    agentName: props.agentName || 'arkade-agent',
-    token: token.value,
-    hubUrl: hubUrl.value,
-    image: image.value
-  })
-})
-
 const hubUrlError = computed(() => validateHubUrl(hubUrl.value))
-
-/**
- * 名称与镜像的 .env 安全性检查。
- *
- * 这两个值是用户可改的、且要写进 .env。含换行或单引号就无法安全编码，
- * 直接拒绝生成片段，而不是生成一个可能被注入的 .env。
- */
-const agentNameError = computed(() => validateEnvSafeText('服务器名称', props.agentName))
-const imageError = computed(() => validateEnvSafeText('镜像名', image.value))
-
-/** 有任一错误时禁止复制片段：避免用户把坏配置复制走 */
-const hasInputError = computed(
-  () => hubUrlError.value !== '' || agentNameError.value !== '' || imageError.value !== ''
-)
-
-const currentSnippet = computed(() => snippets.value[snippetKind.value])
+const composeSnippet = computed(() => {
+  if (token.value === '' || hubUrlError.value !== '') return ''
+  return buildComposeSnippet({ agentName: props.agentName, token: token.value, hubUrl: hubUrl.value })
+})
 
 /**
  * 同步 props → 本地。watch immediate + 深度取 token 字符串本身。
@@ -151,16 +112,9 @@ function handleClose(): void {
   token.value = ''
   hubUrl.value = ''
   acknowledged.value = false
-  snippetKind.value = 'env'
   emit('update:show', false)
   emit('closed')
 }
-
-const snippetTabs: { value: SnippetKind; label: string }[] = [
-  { value: 'env', label: '.env' },
-  { value: 'compose', label: 'docker-compose.yml' },
-  { value: 'config', label: 'agent.config.toml' }
-]
 </script>
 
 <template>
@@ -202,12 +156,6 @@ const snippetTabs: { value: SnippetKind; label: string }[] = [
       <n-button type="primary" size="large" @click="copyText(token, '密钥')">复制密钥</n-button>
     </div>
 
-    <!--
-      部署片段给出来源：Agent 程序读的是 ARKADE_HUB_URL，
-      .env 里叫 ARKADE_AGENT_HUB_URL，靠 compose 映射。
-      这个映射写错，Agent 会因为拿不到 hub_url 直接启动失败，
-      而且日志看起来像「配置缺失」，很难联想到是变量名不对。
-    -->
     <div class="enroll__field">
       <label class="enroll__label">
         Hub 地址
@@ -225,20 +173,6 @@ const snippetTabs: { value: SnippetKind; label: string }[] = [
       </p>
     </div>
 
-    <div class="enroll__field">
-      <label class="enroll__label">
-        Agent 镜像
-        <span class="enroll__label-hint">没有公开镜像，用本地构建的那个</span>
-      </label>
-      <n-input v-model:value="image" placeholder="arkade-agent:debug" />
-      <p v-if="imageError !== ''" class="enroll__error">{{ imageError }}</p>
-    </div>
-
-    <!-- 名称非法时明确阻止：不生成片段，避免产出会被注入的 .env -->
-    <n-alert v-if="agentNameError !== ''" type="error" :bordered="false" class="enroll__steps">
-      当前服务器名称{{ agentNameError }}，无法生成安全的 .env。请先在服务器列表里改掉再重置密钥。
-    </n-alert>
-
     <!-- 未勾选前不展示片段：让用户先确认已保存密钥，避免边看片段边把密钥窗口关掉 -->
     <div v-if="!acknowledged" class="enroll__ack">
       <n-button size="small" type="primary" @click="acknowledged = true">
@@ -247,35 +181,19 @@ const snippetTabs: { value: SnippetKind; label: string }[] = [
     </div>
 
     <template v-else>
-      <div class="enroll__tabs">
-        <n-radio-group v-model:value="snippetKind" size="small">
-          <n-radio-button v-for="tab in snippetTabs" :key="tab.value" :value="tab.value">
-            {{ tab.label }}
-          </n-radio-button>
-        </n-radio-group>
-        <n-button size="tiny" quaternary :disabled="hasInputError" @click="copyText(currentSnippet, '配置')">
-          复制当前文件
+      <div class="enroll__snippet-header">
+        <strong>docker-compose.yml</strong>
+        <n-button size="tiny" quaternary :disabled="composeSnippet === ''" @click="copyText(composeSnippet, '配置')">
+          复制编排文件
         </n-button>
       </div>
 
-      <pre class="enroll__code">{{ currentSnippet }}</pre>
+      <pre v-if="composeSnippet !== ''" class="enroll__code">{{ composeSnippet }}</pre>
 
       <n-alert type="info" :bordered="false" class="enroll__steps">
         <ol class="enroll__ol">
-          <li>
-            在目标服务器上建一个目录，把上面三个文件分别保存为
-            <code>.env</code>、<code>docker-compose.yml</code>、<code>agent.config.toml</code>（三者同目录）。
-          </li>
-          <li>
-            准备镜像：在 Arkade 仓库根目录执行
-            <code>docker build -f agent/Dockerfile -t arkade-agent:debug .</code>；
-            已有可用镜像则改 <code>.env</code> 里的 <code>ARKADE_AGENT_IMAGE</code>。
-          </li>
-          <li>
-            执行 <code>docker compose up -d</code>。容器会以
-            <code>run -c {{ AGENT_CONFIG_MOUNT_PATH }}</code> 启动，
-            因此 <code>agent.config.toml</code> 必须挂载到位，否则会反复重启。
-          </li>
+          <li>在目标服务器上把上面的配置保存为 <code>docker-compose.yml</code>。</li>
+          <li>在文件所在目录执行 <code>docker compose up -d</code> 启动 Agent。</li>
           <li>
             回到 Arkade 的服务器列表，等状态从「待接入」变成「在线」。
             Agent 连接成功后状态会变为在线；开启「自动刷新」时列表约 5 秒更新一次，
@@ -285,9 +203,7 @@ const snippetTabs: { value: SnippetKind; label: string }[] = [
       </n-alert>
 
       <p class="enroll__note">
-        密钥由 <code>.env</code> 经 compose 注入成环境变量，不写进
-        <code>docker-compose.yml</code>，也不写进 <code>agent.config.toml</code>，
-        避免明文随配置文件被复制或备份。
+        编排文件包含专属密钥，请妥善保管，不要分享或提交到版本库。
       </p>
     </template>
 
@@ -365,7 +281,7 @@ const snippetTabs: { value: SnippetKind; label: string }[] = [
   margin: 4px 0 16px;
 }
 
-.enroll__tabs {
+.enroll__snippet-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -404,8 +320,7 @@ const snippetTabs: { value: SnippetKind; label: string }[] = [
 }
 
 /* 行内代码：技术标识用等宽字体，与正文区分 */
-.enroll__steps code,
-.enroll__note code {
+.enroll__steps code {
   padding: 1px 4px;
   font-family: var(--arkade-mono-font);
   font-size: 11px;
