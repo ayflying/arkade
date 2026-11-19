@@ -110,6 +110,25 @@ func cmdRun(args []string, stderr io.Writer) int {
 		defer imageMgr.Close()
 	}
 
+	// 后台回收本程序遗留的 helper 容器（volume 文件助手 / 编排配置助手）。
+	//
+	// 这些容器的正常删除写在请求的 defer 里，进程被重启或引擎短暂故障时
+	// defer 不会执行，它们就会永久留在容器列表里（现场曾积累到几十个）。
+	// 这里补一条只认自己标签与名字前缀的兜底回收，见 runtime/helper_reaper.go。
+	if reaper, ok := rt.(interface {
+		RunHelperReaper(context.Context, func(int, error))
+	}); ok {
+		go reaper.RunHelperReaper(ctx, func(removed int, err error) {
+			if err != nil {
+				log.Warn("回收残留 helper 容器未完全成功", "已删除", removed, "error", err)
+				return
+			}
+			if removed > 0 {
+				log.Info("已回收残留 helper 容器", "数量", removed)
+			}
+		})
+	}
+
 	log.Info("Agent 启动", "版本", Version, "hub", cfg.HubURL, "数据目录", cfg.DataDir)
 	if err := agent.Run(ctx); err != nil {
 		log.Error("连接循环异常退出", "error", err)

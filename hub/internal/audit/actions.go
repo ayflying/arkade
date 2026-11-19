@@ -27,13 +27,19 @@ const (
 	ActionContainerRemove  = "container.remove"
 
 	// 编排
-	ActionStackCreate     = "stack.create"
-	ActionStackUpdate     = "stack.update"
-	ActionStackDelete     = "stack.delete"
-	ActionStackAction     = "stack.action"
-	ActionStackDraft      = "stack.draft"
-	ActionStackPreview    = "stack.preview"
-	ActionStackAdopt      = "stack.adopt"
+	ActionStackCreate  = "stack.create"
+	ActionStackUpdate  = "stack.update"
+	ActionStackDelete  = "stack.delete"
+	ActionStackAction  = "stack.action"
+	ActionStackDraft   = "stack.draft"
+	ActionStackPreview = "stack.preview"
+	ActionStackAdopt   = "stack.adopt"
+	// ActionStackRetryAdopt 是"重新扫描外部项目的自动接管"。
+	//
+	// 与 ActionStackAdopt 分开：那个表示**真的登记了配置**，这个只清掉
+	// 自动发现的结论、什么都不写。混成一个动作会让审计看不出
+	// "这次到底有没有改动编排记录"。
+	ActionStackRetryAdopt = "stack.retry_adopt"
 	ActionStackCopyConfig = "stack.copy_config"
 	// ActionStackMigrate 是跨服务器迁移整个编排（配置 + 镜像 + 可选数据卷）。
 	//
@@ -108,6 +114,7 @@ var labels = map[string]string{
 	ActionStackDraft:      "保存外部编排草稿",
 	ActionStackPreview:    "预检外部编排登记",
 	ActionStackAdopt:      "登记外部编排",
+	ActionStackRetryAdopt: "重试外部编排自动接管",
 	ActionStackCopyConfig: "复制编排配置",
 	ActionStackMigrate:    "迁移容器编排",
 

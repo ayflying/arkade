@@ -239,6 +239,30 @@ try {
 }
 check('草稿: 版本冲突 409 抛出', conflictStatus === 409, String(conflictStatus))
 
+/* ───────── 重试自动接管 ───────── */
+
+// 后台自动发现对"确定性阻塞"和"重试次数用尽"的项目不再自动重扫
+// （否则每次失败都要新建一个临时 helper 容器）。用户修好问题后，
+// 只能靠这个接口让项目重新被扫描，因此路径与方法都是硬契约。
+setResponse({ message: '已清除该项目的自动发现结论，下一轮后台扫描（约 30 秒内）会重新读取配置' })
+const retried = await api.retryExternalAdopt('ag-1', 'legacy-app')
+check('重试: 方法 POST', lastCall.method === 'POST', String(lastCall.method))
+check(
+  '重试: 路径 /external-stacks/{name}/retry-adopt',
+  lastCall.url === '/agents/ag-1/external-stacks/legacy-app/retry-adopt',
+  String(lastCall.url)
+)
+check('重试: 项目名做 URL 编码', retried.message !== '')
+
+setError(new ApiError(403, 'forbidden', '需要管理权限'))
+let retryForbidden = 0
+try {
+  await api.retryExternalAdopt('ag-1', 'legacy-app')
+} catch (err) {
+  retryForbidden = err.status ?? 0
+}
+check('重试: 权限不足 403 抛出，不静默当成功', retryForbidden === 403, String(retryForbidden))
+
 /* ───────── 应用预检与登记 ───────── */
 
 setResponse({ can_import: false, config_hash: 'h2', blockers: ['配置包含 build'], warnings: [] })

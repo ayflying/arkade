@@ -82,6 +82,19 @@ func scripts() ([]migration, error) {
 	return out, nil
 }
 
+// LatestVersion 返回内嵌迁移的最高版本号，也就是"新建库应达到的版本"。
+//
+// 导出它的唯一目的是让调用方（测试、健康检查）不必把版本号写死：
+// 每加一个迁移就手改一遍断言，改漏了会在无关的 PR 上炸出难懂的失败。
+// 真正的顺序与校验仍以 scripts() 为准，这里只是读同一个来源。
+func LatestVersion() (int, error) {
+	files, err := scripts()
+	if err != nil {
+		return 0, err
+	}
+	return files[len(files)-1].version, nil
+}
+
 // Run accepts a lib/pq PostgreSQL URL or keyword DSN. The migration role needs
 // CREATE on its database (for transactional schema verification), and owns public
 // application objects. All application objects live in public, regardless of DSN

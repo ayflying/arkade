@@ -30,6 +30,9 @@ type Deps struct {
 	Session        controller.SessionAccessor
 	Log            *slog.Logger
 	AutoAdoptState func(agent, name string) (status, reason string)
+	// AutoAdoptRetry 清除某个项目的自动发现结论，让它重新被扫描。
+	// nil 表示自动发现未启用（例如测试环境），此时重试接口返回错误而不是静默成功。
+	AutoAdoptRetry func(ctx context.Context, agent, name string) error
 }
 type Controller struct {
 	deps   Deps

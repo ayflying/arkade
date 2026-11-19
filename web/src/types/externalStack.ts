@@ -73,6 +73,17 @@ export interface SaveDraftResponse {
   draft: ExternalStackDraft
 }
 
+/**
+ * POST /external-stacks/{name}/retry-adopt 响应。
+ *
+ * 用于让「已暂停自动发现」的项目重新被扫描一次：
+ * 确定性阻塞（多配置文件等）与重试次数用尽的项目都不会再自动重扫，
+ * 用户把问题修好后只能靠这个入口恢复。
+ */
+export interface RetryAdoptResponse {
+  message: string
+}
+
 /** POST /external-stacks/{name}/apply-preview 请求体 */
 export interface ApplyPreviewRequest {
   content: string

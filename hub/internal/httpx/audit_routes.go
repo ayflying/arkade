@@ -99,7 +99,10 @@ var auditRoutes = map[string]auditRoute{
 	"/api/agents/{agentID}/external-stacks/{name}/draft":         {Action: audit.ActionStackDraft, TargetParam: "name"},
 	"/api/agents/{agentID}/external-stacks/{name}/apply-preview": {Action: audit.ActionStackPreview, TargetParam: "name"},
 	"/api/agents/{agentID}/external-stacks/{name}/apply":         {Action: audit.ActionStackAdopt, TargetParam: "name"},
-	"/api/agents/{agentID}/external-stacks/{name}/copy":          {Action: audit.ActionStackCopyConfig, TargetParam: "name"},
+	// 重试自动接管会触发一次配置读取（在 Agent 侧创建一个 helper 容器），
+	// 属于对目标机器的操作，必须留痕；但它不写编排记录，所以单独一个动作。
+	"/api/agents/{agentID}/external-stacks/{name}/retry-adopt": {Action: audit.ActionStackRetryAdopt, TargetParam: "name"},
+	"/api/agents/{agentID}/external-stacks/{name}/copy":        {Action: audit.ActionStackCopyConfig, TargetParam: "name"},
 	// ---- 镜像异步任务：不记录归档正文/仓库凭据 ----
 	"/api/agents/{agentID}/images/pull":    {Action: "image.pull"},
 	"/api/agents/{agentID}/images/export":  {Action: "image.export"},

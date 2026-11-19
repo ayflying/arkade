@@ -14,8 +14,13 @@ func TestFreshPostgresMigrationCurrent(t *testing.T) {
 	if err := rawDBOf(t, db).QueryRowContext(context.Background(), `SELECT version, dirty FROM `+dbmigrate.MigrationsTable).Scan(&version, &dirty); err != nil {
 		t.Fatal(err)
 	}
-	if version != 3 || dirty {
-		t.Fatalf("migration cursor version=%d dirty=%v", version, dirty)
+	// 期望版本从内嵌迁移推导，不写死数字（同 TestMigrationVersionCurrent）。
+	want, err := dbmigrate.LatestVersion()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if version != want || dirty {
+		t.Fatalf("migration cursor version=%d (want %d) dirty=%v", version, want, dirty)
 	}
 	var n int
 	if err := rawDBOf(t, db).QueryRow(`SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='schema_migrations'`).Scan(&n); err != nil {

@@ -43,7 +43,7 @@ func TestRunFreshAndIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.FromVersion != -1 || r.ToVersion != 3 || r.Applied != 3 || r.Dirty {
+	if r.FromVersion != -1 || r.ToVersion != 4 || r.Applied != 4 || r.Dirty {
 		t.Fatalf("unexpected result %+v", r)
 	}
 	db := open(t, dsn)
@@ -52,14 +52,14 @@ func TestRunFreshAndIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.FromVersion != 3 || r.ToVersion != 3 || r.Applied != 0 || r.Dirty {
+	if r.FromVersion != 4 || r.ToVersion != 4 || r.Applied != 0 || r.Dirty {
 		t.Fatalf("unexpected repeat %+v", r)
 	}
 	var count int
 	if err = db.QueryRow("SELECT count(*) FROM groups WHERE id='g'").Scan(&count); err != nil || count != 1 {
 		t.Fatalf("business data changed: %d %v", count, err)
 	}
-	if err = db.QueryRow("SELECT count(*) FROM pg_tables WHERE schemaname='public'").Scan(&count); err != nil || count != 19 {
+	if err = db.QueryRow("SELECT count(*) FROM pg_tables WHERE schemaname='public'").Scan(&count); err != nil || count != 20 {
 		t.Fatalf("table coverage %d %v", count, err)
 	}
 	execute(t, db, `INSERT INTO users(id,username,display_name,password_hash,role,created_at,updated_at) VALUES('u','u','u','h','user',123,123); INSERT INTO sessions(token_hash,user_id,created_at,expires_at) VALUES('s','u',123,456); DELETE FROM users WHERE id='u'`)

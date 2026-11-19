@@ -29,13 +29,21 @@ func bindOperationalRoutes(s *ghttp.Server, d Deps) {
 	}
 	bindNativeModule(s, d, resourcescontroller.New(resourcesDeps))
 	bindNativeModule(s, d, imagescontroller.New(imagescontroller.Deps{DB: d.DB, Registry: d.Registry, Tasks: d.ImageTasks, Session: session, Log: d.Log}))
-	bindNativeModule(s, d, externalcontroller.New(externalcontroller.Deps{DB: d.DB, Ops: d.Ops, Session: session, Log: d.Log, AutoAdoptState: func(agent, name string) (string, string) {
-		if d.AutoAdopt == nil {
-			return "pending", "等待后台扫描，兼容项目将自动登记配置；容器仍可直接管理"
-		}
-		state := d.AutoAdopt.state(agent, name)
-		return state.Status, state.Reason
-	}}))
+	bindNativeModule(s, d, externalcontroller.New(externalcontroller.Deps{DB: d.DB, Ops: d.Ops, Session: session, Log: d.Log,
+		AutoAdoptState: func(agent, name string) (string, string) {
+			if d.AutoAdopt == nil {
+				return "pending", "等待后台扫描，兼容项目将自动登记配置；容器仍可直接管理"
+			}
+			state := d.AutoAdopt.state(agent, name)
+			return state.Status, state.Reason
+		},
+		AutoAdoptRetry: func(ctx context.Context, agent, name string) error {
+			if d.AutoAdopt == nil {
+				return nil
+			}
+			return d.AutoAdopt.RetryAutoAdopt(ctx, agent, name)
+		},
+	}))
 	var suppressMonitor func(string, string, time.Duration)
 	if d.MonitorEngine != nil {
 		suppressMonitor = d.MonitorEngine.Suppress

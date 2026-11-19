@@ -23,7 +23,8 @@ import type {
   ExternalStackConfigResponse,
   ExternalStackDetailResponse,
   SaveDraftRequest,
-  SaveDraftResponse
+  SaveDraftResponse,
+  RetryAdoptResponse
 } from '@/types/externalStack'
 
 /** 外部项目的基础路径 */
@@ -124,8 +125,23 @@ export async function saveExternalDraft(
   return httpPut<SaveDraftResponse>(`${externalPath(agentId, name)}/draft`, payload)
 }
 
-/** 应用预检：只检查不执行，返回能否登进 Arkade 以及阻塞原因 */
-export async function previewExternalApply(
+/**
+ * 手动重试自动接管。
+ *
+ * 背景：后台自动发现对「确定性阻塞」与「重试次数用尽」的项目不再自动重扫
+ * （否则会每 30 秒创建一个临时 helper 容器，且永远不会成功）。
+ * 用户把问题修好后（换了配置位置、拉好了镜像、重启了引擎），
+ * 调用它会清掉结论，下一轮后台扫描（约 30 秒内）重新读取配置。
+ */
+export async function retryExternalAdopt(
+  agentId: string,
+  name: string
+): Promise<RetryAdoptResponse> {
+  const res = await httpPost<RetryAdoptResponse>(`${externalPath(agentId, name)}/retry-adopt`, {})
+  return { message: typeof res.message === 'string' ? res.message : '' }
+}
+
+/** 应用预检：只检查不执行，返回能否登进 Arkade 以及阻塞原因 */export async function previewExternalApply(
   agentId: string,
   name: string,
   payload: ApplyPreviewRequest

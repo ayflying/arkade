@@ -385,7 +385,13 @@ func TestMigrationVersionCurrent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v != 3 {
-		t.Errorf("迁移版本应为 3，实际 %d", v)
+	// 期望值从内嵌迁移文件推导，不写死数字：否则每加一个迁移都要改这里，
+	// 改漏的后果是一个与本次改动毫无关系的测试失败。
+	want, err := dbmigrate.LatestVersion()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v != want {
+		t.Errorf("迁移版本应为 %d，实际 %d", want, v)
 	}
 }

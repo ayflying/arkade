@@ -47,3 +47,16 @@ type DraftRes struct {
 	Draft   store.ExternalComposeDraft `json:"draft"`
 	Message string                     `json:"message"`
 }
+
+// RetryAdoptReq 清除某个外部项目的自动发现结论，让它重新被扫描。
+//
+// 用途见 internal/controller/external/retry.go：确定性阻塞与重试次数用尽
+// 的项目不会再被自动重扫，用户修好问题后需要这个入口触发一次。
+type RetryAdoptReq struct {
+	g.Meta  `path:"/api/agents/{agentID}/external-stacks/{name}/retry-adopt" method:"post" tags:"External"`
+	AgentID string `json:"-" in:"path" name:"agentID"`
+	Name    string `json:"-" in:"path" name:"name"`
+}
+type RetryAdoptRes struct {
+	Message string `json:"message"`
+}

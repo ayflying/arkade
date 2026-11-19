@@ -33,7 +33,7 @@ const shortIDLen = 12
 // 官方约定而非我们的发明，字面量是安全的。
 const labelComposeProject = "com.docker.compose.project"
 
-// listHandler 处理 container.list。
+// newListHandler 处理 container.list。
 //
 // 载荷：无（nil / null）。
 // 应答：envelope.ContainerListResult。
@@ -47,6 +47,14 @@ func newListHandler(rt runtime.Runtime) Handler {
 		}
 		out := make([]envelope.ContainerSummary, 0, len(containers))
 		for _, c := range containers {
+			// 跳过 Arkade 自己的一次性 helper（卷文件助手 / 编排配置助手）。
+			//
+			// 它们的存在只对排障有意义，混进列表会让容器总数长期虚高，
+			// 用户也无法对它们做任何有效操作。判据与回收逻辑共用一处，
+			// 见 runtime.IsHelperContainer。
+			if runtime.IsHelperContainer(c) {
+				continue
+			}
 			out = append(out, toSummary(c))
 		}
 		return envelope.ContainerListResult{Containers: out}, nil

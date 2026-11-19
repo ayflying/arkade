@@ -11,6 +11,7 @@ import ManagedStackActions from '@/components/stack/ManagedStackActions.vue'
 import StackStateTag from '@/components/stack/StackStateTag.vue'
 import { useCurrentAgent } from '@/composables/useCurrentAgent'
 import { useStackDetail } from '@/composables/useStackDetail'
+import { useAutoAdoptRetry } from '@/composables/useAutoAdoptRetry'
 import type { StackState } from '@/types/stack'
 
 const route = useRoute(), router = useRouter()
@@ -27,6 +28,11 @@ const state = computed<StackState>(() => {
 })
 const managed = computed(() => stack.value?.managed === true ? stack.value : null)
 watch(projectKey, () => { activeTab.value = 'containers' })
+// 重试只清掉"已暂停自动扫描"的结论，真正的扫描由后台下一轮完成。
+const adoptRetry = useAutoAdoptRetry(
+  { agentId: () => agentId.value ?? '', stackName: () => stackName.value },
+  () => detail.load()
+)
 function back() { void router.push({ name: 'agent-stacks', params: { id: agentId.value ?? '' } }) }
 </script>
 
@@ -51,7 +57,12 @@ function back() { void router.push({ name: 'agent-stacks', params: { id: agentId
         <n-alert v-if="managed?.drift" type="warning" :bordered="false" title="配置漂移">服务器上的 compose.yml 与 Hub 记录不一致。保存并部署会覆盖服务器配置，请先确认线上改动。</n-alert>
         <n-alert v-if="managed && managed.synced_at === 0" type="warning" :bordered="false" title="尚未同步到服务器">{{ managed.sync_hint || '配置已记录在 Hub，但尚未成功下发。请检查同步状态，在此期间不要启动或重建。' }}</n-alert>
         <n-alert v-if="!stack.managed" type="info" :bordered="false">外部项目的配置编辑只保存 Hub 草稿，不修改服务器文件、不启动或重启容器。登记与复制需要管理权限。</n-alert>
-        <n-alert v-if="!stack.managed && stack.auto_adopt_reason" type="warning" :bordered="false">{{ stack.auto_adopt_reason }}</n-alert>
+        <n-alert v-if="!stack.managed && stack.auto_adopt_reason" type="warning" :bordered="false">
+          <div class="stack-detail__adopt">
+            <span>{{ stack.auto_adopt_reason }}</span>
+            <n-button size="tiny" :loading="adoptRetry.retrying.value" @click="adoptRetry.retry()">重新扫描</n-button>
+          </div>
+        </n-alert>
         <managed-stack-actions v-if="managed" :key="projectKey" :agent-id="agentId ?? ''" :stack-name="stackName" :online="isOnline" :busy="state === 'busy'" :unsynced="managed.synced_at === 0" @changed="detail.load" />
       </section>
       <section class="stack-detail__content">
@@ -79,5 +90,7 @@ function back() { void router.push({ name: 'agent-stacks', params: { id: agentId
 .stack-detail__summary { display: flex; flex-direction: column; gap: 12px; }
 .stack-detail__identity { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .stack-detail__counts { font-size: 13px; color: var(--arkade-text-tertiary); }
+/* 原因文字与「重新扫描」按钮同一行；窄屏时按钮换行到下面，避免挤成一坨。 */
+.stack-detail__adopt { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
 @media (max-width: 767.98px) { .stack-detail__summary, .stack-detail__content { padding: 12px; } }
 </style>
