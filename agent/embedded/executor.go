@@ -46,6 +46,7 @@ type Executor struct {
 	closed    bool
 	calls     sync.WaitGroup
 	sweepDone chan struct{}
+	reapDone  chan struct{}
 	closeDone chan struct{}
 	image     *imagetransfer.Manager
 	seq       atomic.Uint64
@@ -96,6 +97,15 @@ func New(ctx context.Context, opts Options) (*Executor, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	return newWithRuntime(ctx, opts, rt, dir, log)
+}
+
+// newWithRuntime 是 New 去掉"挑运行时"之后的装配部分。
+//
+// 拆出来的理由只有一个：让测试能把一个假运行时塞进来，验证后台任务
+// （镜像清扫、残留 helper 回收）确实被启动了。挑运行时那几步
+// （探测套接字、降级 none）都有真实副作用，不适合在装配测试里重复。
+func newWithRuntime(ctx context.Context, opts Options, rt runtime.Runtime, dir string, log *slog.Logger) (*Executor, error) {
 	image, err := imagetransfer.NewManager(dir, rt, imagetransfer.DefaultLimits())
 	if err != nil {
 		return nil, fmt.Errorf("初始化本机传输工作区失败: %w", err)
@@ -105,7 +115,7 @@ func New(ctx context.Context, opts Options) (*Executor, error) {
 	if id == "" {
 		id = "agent-local"
 	}
-	e := &Executor{rt: rt, agentID: id, root: root, cancel: cancel, reg: handler.NewRegistry(), image: image, sweepDone: make(chan struct{}), closeDone: make(chan struct{})}
+	e := &Executor{rt: rt, agentID: id, root: root, cancel: cancel, reg: handler.NewRegistry(), image: image, sweepDone: make(chan struct{}), reapDone: make(chan struct{}), closeDone: make(chan struct{})}
 	ri, _ := rt.Info(ctx)
 	host := ri.Endpoint
 	// Go HTTP 客户端使用 http://，docker CLI 使用 tcp://；两者必须指向同一 daemon。
@@ -126,6 +136,30 @@ func New(ctx context.Context, opts Options) (*Executor, error) {
 	}
 	handler.RegisterDefaultsFull(e.reg, rt, mgr, image, filepath.Join(dir, imagetransfer.TransfersDirName()), log)
 	go func() { defer close(e.sweepDone); image.RunSweeper(root) }()
+	// 残留 helper 回收与独立 Agent 走的是同一套运行时和同一个回收器。
+	//
+	// 这一段不能省：泄漏恰恰主要发生在"Hub 内嵌本机执行器"这种部署上——
+	// Hub 的后台自动发现循环每轮都要读一次编排配置，每次读都会创建一个
+	// 一次性 helper 容器，而它们只在独立 Agent 的启动路径里被回收时，
+	// Hub 自己产生的残留就永远没人收（现场那 52 个就是这么来的）。
+	go func() {
+		defer close(e.reapDone)
+		reaper, ok := rt.(interface {
+			RunHelperReaper(context.Context, func(int, error))
+		})
+		if !ok {
+			return
+		}
+		reaper.RunHelperReaper(root, func(removed int, err error) {
+			if err != nil {
+				log.Warn("回收残留 helper 容器未完全成功", "已删除", removed, "error", err)
+				return
+			}
+			if removed > 0 {
+				log.Info("已回收残留 helper 容器", "数量", removed)
+			}
+		})
+	}()
 	return e, nil
 }
 
@@ -201,6 +235,7 @@ func (e *Executor) Close(ctx context.Context) error {
 			e.calls.Wait()
 			e.reg.Close()
 			<-e.sweepDone
+			<-e.reapDone
 			e.image.Close()
 			close(e.closeDone)
 		}()
