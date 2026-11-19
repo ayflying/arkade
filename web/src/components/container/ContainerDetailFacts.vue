@@ -13,7 +13,7 @@ import { computed } from 'vue'
 import { NTag } from 'naive-ui'
 import ContainerStateTag from '@/components/container/ContainerStateTag.vue'
 import type { ContainerDetail } from '@/types/container'
-import { buildPortUrl, isUdp, resolvePortHost } from '@/utils/portLinks'
+import { buildPortUrl, isUdp, resolvePortAccess } from '@/utils/portLinks'
 import { formatAbsoluteTime, formatRelativeTime } from '@/utils/formatTime'
 import { formatBytes } from '@/utils/formatSize'
 
@@ -21,8 +21,9 @@ interface Props {
   detail: ContainerDetail | null
   /** 详情是否因权限被拒（此时不渲染字段，避免显示成一堆「—」） */
   forbidden: boolean
-  /** 服务器直连地址，用于端口链接 */
+  /** 服务器访问地址（完整地址，含 http/https 前缀），用于端口链接 */
   directAddress: string
+  /** 服务器标识；内置服务器（agent-local）未配置地址时用它判断是否可兜底 */
   agentId: string
 }
 
@@ -132,23 +133,28 @@ const portRows = computed(() => {
   const d = props.detail
   if (d === null) return []
   /*
-   * 主机地址优先用服务器直连地址，没配时退回「当前访问地址」——
-   * 与列表页的端口单元格同一套规则，否则详情页里同一端口反而不给链接。
+   * 访问地址优先用服务器配置的完整地址（含 http/https 前缀）；
+   * 内置服务器没配置时自动退回当前访问地址，与列表页端口单元格同一套规则。
    */
-  const host = resolvePortHost(props.directAddress, props.agentId).host
+  const access = resolvePortAccess(props.directAddress, props.agentId)
   return d.published_ports.map((p) => ({
     key: `${p.host_ip}:${String(p.host_port)}:${String(p.container_port)}/${p.protocol}`,
     text: `${p.host_ip !== '' ? p.host_ip : '0.0.0.0'}:${String(p.host_port)} → ${String(p.container_port)}/${p.protocol}`,
-    url: buildPortUrl(p, host),
+    url: buildPortUrl(p, access),
     udp: isUdp(p)
   }))
 })
 
-/** 推断地址的说明；配置了直连地址时为空（无需解释） */
+/** 没有可用链接时的说明：告诉用户去哪里补配置，而不是让链接静默消失 */
 const portHostNote = computed(() => {
-  const { host, inferred } = resolvePortHost(props.directAddress, props.agentId)
-  if (!inferred || host === '') return ''
-  return `链接按当前访问地址 ${host} 生成；若打不开，请到「服务器设置」填写直连地址。`
+  const d = props.detail
+  if (d === null || d.published_ports.length === 0) return ''
+  if (portRows.value.some((row) => row.url !== null)) return ''
+  /*
+   * 只对「配了但不可用」的情况提示补全。
+   * 远端服务器未配置时也提示去填——那是唯一能得到链接的办法。
+   */
+  return '这台服务器还没有可用的访问地址，请到「编辑服务器」填写完整地址（含 http:// 或 https:// 前缀，例如 https://example.com）。'
 })
 </script>
 

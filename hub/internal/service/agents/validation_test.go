@@ -9,14 +9,19 @@ import (
 )
 
 func TestNormalizeDirectAddress(t *testing.T) {
+	// 2026-11 起必须是带协议前缀的完整地址；协议与端口由用户配置决定，
+	// 容器端口链接不再自己猜 http（见 web/src/utils/portLinks.ts 同一套语义）。
 	for _, tt := range []struct{ raw, want string }{
-		{"", ""}, {" \t\n", ""}, {" EXAMPLE.Com ", "example.com"},
-		{"localhost", "localhost"}, {"my-host.example", "my-host.example"},
-		{" 192.168.1.2 ", "192.168.1.2"}, {"127.0.0.1", "127.0.0.1"},
-		{"[2001:0DB8:0:0::1]", "2001:db8::1"}, {"::1", "::1"},
-		{"[192.168.1.2]", "192.168.1.2"},
-		{strings.Repeat("a", 63), strings.Repeat("a", 63)},
-		{strings.Repeat("a", 63) + "." + strings.Repeat("b", 63) + "." + strings.Repeat("c", 63) + "." + strings.Repeat("d", 61), strings.Repeat("a", 63) + "." + strings.Repeat("b", 63) + "." + strings.Repeat("c", 63) + "." + strings.Repeat("d", 61)},
+		{"", ""}, {" \t\n", ""},
+		// 新增：完整地址（本轮需求）
+		{"https://ac8b255bfcf6-0.aynastv.5ddd.com", "https://ac8b255bfcf6-0.aynastv.5ddd.com"},
+		{"HTTPS://Example.COM", "https://example.com"},
+		{"http://10.0.0.12:9000", "http://10.0.0.12:9000"},
+		{" https://example.com/ ", "https://example.com"},
+		{"https://[2001:db8::1]:8443", "https://[2001:db8::1]:8443"},
+		{"https://[2001:0DB8:0:0::1]", "https://[2001:db8::1]"},
+		{"http://192.168.1.2", "http://192.168.1.2"},
+		{"http://" + strings.Repeat("a", 63) + "." + strings.Repeat("b", 63), "http://" + strings.Repeat("a", 63) + "." + strings.Repeat("b", 63)},
 	} {
 		t.Run(tt.raw, func(t *testing.T) {
 			got, err := NormalizeDirectAddress(tt.raw)
@@ -26,16 +31,24 @@ func TestNormalizeDirectAddress(t *testing.T) {
 		})
 	}
 	for _, raw := range []string{
-		"https://example.com", "example.com:443", "user@example.com", "example.com/path",
-		"example.com?x", "example.com#x", "example.com\\x", "[example.com]",
-		".example.com", "example..com", "example.com.", "-host", "host-", "host_name",
-		"例子.com", "host name", "0.0.0.0", "::", "[::]", "224.0.0.1", "ff02::1",
-		"fe80::1%eth0", "[fe80::1%eth0]", "[::1", "::1]",
-		strings.Repeat("a", 64), strings.Repeat("a.", 127),
+		// 不带协议前缀：不再是完整地址（旧价值保留在库里，但不再接受新写入）
+		"192.168.1.2", "example.com", "LAN-HOST", "[2001:db8::1]", "::1", "localhost",
+		strings.Repeat("a", 63),
+		// 带协议但其余部分非法
+		"https://", "https:///path", "https://user@example.com", "https://example.com/x",
+		"https://example.com?x=1", "https://example.com#f", "https://example.com:0",
+		"https://example.com:70000", "https://example.com:abc", "https://[bad",
+		"https://0.0.0.0", "javascript:alert(1)", "ftp://example.com", "https://a b.com",
+		"https://host_name", "https://.example.com", "https://example..com",
+		"https://example.com.", "https://-host", "https://host-", "https://例子.com",
+		"https://224.0.0.1", "https://[fe80::1%eth0]", "https://[::]", "https://[example.com]",
+		"https://[::1", "https://::1]",
+		strings.Repeat("https://", 40),
+		"http://" + strings.Repeat("a.", 127),
 	} {
 		t.Run(raw, func(t *testing.T) {
 			got, err := NormalizeDirectAddress(raw)
-			if got != "" || err == nil || err.Error() != "直连地址请填写IP或域名，不含协议、端口和路径" {
+			if got != "" || err == nil || err.Error() != "访问地址请填写 http:// 或 https:// 开头的完整地址，例如 https://example.com，不含路径和查询参数" {
 				t.Fatalf("NormalizeDirectAddress(%q) = %q, %v", raw, got, err)
 			}
 			if _, ok := err.(*gerror.Error); !ok {

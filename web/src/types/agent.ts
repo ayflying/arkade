@@ -62,14 +62,17 @@ export type Agent = {
   last_seen: number
   labels: Record<string, string>
   /**
-   * 该服务器对外可访问的直连地址（用户在浏览器里能打开的地址）。
+   * 该服务器对外可访问的**完整地址**（用户在浏览器里能打开的地址）。
    *
    * 用途：容器的 published_ports 里 `0.0.0.0` / `::` 这类通配绑定本身
    * 不是可点击的地址，需要用这个字段替换成真实可达的主机。
    *
-   * 只允许主机部分：不带 scheme（`http://`）、不带路径、不带端口。
-   * IPv6 需要方括号形式（`[2001:db8::1]`）。可为空——空表示用户没指定，
-   * 仅内置服务器可使用当前页面的主机名，远端服务器未配置时不生成链接。
+   * 2026-11 起带协议前缀：`https://ac8b255bfcf6-0.aynastv.5ddd.com`、
+   * `http://10.0.0.12:9000`。协议与端口都由这里决定，前端不再自己拼 `http://`
+   * 或推断端口。不带路径、查询、userinfo；末尾斜杠会被容忍（保存时去掉）。
+   *
+   * 可为空——空表示用户没指定，此时**不生成端口链接**（不再退回当前页面主机名：
+   * 那会让远端服务器指向 Hub 自己的地址）。IPv6 需方括号形式（`[2001:db8::1]`）。
    */
   direct_address?: string
 }
@@ -89,7 +92,7 @@ export type UpdateAgentRequest = {
   display_name?: string
   note?: string
   labels?: Record<string, string>
-  /** 直连地址；提交空串表示清空（后端校验格式） */
+  /** 访问地址（带 http/https 前缀的完整地址）；提交空串表示清空（后端校验格式） */
   direct_address?: string
 }
 

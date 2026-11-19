@@ -14,7 +14,7 @@ interface Props {
   containers: Container[]
   /** 所属服务器：名称链接要用它拼详情路由 */
   agentId: string
-  /** 服务器直连地址；端口链接靠它生成，空表示不可生成 */
+  /** 服务器访问地址（完整地址，含 http/https 前缀）；端口链接靠它生成，空表示不可生成 */
   directAddress: string
 }
 

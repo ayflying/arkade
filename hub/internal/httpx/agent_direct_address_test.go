@@ -7,12 +7,24 @@ import (
 )
 
 func TestNormalizeDirectAddress(t *testing.T) {
-	for _, s := range []string{"192.168.50.243", "example.com", "LAN-HOST", "[2001:db8::1]", "2001:db8::1", ""} {
+	// 2026-11 起必须是带 http:// / https:// 前缀的完整地址（协议和端口由用户配置）
+	for _, s := range []string{
+		"https://ac8b255bfcf6-0.aynastv.5ddd.com", "http://10.0.0.12:9000",
+		"https://example.com/", "HTTPS://Example.COM", "",
+		"https://[2001:db8::1]", "http://192.168.50.243",
+	} {
 		if _, err := normalizeDirectAddress(s); err != nil {
 			t.Errorf("valid %q: %v", s, err)
 		}
 	}
-	for _, s := range []string{"http://host", "host:8080", "a/b", "user@host", "javascript:alert(1)", "a#b", "a?b", "-bad.com", "a..com", "::", "0.0.0.0", "fe80::1%eth0", "a b"} {
+	for _, s := range []string{
+		// 不带协议前缀：不再是完整地址
+		"192.168.50.243", "example.com", "LAN-HOST", "[2001:db8::1]", "2001:db8::1",
+		"host:8080", "a/b", "user@host", "javascript:alert(1)", "a#b", "a?b",
+		"-bad.com", "a..com", "::", "0.0.0.0", "fe80::1%eth0", "a b",
+		"https://", "https://user@host", "https://host/path", "https://host?x=1",
+		"https://host:70000", "https://host:abc", "ftp://host", "https://[bad",
+	} {
 		if _, err := normalizeDirectAddress(s); err == nil {
 			t.Errorf("invalid accepted %q", s)
 		}

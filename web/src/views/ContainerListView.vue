@@ -50,9 +50,9 @@ const agentId = computed<string>(() => String(route.params.id ?? ''))
 const agent = computed(() => agentsStore.findById(agentId.value))
 
 /**
- * 服务器直连地址；未配置时为空串。
+ * 服务器访问地址（完整地址，含 http/https 前缀）；未配置时为空串。
  *
- * 端口链接靠它把 `0.0.0.0` 这类通配绑定换成真正可访问的主机，
+ * 端口链接靠它把 `0.0.0.0` 这类通配绑定换成真正可访问的地址，
  * 所以为空时**不生成任何链接**——见 utils/portLinks 的规则。
  */
 const currentAgentDirectAddress = computed<string>(() => agent.value?.direct_address ?? '')

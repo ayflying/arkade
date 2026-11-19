@@ -308,15 +308,15 @@ check(
   !/服务器版本较旧/.test(portCellSrc) && /无已上报的端口映射/.test(portCellSrc),
   'published_ports 带 omitempty，无映射和旧 Agent 都是 undefined，无法区分'
 )
+/*
+ * 2026-11：用户明确要求删掉端口后面的「HTTPS」小入口。
+ * 协议现在由服务器访问地址决定（配置里写 http:// 或 https://），
+ * 再给一个「换个协议试试」的按钮只会制造歧义。断言它不会再回来。
+ */
 check(
-  '端口: 提供轻量 HTTPS 入口',
-  /httpsUrl/.test(portCellSrc) && /https:\/\//.test(portCellSrc),
-  '用户约定 http 默认、https 可选，需要入口'
-)
-check(
-  '端口: HTTPS 入口文案是 HTTPS 而非单个字母',
-  />HTTPS<\/a>/.test(portCellSrc.replace(/\s+/g, ' ')) || />\s*HTTPS\s*<\/a>/.test(portCellSrc.replace(/\s+/g, ' ')),
-  '「s」太含糊，用户猜不到是 HTTPS'
+  '端口: 不再提供 HTTPS 再试一次的入口',
+  !/httpsUrl/.test(portCellSrc) && !/>\s*HTTPS\s*<\/a>/.test(portCellSrc),
+  '协议由服务器访问地址决定，不再需要换协议按钮'
 )
 /*
  * 没链接时不能一律声称「绑定回环」：
@@ -325,7 +325,7 @@ check(
  */
 check(
   '端口: 非回环成因给合并说法而不硬猜回环',
-  /没有可用的访问地址，不生成链接/.test(portCellSrc),
+  /没有可用的访问地址，请到「编辑服务器」填写完整地址/.test(portCellSrc),
   '笼统地说成回环是错误断言'
 )
 check(
@@ -350,6 +350,15 @@ check(
   '端口: HTTPS 入口不改端口（不出现 443）',
   !/443/.test(portCellCode),
   '固定推断 443 会拼出错误地址'
+)
+/*
+ * 2026-11：用户明确要求删掉「@主机（当前访问地址）」那一行说明。
+ * 它不提供操作价值，还把端口单元格撑成两行。断言它不会再回来。
+ */
+check(
+  '端口: 不再显示「@主机（当前访问地址）」说明行',
+  !/当前访问地址/.test(portCellCode) && !/port-cell__hint/.test(portCellSrc),
+  '这一行没有操作价值，还把端口单元格撑成两行'
 )
 check(
   '端口: 通过 toDisplayItems 统一推导（内含 buildPortUrl + 去重）',
@@ -478,12 +487,23 @@ check(
   !/\.env\b/.test(detailScript) && !/environment/i.test(detailScript)
 )
 
-/* 直连地址可编辑 */
-check('服务器编辑: 有直连地址输入', /direct_address/.test(editModalSrc) && /直连地址/.test(editModalSrc))
+/* 访问地址可编辑 */
 check(
-  '服务器编辑: 说明只填主机不要带 scheme/端口',
-  /不要带 http/.test(editModalSrc),
+  '服务器编辑: 有访问地址输入',
+  /direct_address/.test(editModalSrc) && /访问地址/.test(editModalSrc)
+)
+/*
+ * 2026-11：地址格式从「只填主机」改成「带 http/https 前缀的完整地址」。
+ * 提示文案必须跟着改，否则用户按旧说明填纯主机会拿不到端口链接。
+ */
+check(
+  '服务器编辑: 说明要求带 http/https 前缀的完整地址',
+  /必须带 http:\/\/ 或 https:\/\//.test(editModalSrc) && !/不要带 http/.test(editModalSrc),
   '用户不知道该填什么格式'
+)
+check(
+  '服务器编辑: 占位示例给出完整地址',
+  /https:\/\/example\.com|https:\/\/ac8b/.test(editModalSrc)
 )
 check('服务器编辑: 只提交改动过的字段', /nextAddress !== prevAddress/.test(editModalSrc))
 

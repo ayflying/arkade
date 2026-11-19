@@ -1,10 +1,16 @@
 <script setup lang="ts">
 /**
- * 编辑服务器弹窗（显示名 / 备注 / 标签）
+ * 编辑服务器弹窗（显示名 / 访问地址 / 备注 / 标签）
  *
- * ## 为什么只让改这三个字段
+ * ## 为什么只让改这几个字段
  * - `id`、`status`、`last_seen` 等是 Agent 自报的运行时数据，改了没意义也会被下次心跳覆盖；
  * - `name` 是 Agent 自报的原始名，同样会被覆盖，所以「改名字」走 display_name。
+ *
+ * ## 访问地址（原「直连地址」）
+ * 2026-11 起改成**带协议前缀的完整地址**，例如 `https://example.com`：
+ * 容器端口链路的协议、端口由这里决定，前端不再固定 `http://` 去拼。
+ * 前端只做 trim，格式仍交给后端校验——规则演进（IPv6、域名、端口）时
+ * 两边各写一套迟早不一致，而后端拒绝时的原文更准确。
  *
  * ## 标签的编辑方式
  * 用「多行文本，每行 key=value」而不是动态增删的键值对控件：
@@ -47,10 +53,11 @@ const note = ref('')
 /** 标签文本，每行 key=value */
 const labelsText = ref('')
 /**
- * 直连地址：用户在浏览器里能打开这台服务器的地址。
+ * 访问地址：用户在浏览器里能打开这台服务器的**完整地址**。
  *
- * 只填主机部分（`10.0.0.5` 或 `[2001:db8::1]`），不要带 http://、路径或端口。
- * 容器的端口链接靠它把 `0.0.0.0` 这种通配绑定换成真实可达的地址。
+ * 必须带 `http://` 或 `https://` 前缀（如 `https://example.com`），可带端口。
+ * 协议与端口都由它决定；容器的端口链接靠它把 `0.0.0.0` 这种通配绑定
+ * 换成真实可达的地址，没配就不生成链接。
  */
 const directAddress = ref('')
 const saving = ref(false)
@@ -153,7 +160,7 @@ async function handleSave(): Promise<void> {
   if (nextLabelsText !== prevLabelsText) payload.labels = parsed.labels
 
   /*
-   * 直连地址：只做 trim，格式交给后端校验。
+   * 访问地址：只做 trim，格式交给后端校验。
    *
    * 前端不自己拦格式，是因为规则会随需求演进（IPv6、域名、端口），
    * 两边各写一套校验迟早不一致；而后端拒绝时给出的原文更准确。
@@ -212,17 +219,18 @@ async function handleSave(): Promise<void> {
         留空则显示 Agent 上报的原始名称。
       </div>
 
-      <n-form-item label="直连地址">
+      <n-form-item label="访问地址">
         <n-input
           v-model:value="directAddress"
-          placeholder="例如：10.0.0.12 或 [2001:db8::1]"
+          placeholder="例如：https://example.com 或 http://10.0.0.12:9000"
           :disabled="saving"
           clearable
         />
       </n-form-item>
       <div class="agent-edit-modal__hint">
-        你在浏览器里访问这台服务器用的地址，可留空。只填主机，<strong>不要带 http:// 、路径或端口</strong>；
-        IPv6 用方括号形式。容器的端口链接会用它替代 0.0.0.0 这类通配地址。
+        你在浏览器里访问这台服务器用的完整地址，<strong>必须带 http:// 或 https:// 前缀</strong>，可留空。
+        不填端口时，容器的端口链接会把映射的宿主端口接在后面；填了端口则原样使用。
+        容器的端口链接只认这个地址，留空就不生成链接。
       </div>
 
       <n-form-item label="备注">
