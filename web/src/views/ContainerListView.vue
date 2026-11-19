@@ -371,7 +371,12 @@ const columns = useResponsiveColumns(computed<DataTableColumns<Container>>(() =>
     key: 'image',
     minWidth: 220,
     ellipsis: { tooltip: true },
-    render: (row) => row.image || '—'
+    /*
+     * 镜像用 12px 等宽（技术标识档），与编排详情里的容器表保持一致。
+     * 之前这里是不加类的正文文本（14px），于是"容器列表"和"编排里的容器表"
+     * 展示同一种对象、同一个字段却是两种字号，来回切页会觉得字在跳。
+     */
+    render: (row) => h('span', { class: 'arkade-cell-mono' }, row.image !== '' ? row.image : '—')
   },
   {
     title: '状态',

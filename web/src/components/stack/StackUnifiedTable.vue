@@ -88,7 +88,10 @@ const columns = computed<DataTableColumns<StackListRow>>(() => [
     render: (row) =>
       h(
         'a',
-        { class: 'arkade-link arkade-cell-mono', onClick: () => emit('open', row.name) },
+        // 主名称统一用 arkade-cell-name：与容器列表、服务器列表同一档字号。
+        // 之前这里用 arkade-cell-mono（12px 灰），和容器列表的 14px 名称并排看
+        // 会显得"编排页整体小一号"。
+        { class: 'arkade-link arkade-cell-name', onClick: () => emit('open', row.name) },
         row.name
       )
   },

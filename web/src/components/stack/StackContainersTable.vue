@@ -29,7 +29,9 @@ const columns = computed<DataTableColumns<Container>>(() => [
     render: (row) =>
       h(
         RouterLink,
-        { class: 'arkade-link arkade-cell-mono', to: { name: 'agent-container-detail', params: { id: props.agentId, containerId: row.id } } },
+        // 主名称统一用 arkade-cell-name（14px）：编排详情里的容器表和
+        // 容器列表页展示的是同一种对象，字号不该因为换了页面就变。
+        { class: 'arkade-link arkade-cell-name', to: { name: 'agent-container-detail', params: { id: props.agentId, containerId: row.id } } },
         { default: () => row.name || row.id }
       )
   },
