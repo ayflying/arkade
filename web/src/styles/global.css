@@ -304,6 +304,24 @@ body {
   line-height: 1.6;
 }
 
+/*
+ * 分段补充说明：语气比正文弱一档（次要信息），但仍然是正文的一部分，
+ * 因此不用灰色占位色，只在字号与间距上让层次可辨。
+ */
+.confirm-with-option__note {
+  margin: 0 0 10px;
+  padding-left: 10px;
+  border-left: 2px solid var(--arkade-border, #e5e7eb);
+  color: var(--arkade-text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-line;
+}
+
+.confirm-with-option__note:last-of-type {
+  margin-bottom: 12px;
+}
+
 .confirm-with-option__hint {
   margin: 10px 0 0;
   padding: 8px 10px;

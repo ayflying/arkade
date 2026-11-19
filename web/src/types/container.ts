@@ -9,14 +9,6 @@
  */
 
 /**
- * 容器来源（归属）标记，见 docs/01-architecture.md 4.2：
- * - arkade     Arkade 下发创建，可自动重建
- * - adopted    外部工具部署后被接管，编排只读
- * - discovered 被发现但未接管，仅展示与基础操作
- */
-export type ContainerOrigin = 'arkade' | 'adopted' | 'discovered'
-
-/**
  * 一个已发布的端口映射（结构化）。
  *
  * 为什么必须结构化：文本形式（`0.0.0.0:8080->80/tcp`）里 `0.0.0.0`
@@ -45,7 +37,21 @@ export interface Container {
   state: string
   /** 人类可读状态，如 "Up 3 hours" */
   status: string
-  origin: ContainerOrigin | string
+  /**
+   * 归属来源。协议里仍在（Agent 目前恒为 discovered），但**界面不再展示**。
+   *
+   * 原因：容器没有"接管"这个状态。Arkade 里只有编排项目会被纳管/接管，
+   * 容器只可能属于某个已纳管编排（看 stack_id）或不属于任何编排。
+   * 之前列表里按 origin 显示"方舟部署 / 已接管 / 外部项目"，
+   * 其中的"已接管"永远不会出现——Agent 侧那个常量从未被赋值——
+   * 而"外部项目"又让用户以为容器在等接管。既然没有可靠且有用的信息，
+   * 就不显示。保留字段只为不破坏协议形状，将来真要区分再补后端判据。
+   */
+  origin: string
+  /**
+   * 所属编排项目名（compose 的 com.docker.compose.project 标签）。
+   * 空字符串表示这个容器不属于任何编排，是手工 docker run 起的。
+   */
   stack_id: string
   /** Unix 秒级时间戳 */
   created: number

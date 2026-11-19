@@ -74,6 +74,42 @@ func (c *Controller) ContainerRemove(ctx context.Context, req *api.ContainerRemo
 	}
 	return &api.ContainerOpRes{ContainerID: out.ContainerID, State: out.State}, nil
 }
+
+// ContainerRecreate 按原配置重建容器。
+//
+// 为什么要求 manage 而不是 operate：重建会**删除并新建**容器对象，
+// 属于"改变资源本身"的动作。给 operate 就等于让人用低权限
+// 达到了删除+创建的效果，权限模型会被绕开。
+func (c *Controller) ContainerRecreate(ctx context.Context, req *api.ContainerRecreateReq) (*api.ContainerRecreateRes, error) {
+	if err := c.access.Require(ctx, req.AgentID, user.PermManage); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(req.ContainerID) == "" {
+		return nil, controller.Failure("bad_request", "容器 ID 不能为空")
+	}
+	pull, ok := parseBoolQuery(req.Pull)
+	if !ok {
+		return nil, controller.Failure("bad_request", "pull 只能是 true/false/1/0")
+	}
+	// 重建期间容器会短暂消失再出现，监控采样必然取不到数据。
+	// 抑制窗口比启停更宽：重建包含"停止 + 拉镜像 + 创建 + 启动"，
+	// 勾选拉镜像时可能花几分钟，采样不到就刷出一串告警没有意义。
+	if c.deps.SuppressMonitor != nil {
+		window := 5 * time.Minute
+		if pull {
+			window = 15 * time.Minute
+		}
+		c.deps.SuppressMonitor(req.AgentID, req.ContainerID, window)
+	}
+	out, err := c.deps.Ops.RecreateContainer(ctx, req.AgentID, req.ContainerID, pull)
+	if err != nil {
+		return nil, controller.ConnectionError(err)
+	}
+	c.deps.Log.Info("重建容器", "agent", req.AgentID, "container", req.ContainerID,
+		"pull", pull, "new_container", out.ContainerID)
+	return &api.ContainerOpRes{ContainerID: out.ContainerID, State: out.State}, nil
+}
+
 func parseBoolQuery(raw string) (bool, bool) {
 	switch strings.TrimSpace(strings.ToLower(raw)) {
 	case "", "0", "false", "f", "no", "n":

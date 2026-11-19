@@ -27,6 +27,18 @@ func TestResourcesOnlineContainerRPCMappings(t *testing.T) {
 				t.Errorf("logs %+v %v", p, err)
 			}
 			return envelope.ContainerLogsResult{Lines: []string{"online-container-log"}}
+		case envelope.MethodContainerRecreate:
+			// 重建用独立载荷：pull 与 force/remove_volumes 没有语义重叠，
+			// 混用会让"重建时带了删除开关"这种无意义组合变成合法输入。
+			var p envelope.ContainerRecreatePayload
+			if err := envelope.DecodePayload(&req, &p); err != nil || p.ContainerID != "real-container" {
+				t.Errorf("recreate %+v %v", p, err)
+			}
+			if !p.Pull {
+				t.Errorf("pull 未透传: %+v", p)
+			}
+			// 返回新 ID：调用方必须据此更新引用，否则后续操作指向已删除的容器。
+			return envelope.ContainerOpResult{ContainerID: "recreated-container", State: "mapped-state"}
 		case envelope.MethodContainerStart, envelope.MethodContainerStop, envelope.MethodContainerRestart, envelope.MethodContainerRemove:
 			var p envelope.ContainerOpPayload
 			if err := envelope.DecodePayload(&req, &p); err != nil || p.ContainerID != "real-container" {
@@ -53,6 +65,9 @@ func TestResourcesOnlineContainerRPCMappings(t *testing.T) {
 		{http.MethodPost, "/start?" + alias, `{"container_id":"body-wrong"}`, `"container_id":"real-container"`},
 		{http.MethodPost, "/stop?" + alias, "", `"state":"mapped-state"`},
 		{http.MethodPost, "/restart?" + alias, "", `"state":"mapped-state"`},
+		// pull 走查询参数（与 force / remove_volumes 的处理方式一致），
+		// 这里顺带验证应答里的新容器 ID 被原样回给前端。
+		{http.MethodPost, "/recreate?pull=true&" + alias, "", `"container_id":"recreated-container"`},
 		{http.MethodDelete, "?force=true&remove_volumes=true&" + alias, "", `"state":"mapped-state"`},
 	} {
 		resp, raw := doHTTP(t, tc.method, base+tc.path, tc.body, cookies)
@@ -60,7 +75,7 @@ func TestResourcesOnlineContainerRPCMappings(t *testing.T) {
 			t.Fatalf("%s %s status=%d %s", tc.method, tc.path, resp.StatusCode, raw)
 		}
 	}
-	a.assertMethods(t, envelope.MethodContainerInspect, envelope.MethodContainerLogs, envelope.MethodContainerStart, envelope.MethodContainerStop, envelope.MethodContainerRestart, envelope.MethodContainerRemove)
+	a.assertMethods(t, envelope.MethodContainerInspect, envelope.MethodContainerLogs, envelope.MethodContainerStart, envelope.MethodContainerStop, envelope.MethodContainerRestart, envelope.MethodContainerRecreate, envelope.MethodContainerRemove)
 }
 
 func TestResourcesOnlineStackRPCMappings(t *testing.T) {

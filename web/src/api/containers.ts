@@ -21,6 +21,7 @@ import { httpDelete, httpGet, httpPost } from './request'
  * - POST   /api/agents/{id}/containers/{cid}/start
  * - POST   /api/agents/{id}/containers/{cid}/stop
  * - POST   /api/agents/{id}/containers/{cid}/restart
+ * - POST   /api/agents/{id}/containers/{cid}/recreate?pull=   （重建，需 manage）
  * - DELETE /api/agents/{id}/containers/{cid}?force=&remove_volumes=
  * - GET    /api/agents/{id}/containers/{cid}/logs?tail=N  （需 view）
  */
@@ -206,6 +207,32 @@ export async function deleteContainer(
   const query = params.toString()
   const suffix = query === '' ? '' : `?${query}`
   return httpDelete(`${containerPath(agentId, containerId)}${suffix}`)
+}
+
+/**
+ * 重建容器（按原配置删除旧容器并创建同名新容器）。
+ *
+ * ## 为什么要单独一个接口
+ *
+ * 镜像在容器创建时就固化了，`restart` 不会换镜像。想让新镜像生效只能
+ * "删旧建新"，这就是重建。它不是 restart 的变体，而是换掉了容器对象：
+ * 返回的 `container_id` 是**新 ID**，调用方必须用它替换旧引用，
+ * 否则后续启停会打到一个已经不存在的容器上。
+ *
+ * @param pull 是否先拉取镜像最新版本。**默认 false**：
+ *             拉取可能耗时数分钟且会改变运行版本，必须由用户显式勾选。
+ *             与 force / remove_volumes 一致，只在 true 时拼参数，
+ *             不产生 `pull=false` 这种多余值。
+ */
+export async function recreateContainer(
+  agentId: string,
+  containerId: string,
+  options: { pull?: boolean } = {}
+): Promise<ContainerActionResponse> {
+  const suffix = options.pull === true ? '?pull=true' : ''
+  return httpPost<ContainerActionResponse>(
+    `${containerPath(agentId, containerId)}/recreate${suffix}`
+  )
 }
 
 /** 拉取容器日志尾部若干行 */

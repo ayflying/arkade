@@ -111,6 +111,21 @@ type ContainerOpPayload struct {
 	RemoveVolumes bool `json:"remove_volumes"`
 }
 
+// ContainerRecreatePayload 是容器重建请求。
+//
+// 与 ContainerOpPayload 分开而不是复用它：重建的开关是 Pull，
+// 与 force / remove_volumes 没有任何语义重叠。塞进同一个结构体
+// 会让"删除时传了 pull=true"这种无意义组合变成合法输入，
+// 调用方也就无法从类型上看出哪个字段对哪个动作有效。
+type ContainerRecreatePayload struct {
+	ContainerID string `json:"container_id"`
+	// Pull 为 true 时先在 Agent 上拉取容器当前镜像的最新版本，再重建。
+	//
+	// 默认 false（零值）是刻意的：拉取大镜像可能占用大量带宽与磁盘，
+	// 而且会改变运行中的版本。必须由用户显式勾选"重新拉取镜像"。
+	Pull bool `json:"pull"`
+}
+
 // ContainerLogsPayload 是日志请求。行数必须有上限：日志是无界数据，
 // 无上限拉取会占满 WebSocket 队列并拖慢整条连接（见 03 技术选型）。
 type ContainerLogsPayload struct {

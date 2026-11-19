@@ -61,6 +61,12 @@ var auditRoutes = map[string]auditRoute{
 		Action:      audit.ActionContainerRestart,
 		TargetParam: "containerID",
 	},
+	// 重建排在删除之前登记：路由表按字面路径匹配，两者路径不同
+	// （/recreate 后缀 vs 无后缀），不存在被短路径抢走的风险。
+	"/api/agents/{agentID}/containers/{containerID}/recreate": {
+		Action:      audit.ActionContainerRecreate,
+		TargetParam: "containerID",
+	},
 	"/api/agents/{agentID}/containers/{containerID}": {
 		Action:      audit.ActionContainerRemove,
 		TargetParam: "containerID",

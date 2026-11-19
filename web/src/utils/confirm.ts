@@ -76,6 +76,13 @@ export interface ConfirmWithOptionOptions {
   title: string
   /** 正文说明 */
   content: string
+  /**
+   * 正文之后的分段补充说明（每项一段）。
+   *
+   * 为什么不塞进 content 用换行：对话框正文按普通文本渲染，
+   * `\n` 不会换行，全挤成一行反而更难读。分段传入可以各自成为一段。
+   */
+  notes?: string[]
   /** 勾选项的文案 */
   optionLabel: string
   /** 勾选项是否默认勾上；危险操作应保持 false */
@@ -146,6 +153,10 @@ export function confirmWithOption(
     const renderContent = (): ReturnType<typeof h> =>
       h('div', { class: 'confirm-with-option' }, [
         h('p', { class: 'confirm-with-option__text' }, options.content),
+        // 分段补充：先说清"会发生什么"，再给勾选项，最后是勾选后的警示。
+        ...(options.notes ?? []).map((note) =>
+          h('p', { class: 'confirm-with-option__note' }, note)
+        ),
         h(
           NCheckbox,
           {

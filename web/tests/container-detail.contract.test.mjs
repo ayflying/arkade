@@ -507,23 +507,31 @@ check(
 )
 check('服务器编辑: 只提交改动过的字段', /nextAddress !== prevAddress/.test(editModalSrc))
 
-/* ───────── 文案：未接管 → 外部项目 / 配置未登记 ───────── */
+/* ───────── 文案：容器不再展示来源 / 编排侧仍区分登记状态 ───────── */
 
 const excludeWording = readFileSync(join(here, '..', 'src', 'utils', 'statusMap.ts'), 'utf8')
+const containerListSrc = readFileSync(join(here, '..', 'src', 'views', 'ContainerListView.vue'), 'utf8')
 const adoptSrc = readFileSync(
   join(here, '..', 'src', 'components', 'stack', 'AutoAdoptStatus.vue'),
   'utf8'
 )
 const stackListSrc = readFileSync(join(here, '..', 'src', 'components', 'stack', 'StackUnifiedTable.vue'), 'utf8')
 
+// 容器没有"接管"这个状态：接管只是编排项目的属性。
+// 之前容器列表按 origin 显示"方舟部署 / 已接管 / 外部项目"，其中"已接管"
+// 永远不会出现（Agent 侧常量从未赋值），而"外部项目"会让用户以为容器在等接管。
+// 现在整列去掉，所以这里断言的是"不再有这一列和这套映射"。
 check(
-  '文案: 容器来源 discovered 显示「外部项目」',
-  /label: '外部项目'/.test(excludeWording),
-  '仍显示「未接管」'
+  '容器列表: 不再有「来源」列',
+  !/title: '来源'/.test(containerListSrc) && !/key: 'origin'/.test(containerListSrc)
 )
 check(
-  '文案: 不再出现「未接管」作为展示标签',
-  !/label: '未接管'/.test(excludeWording)
+  '容器列表: 不再引用来源徽标组件',
+  !/ContainerOriginTag/.test(containerListSrc)
+)
+check(
+  '文案: 容器来源映射已移除（避免把项目层的接管套到容器上）',
+  !/mapContainerOrigin/.test(excludeWording) && !/label: '已接管'/.test(excludeWording)
 )
 check(
   '文案: 自动接管 skipped 显示「配置未登记」',

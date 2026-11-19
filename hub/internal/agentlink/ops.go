@@ -95,6 +95,25 @@ func (o *Ops) containerOp(ctx context.Context, agentID, method, containerID stri
 	return out, nil
 }
 
+// RecreateContainer 按原配置重建容器，返回**新**容器 ID。
+//
+// 不复用 containerOp：重建用的是 ContainerRecreatePayload（带 pull），
+// 载荷类型不同；而且它的返回值语义也和启停不一样——ID 会变，
+// 调用方必须用返回的新 ID 覆盖旧引用，否则后续操作会指向已删除的容器。
+func (o *Ops) RecreateContainer(ctx context.Context, agentID, containerID string, pull bool) (envelope.ContainerOpResult, *ConnError) {
+	var out envelope.ContainerOpResult
+	req := envelope.ContainerRecreatePayload{ContainerID: containerID, Pull: pull}
+
+	raw, cerr := o.reg.Call(ctx, agentID, envelope.MethodContainerRecreate, req)
+	if cerr != nil {
+		return out, cerr
+	}
+	if err := decodeInto(raw, &out); err != nil {
+		return out, err
+	}
+	return out, nil
+}
+
 // Logs 拉取容器日志。行数上限由 Agent 强制，这里只传请求。
 func (o *Ops) Logs(ctx context.Context, agentID, containerID string, tail int) (envelope.ContainerLogsResult, *ConnError) {
 	var out envelope.ContainerLogsResult

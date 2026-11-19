@@ -25,6 +25,10 @@ const (
 	ActionContainerStop    = "container.stop"
 	ActionContainerRestart = "container.restart"
 	ActionContainerRemove  = "container.remove"
+	// ActionContainerRecreate 重建容器：销毁旧容器对象并新建同名容器。
+	// 单列一条审计动作而不是复用 remove+start，是因为它的实际影响
+	// （镜像可能已更新、容器 ID 变化、日志断开）无法从 remove+start 的组合看出来。
+	ActionContainerRecreate = "container.recreate"
 
 	// 编排
 	ActionStackCreate  = "stack.create"
@@ -102,10 +106,11 @@ const (
 // 表现为审计列表上冒出 `container.remove` 这样的原始标识。
 // 由后端在响应里带 action_label，前端零维护，且新旧动作永远一致。
 var labels = map[string]string{
-	ActionContainerStart:   "启动容器",
-	ActionContainerStop:    "停止容器",
-	ActionContainerRestart: "重启容器",
-	ActionContainerRemove:  "删除容器",
+	ActionContainerStart:    "启动容器",
+	ActionContainerStop:     "停止容器",
+	ActionContainerRestart:  "重启容器",
+	ActionContainerRemove:   "删除容器",
+	ActionContainerRecreate: "重建容器",
 
 	ActionStackCreate:     "创建编排",
 	ActionStackUpdate:     "修改编排",

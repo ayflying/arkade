@@ -24,6 +24,12 @@ const (
 	MethodContainerRemove  = "container.remove"  // 删除容器（危险操作）
 	MethodContainerLogs    = "container.logs"    // 拉取日志（有限行数，避免撑爆连接）
 	MethodContainerInspect = "container.inspect" // 容器详情（只读，白名单字段）
+	// MethodContainerRecreate 按原配置重建容器（删除旧容器、建同名新容器）。
+	//
+	// 与 restart 的区别：restart 保留容器对象（ID 不变、日志连续）；recreate 换掉容器对象，
+	// 因此 ID 会变、日志与匿名卷数据都会丢。这是"让镜像更新生效"的唯一手段——
+	// Docker 无法原地更换运行中容器的镜像。
+	MethodContainerRecreate = "container.recreate"
 
 	// 容器监控：只读的一次性采集。
 	MethodContainerMonitorSnapshot = "container.monitor.snapshot"
@@ -156,7 +162,10 @@ const (
 	LocalMethodContainerRestart = MethodContainerRestart
 	LocalMethodContainerRemove  = MethodContainerRemove
 	LocalMethodContainerLogs    = MethodContainerLogs
-	LocalMethodRuntimeInfo      = MethodRuntimeInfo
+	// 重建同样是"本地 CLI 与在线通道共用一套处理器"的能力，
+	// 因此必须给本地别名，否则离线模式会报方法不存在。
+	LocalMethodContainerRecreate = MethodContainerRecreate
+	LocalMethodRuntimeInfo       = MethodRuntimeInfo
 
 	LocalMethodImageList     = MethodImageList
 	LocalMethodImageRemove   = MethodImageRemove

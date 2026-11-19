@@ -43,22 +43,6 @@ export function mapAgentStatus(status: string): StatusStyle {
   }
 }
 
-/** 容器来源映射：arkade / adopted / discovered，颜色区分见架构文档 4.2 */
-export function mapContainerOrigin(origin: string): StatusStyle {
-  switch (origin) {
-    case 'arkade':
-      return { label: '方舟部署', type: 'info', dimmed: false }
-    case 'adopted':
-      return { label: '已接管', type: 'warning', dimmed: false }
-    case 'discovered':
-      // 「外部项目」比「未接管」更能说明它的真实身份：容器是外部工具起的，
-      // Arkade 只是看得见它。说「未接管」会让人以为等着被接管，实际不一定。
-      return { label: '外部项目', type: 'default', dimmed: false }
-    default:
-      return { label: origin === '' ? '未知' : origin, type: 'default', dimmed: false }
-  }
-}
-
 /** 容器状态映射：只区分运行/停止两档配色，文案保留后端原始 state 便于排障 */
 export function mapContainerState(state: string): StatusStyle {
   switch (state) {

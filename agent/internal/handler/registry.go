@@ -215,6 +215,10 @@ func registerAll(reg *Registry, rt runtime.Runtime, composeMgr *compose.Manager,
 	reg.Register(envelope.LocalMethodContainerStop, newStopHandler(rt))
 	reg.Register(envelope.LocalMethodContainerRestart, newRestartHandler(rt))
 	reg.Register(envelope.LocalMethodContainerRemove, newRemoveHandler(rt))
+	// 重建：能力由可选接口决定；引擎不支持时处理器内返回 unsupported。
+	// 注册本身不判断支持性，理由与容器详情一致——方法存在与否要和
+	// "能不能真正执行"分开表达，否则旧引擎在能力清单里会凭空多出一个方法。
+	reg.Register(envelope.LocalMethodContainerRecreate, newRecreateHandler(rt))
 	reg.Register(envelope.LocalMethodContainerLogs, newLogsHandler(rt))
 	// 容器详情：只读，能力由可选接口决定；引擎不支持时处理器内返回 unsupported。
 	reg.Register(envelope.MethodContainerInspect, newInspectHandler(rt))
