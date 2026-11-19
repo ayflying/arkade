@@ -36,7 +36,7 @@ func (s *Service) Register(ctx context.Context, username, displayName, password 
 	if err := user.ValidateDisplayName(displayName); err != nil {
 		return user.User{}, invalid(err)
 	}
-	if err := PasswordPolicy(password, settings.PasswordMinLength); err != nil {
+	if err := user.ValidatePassword(password); err != nil {
 		return user.User{}, invalid(err)
 	}
 	hash, err := user.HashPassword(password)

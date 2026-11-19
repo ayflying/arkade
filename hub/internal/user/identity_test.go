@@ -109,13 +109,20 @@ func TestValidRole(t *testing.T) {
 	}
 }
 
-// TestValidatePassword 验证密码策略前置校验与 HashPassword 一致。
+// TestValidatePassword 验证密码校验与 HashPassword 的口径一致。
+//
+// 密码不再限制最短长度（创建账号、改密、注册），但仍然拒绝全空白和
+// 超过 bcrypt 72 字节上限的输入。
 func TestValidatePassword(t *testing.T) {
-	if err := ValidatePassword("short"); err == nil {
-		t.Error("短密码应报错")
+	for _, short := range []string{"short", "1", "中"} {
+		if err := ValidatePassword(short); err != nil {
+			t.Errorf("%q 短密码不应被拒绝，实际 %v", short, err)
+		}
 	}
-	if err := ValidatePassword("Password123"); err != nil {
-		t.Errorf("合法密码不应报错，实际 %v", err)
+	for _, blank := range []string{"", "   ", "\t\n"} {
+		if err := ValidatePassword(blank); err == nil {
+			t.Errorf("%q 全空白密码应报错", blank)
+		}
 	}
 	// 超长（bcrypt 上限 72 字节）。
 	long := make([]byte, maxPasswordBytes+1)

@@ -104,9 +104,6 @@ func validateSettings(p store.SystemSettings) error {
 	if p.SessionTTLSeconds < 3600 || p.SessionTTLSeconds > 30*86400 {
 		return invalid("会话有效期必须在1小时到30天之间")
 	}
-	if p.PasswordMinLength < 8 || p.PasswordMinLength > 72 {
-		return invalid("密码最小长度必须在8到72之间")
-	}
 	if p.LoginMaxAttempts < 3 || p.LoginMaxAttempts > 20 {
 		return invalid("登录失败次数必须在3到20之间")
 	}

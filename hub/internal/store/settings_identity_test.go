@@ -27,7 +27,7 @@ func TestSettingsCASAndRegistrationTransaction(t *testing.T) {
 	if err := db.UpdateSystemSettings(ctx, s, s.Version); !errors.Is(err, ErrConflict) {
 		t.Fatal("stale settings", err)
 	}
-	if err := db.RegisterLocalUser(ctx, u, 1); !errors.Is(err, ErrPasswordPolicyChanged) {
+	if err := db.RegisterLocalUser(ctx, u, 1); !errors.Is(err, ErrRegistrationSettingsChanged) {
 		t.Fatal(err)
 	}
 	if err := db.RegisterLocalUser(ctx, u, 2); err != nil {

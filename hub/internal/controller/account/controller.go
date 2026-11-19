@@ -48,8 +48,8 @@ func (c *Controller) failure(err error) error {
 		return controller.Failure("forbidden", "当前未开放注册")
 	case errors.Is(err, store.ErrRegistrationGroupUnavailable):
 		return controller.Failure("conflict", "注册默认用户组不可用，请联系管理员")
-	case errors.Is(err, store.ErrPasswordPolicyChanged):
-		return controller.Failure("conflict", "安全策略已变化，请刷新后重试")
+	case errors.Is(err, store.ErrRegistrationSettingsChanged):
+		return controller.Failure("conflict", "注册设置已变化，请刷新后重试")
 	case errors.Is(err, store.ErrConflict):
 		return controller.Failure("conflict", "名称已被占用或账户已发生变化，请刷新后重试")
 	case errors.Is(err, store.ErrNotFound):

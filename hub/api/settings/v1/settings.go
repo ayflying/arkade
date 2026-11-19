@@ -8,7 +8,6 @@ type SettingsView struct {
 	RegistrationEnabled bool   `json:"registration_enabled"`
 	RegistrationGroupID string `json:"registration_group_id"`
 	SessionTTLSeconds   int64  `json:"session_ttl_seconds"`
-	PasswordMinLength   int64  `json:"password_min_length"`
 	LoginMaxAttempts    int64  `json:"login_max_attempts"`
 	LoginWindowSeconds  int64  `json:"login_window_seconds"`
 	AuditRetentionDays  int64  `json:"audit_retention_days"`
@@ -39,7 +38,6 @@ type OptionsRes struct {
 	SiteName            string           `json:"site_name"`
 	LoginNotice         string           `json:"login_notice"`
 	RegistrationEnabled bool             `json:"registration_enabled"`
-	PasswordMinLength   int64            `json:"password_min_length"`
 	LocalLoginEnabled   bool             `json:"local_login_enabled"`
 	Providers           []PublicProvider `json:"providers"`
 }

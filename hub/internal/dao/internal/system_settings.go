@@ -27,7 +27,6 @@ type SystemSettingsColumns struct {
 	RegistrationEnabled string //
 	RegistrationGroupId string //
 	SessionTtlSeconds   string //
-	PasswordMinLength   string //
 	LoginMaxAttempts    string //
 	LoginWindowSeconds  string //
 	AuditRetentionDays  string //
@@ -42,7 +41,6 @@ var systemSettingsColumns = SystemSettingsColumns{
 	RegistrationEnabled: "registration_enabled",
 	RegistrationGroupId: "registration_group_id",
 	SessionTtlSeconds:   "session_ttl_seconds",
-	PasswordMinLength:   "password_min_length",
 	LoginMaxAttempts:    "login_max_attempts",
 	LoginWindowSeconds:  "login_window_seconds",
 	AuditRetentionDays:  "audit_retention_days",

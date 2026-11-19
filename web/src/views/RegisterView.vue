@@ -13,11 +13,11 @@ async function submit() {
     if (busy.value || options.value?.registration_enabled !== true)
         return;
     failure.value = '';
-    if (!username.value.trim() || password.value !== repeated.value || Array.from(password.value).length < (options.value.password_min_length || 8)) {
-        failure.value = '请填写用户名，并确认两次密码一致且满足长度要求';
+    if (!username.value.trim() || !password.value || password.value !== repeated.value) {
+        failure.value = '请填写用户名和密码，并确认两次密码一致';
         return;
     }
-    const issue = passwordIssue(password.value, options.value.password_min_length);
+    const issue = passwordIssue(password.value);
     if (issue) {
         failure.value = issue;
         return;
@@ -51,7 +51,7 @@ async function submit() {
       <n-form-item label="显示名">
         <n-input v-model:value="displayName" :disabled="busy" />
       </n-form-item>
-      <n-form-item :label="`密码（至少 ${options.password_min_length} 位）`">
+      <n-form-item label="密码">
         <n-input v-model:value="password" type="password" :disabled="busy" :input-props="{autocomplete:'new-password'}" />
       </n-form-item>
       <n-form-item label="确认密码">

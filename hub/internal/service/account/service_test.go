@@ -75,7 +75,7 @@ func TestChangePasswordRevokesAllSessionsAndClearsTemporaryFlag(t *testing.T) {
 		t.Fatal(changed, err)
 	}
 }
-func TestDynamicPasswordMinimumAndOIDCOnlyDenial(t *testing.T) {
+func TestRegistrationPolicyAndOIDCOnlyDenial(t *testing.T) {
 	s, db := fixture(t)
 	ctx := context.Background()
 	settings, err := db.GetSystemSettings(ctx)
@@ -83,12 +83,12 @@ func TestDynamicPasswordMinimumAndOIDCOnlyDenial(t *testing.T) {
 		t.Fatal(err)
 	}
 	settings.RegistrationEnabled = true
-	settings.PasswordMinLength = 20
 	if err := db.UpdateSystemSettings(ctx, settings, settings.Version); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Register(ctx, "newuser", "New", "Password12345!"); err == nil {
-		t.Fatal("dynamic minimum ignored")
+	// 注册不再受最短长度限制：短密码也能建号。
+	if _, err := s.Register(ctx, "newuser", "New", "1"); err != nil {
+		t.Fatal(err)
 	}
 	if err := db.CreateUser(ctx, user.User{ID: "oidc", Username: "oidc", DisplayName: "OIDC", Role: user.RoleUser}); err != nil {
 		t.Fatal(err)

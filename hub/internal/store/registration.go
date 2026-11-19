@@ -20,7 +20,7 @@ func (d *DB) RegisterLocalUser(ctx context.Context, u user.User, expectedSetting
 			return ErrRegistrationDisabled
 		}
 		if int64(s.Version) != expectedSettingsVersion {
-			return ErrPasswordPolicyChanged
+			return ErrRegistrationSettingsChanged
 		}
 		if u.PasswordHash == "" {
 			return ErrConflict

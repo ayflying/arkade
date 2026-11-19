@@ -92,7 +92,7 @@ cd ../hub && go build -o bin/arkade-hub ./cmd/hub
 # 3. 配置可用的 PostgreSQL DSN 后启动 Hub
 # 默认内置本机执行；需本机 Docker/Compose 与相应权限
 # 初始管理员密码必须显式提供，代码内无默认密码
-ARKADE_INITIAL_PASS='你的密码至少8位' ./bin/arkade-hub -c config.toml
+ARKADE_INITIAL_PASS='你的初始管理员密码' ./bin/arkade-hub -c config.toml
 
 # 4. 可选：仅在远程被管服务器构建并启动 Agent（Hub 本机不需要）
 cd ../agent && go build -o bin/arkade-agent ./cmd/agent

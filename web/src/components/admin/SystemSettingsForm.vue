@@ -68,9 +68,6 @@ onMounted(load);
     <n-form-item label="会话有效期（秒）">
       <n-input-number v-model:value="settings.session_ttl_seconds" :min="1" :disabled="busy" />
     </n-form-item>
-    <n-form-item label="密码最短长度（8–72位；UTF-8总长度不超过72字节）">
-      <n-input-number v-model:value="settings.password_min_length" :min="8" :max="72" :disabled="busy" />
-    </n-form-item>
     <n-form-item label="登录限流窗口内最多尝试次数">
       <n-input-number v-model:value="settings.login_max_attempts" :min="1" :disabled="busy" />
     </n-form-item>

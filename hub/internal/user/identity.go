@@ -107,11 +107,12 @@ func ValidateDescription(s string) error {
 	return nil
 }
 
-// ValidatePassword 是对外暴露的密码策略校验。
+// ValidatePassword 是对外暴露的密码校验入口。
 //
 // 真正的策略在 password.go 的 validatePassword 里（HashPassword 会调用它），
 // 这里只是把它转成可在「创建用户前预检」的形式：先校验再哈希，能把参数错误
-// 与内部错误区分开，让上层返回 400 而不是 500。
+// 与内部错误区分开，让上层返回 400 而不是 500。当前策略只拒绝全空白和超过
+// bcrypt 72 字节的密码，不限制最短长度。
 func ValidatePassword(plain string) error {
 	return validatePassword(plain)
 }

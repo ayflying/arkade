@@ -10,7 +10,7 @@ import (
 )
 
 func settingsFrom(e entity.SystemSettings) SystemSettings {
-	return SystemSettings{ID: e.Id, SiteName: e.SiteName, LoginNotice: e.LoginNotice, RegistrationEnabled: e.RegistrationEnabled != 0, RegistrationGroupID: e.RegistrationGroupId, SessionTTLSeconds: int64(e.SessionTtlSeconds), PasswordMinLength: int64(e.PasswordMinLength), LoginMaxAttempts: int64(e.LoginMaxAttempts), LoginWindowSeconds: int64(e.LoginWindowSeconds), AuditRetentionDays: int64(e.AuditRetentionDays), Version: int64(e.Version)}
+	return SystemSettings{ID: e.Id, SiteName: e.SiteName, LoginNotice: e.LoginNotice, RegistrationEnabled: e.RegistrationEnabled != 0, RegistrationGroupID: e.RegistrationGroupId, SessionTTLSeconds: int64(e.SessionTtlSeconds), LoginMaxAttempts: int64(e.LoginMaxAttempts), LoginWindowSeconds: int64(e.LoginWindowSeconds), AuditRetentionDays: int64(e.AuditRetentionDays), Version: int64(e.Version)}
 }
 func (d *DB) GetSystemSettings(ctx context.Context) (SystemSettings, error) {
 	var e entity.SystemSettings
@@ -32,7 +32,7 @@ func (d *DB) UpdateSystemSettings(ctx context.Context, s SystemSettings, expecte
 		if s.RegistrationGroupID != "" {
 			group = s.RegistrationGroupID
 		}
-		result, err := tx.Model(dao.SystemSettings.Table()).Ctx(ctx).Where("id", 1).Where("version", expectedVersion).Data(do.SystemSettings{SiteName: s.SiteName, LoginNotice: s.LoginNotice, RegistrationEnabled: boolToInt(s.RegistrationEnabled), RegistrationGroupId: group, SessionTtlSeconds: s.SessionTTLSeconds, PasswordMinLength: s.PasswordMinLength, LoginMaxAttempts: s.LoginMaxAttempts, LoginWindowSeconds: s.LoginWindowSeconds, AuditRetentionDays: s.AuditRetentionDays, Version: expectedVersion + 1}).Update()
+		result, err := tx.Model(dao.SystemSettings.Table()).Ctx(ctx).Where("id", 1).Where("version", expectedVersion).Data(do.SystemSettings{SiteName: s.SiteName, LoginNotice: s.LoginNotice, RegistrationEnabled: boolToInt(s.RegistrationEnabled), RegistrationGroupId: group, SessionTtlSeconds: s.SessionTTLSeconds, LoginMaxAttempts: s.LoginMaxAttempts, LoginWindowSeconds: s.LoginWindowSeconds, AuditRetentionDays: s.AuditRetentionDays, Version: expectedVersion + 1}).Update()
 		if err != nil {
 			return normalizeExecError(err, "更新系统设置")
 		}

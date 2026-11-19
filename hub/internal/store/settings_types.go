@@ -6,10 +6,10 @@ import (
 )
 
 type SystemSettings struct {
-	ID                                                                                                      int
-	SiteName, LoginNotice, RegistrationGroupID                                                              string
-	RegistrationEnabled                                                                                     bool
-	SessionTTLSeconds, PasswordMinLength, LoginMaxAttempts, LoginWindowSeconds, AuditRetentionDays, Version int64
+	ID                                                                                   int
+	SiteName, LoginNotice, RegistrationGroupID                                           string
+	RegistrationEnabled                                                                  bool
+	SessionTTLSeconds, LoginMaxAttempts, LoginWindowSeconds, AuditRetentionDays, Version int64
 }
 type OIDCProvider struct {
 	ID, DisplayName, Issuer, ClientID, ClientSecretCipher, Scopes, DefaultGroupID string
@@ -25,7 +25,7 @@ type Identity struct {
 var (
 	ErrRegistrationDisabled         = gerror.New("registration disabled")
 	ErrRegistrationGroupUnavailable = gerror.New("registration group unavailable")
-	ErrPasswordPolicyChanged        = gerror.New("password policy changed")
+	ErrRegistrationSettingsChanged  = gerror.New("registration settings changed")
 	ErrLastLocalAdmin               = gerror.New("cannot remove the last active local administrator")
 	ErrLastLoginMethod              = gerror.New("cannot remove the last login method")
 	ErrProviderIdentityLocked       = gerror.Wrap(ErrConflict, "bound provider identity authority cannot change")

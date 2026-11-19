@@ -44,7 +44,7 @@ func TestSettingsCASValidation(t *testing.T) {
 	if _, err := svc.Update(ctx, initial, initial.Version); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("stale CAS %v", err)
 	}
-	for _, mutate := range []func(*store.SystemSettings){func(p *store.SystemSettings) { p.SiteName = "" }, func(p *store.SystemSettings) { p.SessionTTLSeconds = 3599 }, func(p *store.SystemSettings) { p.SessionTTLSeconds = 30*86400 + 1 }, func(p *store.SystemSettings) { p.PasswordMinLength = 7 }, func(p *store.SystemSettings) { p.PasswordMinLength = 73 }, func(p *store.SystemSettings) { p.LoginMaxAttempts = 21 }, func(p *store.SystemSettings) { p.LoginWindowSeconds = 59 }, func(p *store.SystemSettings) { p.AuditRetentionDays = 3651 }} {
+	for _, mutate := range []func(*store.SystemSettings){func(p *store.SystemSettings) { p.SiteName = "" }, func(p *store.SystemSettings) { p.SessionTTLSeconds = 3599 }, func(p *store.SystemSettings) { p.SessionTTLSeconds = 30*86400 + 1 }, func(p *store.SystemSettings) { p.LoginMaxAttempts = 21 }, func(p *store.SystemSettings) { p.LoginWindowSeconds = 59 }, func(p *store.SystemSettings) { p.AuditRetentionDays = 3651 }} {
 		bad := updated
 		mutate(&bad)
 		if _, err := svc.Update(ctx, bad, updated.Version); err == nil {

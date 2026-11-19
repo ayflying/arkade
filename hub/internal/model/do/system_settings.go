@@ -17,7 +17,6 @@ type SystemSettings struct {
 	RegistrationEnabled any //
 	RegistrationGroupId any //
 	SessionTtlSeconds   any //
-	PasswordMinLength   any //
 	LoginMaxAttempts    any //
 	LoginWindowSeconds  any //
 	AuditRetentionDays  any //

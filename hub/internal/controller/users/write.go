@@ -8,7 +8,6 @@ import (
 	api "arkade/hub/api/users/v1"
 	"arkade/hub/internal/controller"
 	"arkade/hub/internal/httpwire"
-	accountservice "arkade/hub/internal/service/account"
 	"arkade/hub/internal/store"
 	"arkade/hub/internal/user"
 )
@@ -37,11 +36,7 @@ func (c *Controller) Create(ctx context.Context, req *api.CreateReq) (*api.Creat
 	if err != nil {
 		return nil, badRequest(err)
 	}
-	settings, err := c.db.GetSystemSettings(ctx)
-	if err != nil {
-		return nil, c.storeError(err, "安全策略不可用")
-	}
-	if err := accountservice.PasswordPolicy(req.Password, settings.PasswordMinLength); err != nil {
+	if err := user.ValidatePassword(req.Password); err != nil {
 		return nil, badRequest(err)
 	}
 	hash, err := user.HashPassword(req.Password)
@@ -144,11 +139,7 @@ func (c *Controller) ResetPassword(ctx context.Context, req *api.ResetPasswordRe
 	if err != nil {
 		return nil, err
 	}
-	settings, err := c.db.GetSystemSettings(ctx)
-	if err != nil {
-		return nil, c.storeError(err, "安全策略不可用")
-	}
-	if err := accountservice.PasswordPolicy(req.Password, settings.PasswordMinLength); err != nil {
+	if err := user.ValidatePassword(req.Password); err != nil {
 		return nil, badRequest(err)
 	}
 	hash, err := user.HashPassword(req.Password)

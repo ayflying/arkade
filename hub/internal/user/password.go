@@ -20,8 +20,6 @@ const (
 	bcryptCost = 10
 	// maxPasswordBytes 是 bcrypt 的硬上限。
 	maxPasswordBytes = 72
-	// minPasswordLen 用于正常创建账号和修改密码，不限制部署初始密码。
-	minPasswordLen = 8
 )
 
 // HashPassword 生成密码哈希。
@@ -32,16 +30,11 @@ func HashPassword(plain string) (string, error) {
 	return hashPassword(plain)
 }
 
-// HashInitialPassword 仅用于部署时创建初始管理员，允许短密码；
-// 保留非空白和 bcrypt 上限检查，不放宽正常创建账号/改密规则。
+// HashInitialPassword 仅用于部署时创建初始管理员。
+// 创建账号、改密与部署初始化现在共用同一套策略：只要求非空白且不超过
+// bcrypt 的 72 字节上限，不再有最短长度限制。
 func HashInitialPassword(plain string) (string, error) {
-	if strings.TrimSpace(plain) == "" {
-		return "", fmt.Errorf("初始密码不能为空或全为空白字符")
-	}
-	if len(plain) > maxPasswordBytes {
-		return "", fmt.Errorf("密码不能超过 %d 字节（bcrypt 上限）", maxPasswordBytes)
-	}
-	return hashPassword(plain)
+	return HashPassword(plain)
 }
 
 func hashPassword(plain string) (string, error) {
@@ -63,16 +56,17 @@ func VerifyPassword(hashed, plain string) error {
 	return nil
 }
 
-// validatePassword 做长度与字符集的基础校验。
+// validatePassword 只保留 bcrypt 的安全边界与非空白约束。
+//
+// 历史上这里还有固定的 8 位下限，加上系统设置里的可配置下限，导致管理员
+// 给内网账号或临时账号设短密码时被拦。按产品要求已完全去掉最短长度限制：
+// 密码可以任意短，但不能全为空白，也不能超过 bcrypt 的 72 字节上限。
 func validatePassword(plain string) error {
-	if len(plain) < minPasswordLen {
-		return fmt.Errorf("密码至少 %d 位", minPasswordLen)
+	if strings.TrimSpace(plain) == "" {
+		return fmt.Errorf("密码不能全为空白字符")
 	}
 	if len(plain) > maxPasswordBytes {
 		return fmt.Errorf("密码不能超过 %d 字节（bcrypt 上限）", maxPasswordBytes)
-	}
-	if strings.TrimSpace(plain) == "" {
-		return fmt.Errorf("密码不能全为空白字符")
 	}
 	return nil
 }

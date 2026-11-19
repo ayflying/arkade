@@ -152,6 +152,23 @@ func TestCreateUser(t *testing.T) {
 	env.loginAs(t, "newuser", "Password123!")
 }
 
+// TestCreateUserShortPassword 验证创建用户不再强制最短密码长度。
+//
+// 产品要求去掉「至少 12 个字符」的限制：管理员给内网或临时账号设短密码
+// 也应成功，只保留非空白与 bcrypt 的 72 字节上限。
+func TestCreateUserShortPassword(t *testing.T) {
+	env := newTestEnv(t)
+	cookies := env.login(t)
+
+	rec, _ := env.do(t, http.MethodPost, "/api/users",
+		`{"username":"tiny","password":"1","role":"user"}`, cookies)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("短密码创建用户应返回 200，实际 %d，响应 %s", rec.Code, rec.Body.String())
+	}
+	// 短密码必须真的能登录，证明没有在哈希入口被隐式拦下。
+	env.loginAs(t, "tiny", "1")
+}
+
 // TestCreateUserDuplicate 验证重名返回 409 conflict。
 func TestCreateUserDuplicate(t *testing.T) {
 	env := newTestEnv(t)
@@ -168,7 +185,7 @@ func TestCreateUserDuplicate(t *testing.T) {
 	}
 }
 
-// TestCreateUserInvalid 验证参数校验：短密码、非法角色、非法用户名。
+// TestCreateUserInvalid 验证参数校验：空白密码、非法角色、非法用户名。
 func TestCreateUserInvalid(t *testing.T) {
 	env := newTestEnv(t)
 	cookies := env.login(t)
@@ -180,7 +197,7 @@ func TestCreateUserInvalid(t *testing.T) {
 	}{
 		// 用户名必须合法，才能让用例真正测到「密码」「角色」的校验分支：
 		// 用户名先被拦下会让断言指向错误的字段。
-		{"密码太短", `{"username":"user1","password":"short","role":"user"}`, "密码至少"},
+		{"密码全为空白", `{"username":"user1","password":"   ","role":"user"}`, "密码不能全为空白"},
 		{"非法角色", `{"username":"user2","password":"Password123!","role":"Admin"}`, "角色只能是"},
 		{"用户名带空格", `{"username":"a b","password":"Password123!","role":"user"}`, "用户名只能包含"},
 		{"用户名全数字", `{"username":"12345","password":"Password123!","role":"user"}`, "不能全为数字"},

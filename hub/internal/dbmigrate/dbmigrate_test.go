@@ -43,7 +43,7 @@ func TestRunFreshAndIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.FromVersion != -1 || r.ToVersion != 2 || r.Applied != 2 || r.Dirty {
+	if r.FromVersion != -1 || r.ToVersion != 3 || r.Applied != 3 || r.Dirty {
 		t.Fatalf("unexpected result %+v", r)
 	}
 	db := open(t, dsn)
@@ -52,7 +52,7 @@ func TestRunFreshAndIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.FromVersion != 2 || r.ToVersion != 2 || r.Applied != 0 || r.Dirty {
+	if r.FromVersion != 3 || r.ToVersion != 3 || r.Applied != 0 || r.Dirty {
 		t.Fatalf("unexpected repeat %+v", r)
 	}
 	var count int

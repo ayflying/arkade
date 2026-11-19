@@ -38,14 +38,6 @@ func setup(t *testing.T) (*Controller, *store.DB, *sessionStub) {
 			t.Error(err)
 		}
 	})
-	settings, err := db.GetSystemSettings(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	settings.PasswordMinLength = 8 // legacy contract fixture; production defaults to 12
-	if err := db.UpdateSystemSettings(context.Background(), settings, settings.Version); err != nil {
-		t.Fatal(err)
-	}
 	s := &sessionStub{u: user.User{ID: "operator", Username: "operator", Role: user.RoleAdmin}, ok: true}
 	return New(db, s, slog.New(slog.NewTextHandler(io.Discard, nil))), db, s
 }

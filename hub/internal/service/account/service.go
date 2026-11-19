@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"github.com/gogf/gf/v2/errors/gerror"
 	"time"
-	"unicode/utf8"
 )
 
 var (
@@ -41,17 +40,7 @@ func (s *Service) Update(ctx context.Context, userID, displayName string) (user.
 	return s.db.GetUserByID(ctx, userID)
 }
 
-// PasswordPolicy layers the configurable minimum over the fixed bcrypt/safety
-// policy. The upper bound remains enforced by user.ValidatePassword.
-func PasswordPolicy(password string, min int64) error {
-	if err := user.ValidatePassword(password); err != nil {
-		return err
-	}
-	if int64(utf8.RuneCountInString(password)) < min {
-		return gerror.Newf("密码至少需要 %d 个字符", min)
-	}
-	return nil
-}
+// ChangePassword 修改本地密码，只校验非空白与 bcrypt 上限，不限制最短长度。
 func (s *Service) ChangePassword(ctx context.Context, userID, oldPassword, newPassword string) error {
 	u, err := s.db.GetUserByID(ctx, userID)
 	if err != nil {
@@ -69,11 +58,7 @@ func (s *Service) ChangePassword(ctx context.Context, userID, oldPassword, newPa
 		}
 		return err
 	}
-	settings, err := s.db.GetSystemSettings(ctx)
-	if err != nil {
-		return err
-	}
-	if err := PasswordPolicy(newPassword, settings.PasswordMinLength); err != nil {
+	if err := user.ValidatePassword(newPassword); err != nil {
 		return invalid(err)
 	}
 	if user.VerifyPassword(u.PasswordHash, newPassword) == nil {

@@ -53,5 +53,5 @@ func (c *Public) Options(ctx context.Context, _ *api.OptionsReq) (*api.OptionsRe
 		}
 	}
 	noCache(ctx)
-	return &api.OptionsRes{SiteName: p.SiteName, LoginNotice: p.LoginNotice, RegistrationEnabled: p.RegistrationEnabled, PasswordMinLength: p.PasswordMinLength, LocalLoginEnabled: true, Providers: visible}, nil
+	return &api.OptionsRes{SiteName: p.SiteName, LoginNotice: p.LoginNotice, RegistrationEnabled: p.RegistrationEnabled, LocalLoginEnabled: true, Providers: visible}, nil
 }

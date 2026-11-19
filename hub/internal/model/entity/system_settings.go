@@ -12,7 +12,6 @@ type SystemSettings struct {
 	RegistrationEnabled int    `json:"registrationEnabled" orm:"registration_enabled"  ` //
 	RegistrationGroupId string `json:"registrationGroupId" orm:"registration_group_id" ` //
 	SessionTtlSeconds   int64  `json:"sessionTtlSeconds"   orm:"session_ttl_seconds"   ` //
-	PasswordMinLength   int    `json:"passwordMinLength"   orm:"password_min_length"   ` //
 	LoginMaxAttempts    int    `json:"loginMaxAttempts"    orm:"login_max_attempts"    ` //
 	LoginWindowSeconds  int64  `json:"loginWindowSeconds"  orm:"login_window_seconds"  ` //
 	AuditRetentionDays  int    `json:"auditRetentionDays"  orm:"audit_retention_days"  ` //

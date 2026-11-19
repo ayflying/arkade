@@ -70,10 +70,10 @@ func noCache(ctx context.Context) {
 	}
 }
 func view(p store.SystemSettings) api.SettingsView {
-	return api.SettingsView{SiteName: p.SiteName, LoginNotice: p.LoginNotice, RegistrationEnabled: p.RegistrationEnabled, RegistrationGroupID: p.RegistrationGroupID, SessionTTLSeconds: p.SessionTTLSeconds, PasswordMinLength: p.PasswordMinLength, LoginMaxAttempts: p.LoginMaxAttempts, LoginWindowSeconds: p.LoginWindowSeconds, AuditRetentionDays: p.AuditRetentionDays, Version: p.Version, LocalLoginEnabled: true}
+	return api.SettingsView{SiteName: p.SiteName, LoginNotice: p.LoginNotice, RegistrationEnabled: p.RegistrationEnabled, RegistrationGroupID: p.RegistrationGroupID, SessionTTLSeconds: p.SessionTTLSeconds, LoginMaxAttempts: p.LoginMaxAttempts, LoginWindowSeconds: p.LoginWindowSeconds, AuditRetentionDays: p.AuditRetentionDays, Version: p.Version, LocalLoginEnabled: true}
 }
 func settingsRecord(p api.SettingsView) store.SystemSettings {
-	return store.SystemSettings{ID: 1, SiteName: p.SiteName, LoginNotice: p.LoginNotice, RegistrationEnabled: p.RegistrationEnabled, RegistrationGroupID: p.RegistrationGroupID, SessionTTLSeconds: p.SessionTTLSeconds, PasswordMinLength: p.PasswordMinLength, LoginMaxAttempts: p.LoginMaxAttempts, LoginWindowSeconds: p.LoginWindowSeconds, AuditRetentionDays: p.AuditRetentionDays, Version: p.Version}
+	return store.SystemSettings{ID: 1, SiteName: p.SiteName, LoginNotice: p.LoginNotice, RegistrationEnabled: p.RegistrationEnabled, RegistrationGroupID: p.RegistrationGroupID, SessionTTLSeconds: p.SessionTTLSeconds, LoginMaxAttempts: p.LoginMaxAttempts, LoginWindowSeconds: p.LoginWindowSeconds, AuditRetentionDays: p.AuditRetentionDays, Version: p.Version}
 }
 func (c *Controller) providerView(p store.OIDCProvider) api.ProviderView {
 	return api.ProviderView{ID: p.ID, DisplayName: p.DisplayName, Issuer: p.Issuer, ClientID: p.ClientID, Scopes: p.Scopes, DefaultGroupID: p.DefaultGroupID, Enabled: p.Enabled, AutoRegister: p.AutoRegister, HasClientSecret: p.ClientSecretCipher != "", CallbackURL: c.service.CallbackURL(p.ID), Version: p.Version, CreatedAt: p.CreatedAt.UTC().Format(time.RFC3339), UpdatedAt: p.UpdatedAt.UTC().Format(time.RFC3339)}
