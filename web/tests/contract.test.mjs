@@ -470,6 +470,15 @@ const opTaskSrc = source('composables/useStackOperationTask.ts')
 const opModalSrc = source('components/stack/StackOperationModal.vue')
 check('配置: env 三态通过真实 payload builder，未变省略/空串清空/新值替换', /env !== originalEnv \? \{ env_content: env \} : \{\}/.test(managedConfigSrc) && /managedUpdatePayload\(content.value, version.value, envContent.value, originalEnv.value\)/.test(managedConfigSrc))
 check('配置: env 编辑器仍接入且保存时锁定', /<stack-env-editor v-model="config.envContent.value" :disabled="config.saving.value"/.test(managedPanelSrc))
+/*
+ * .env 展开后默认是打码态，打码态下**没有输入框**。
+ * 以前只能靠右上角那颗「显示内容」按钮切到可编辑状态，它看起来像"展示用途"，
+ * 于是用户展开后点不进任何地方，以为编辑不了——这是真实用户反馈。
+ * 所以打码态必须自带一个明确的「编辑内容 / 开始填写」入口。
+ */
+const envEditorSrc = source('components/stack/StackEnvEditor.vue')
+check('配置: env 打码态有明确的进入编辑入口', /开始填写 \.env/.test(envEditorSrc) && /编辑内容/.test(envEditorSrc) && /@click="reveal = true"/.test(envEditorSrc))
+check('配置: env 输入框只在编辑态出现', /<n-input[\s\S]{0,80}?v-if="reveal"/.test(envEditorSrc))
 check('配置: manage 403 不影响容器与日志', /err.status === 403/.test(managedConfigSrc) && /容器与日志仍可查看/.test(managedConfigSrc))
 check('配置: 保存需确认 compose up 部署而非草稿', /await confirmAction/.test(managedConfigSrc) && /立即执行 compose up/.test(managedConfigSrc) && /danger: true/.test(managedConfigSrc))
 /*

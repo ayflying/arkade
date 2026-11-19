@@ -142,10 +142,25 @@ defineExpose({ hasContent: computed(() => props.modelValue.trim() !== '') })
 
     <template v-if="open">
       <!--
-        收起编辑区时也能看到结构（变量名 + 打码值），
-        让用户确认「变量名对不对」而不必泄露密码。
+        只在有内容且未显示明文时才给打码预览。
+        没内容时这块是空的，用户展开后看不到任何可输入的地方，
+        会以为"这组件坏了"——所以下面必须有"开始填写"按钮兜住。
       -->
       <pre v-if="!reveal && lineCount > 0" class="env-editor__masked">{{ maskedPreview }}</pre>
+
+      <!--
+        打码态下没有可输入的输入框，必须有一个明确的入口切到编辑态。
+        以前只能靠右上角那颗「显示内容」按钮，它看起来像"展示用途"而不是
+        "开始编辑"，于是用户展开后点不进任何地方，以为编辑不了。
+      -->
+      <div v-if="!reveal" class="env-editor__enter">
+        <n-button size="small" type="primary" ghost :disabled="disabled" @click="reveal = true">
+          {{ lineCount > 0 ? '编辑内容' : '开始填写 .env' }}
+        </n-button>
+        <span class="env-editor__enter-hint">
+          {{ lineCount > 0 ? '内容默认打码，点此显示明文并编辑' : '还没有变量，点此展开输入框' }}
+        </span>
+      </div>
 
       <n-input
         v-if="reveal"
@@ -255,6 +270,22 @@ defineExpose({ hasContent: computed(() => props.modelValue.trim() !== '') })
   word-break: break-all;
   color: var(--arkade-text-secondary);
   border-top: 1px solid var(--arkade-border-color);
+}
+
+/* 打码态下的进入编辑入口：按钮 + 一句为什么要点它 */
+.env-editor__enter {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  background: var(--arkade-bg-primary);
+  border-top: 1px solid var(--arkade-border-color);
+}
+
+.env-editor__enter-hint {
+  font-size: 12px;
+  color: var(--arkade-text-tertiary);
 }
 
 .env-editor__input {
