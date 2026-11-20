@@ -125,7 +125,9 @@ func TestContainerMetricHistoryScopedHTTP(t *testing.T) {
 		}
 	}
 
-	// 超过 7 天的区间被夹紧，而不是报错
+	// 超过 7 天的区间被夹紧，而不是报错。
+	// 只断言契约而不是具体秒数：服务端用自己的 now 夹紧，请求在路上花掉的时间会
+	// 让跨度比整 7 天少一两秒；桶宽按整分钟对齐，因此允许相差一个刻度。
 	long := fmt.Sprintf("%s/api/agents/hist-allowed/containers/abc123/metrics/history?from=%d&to=%d", base, now-30*86400, now)
 	resp, body = doHTTP(t, http.MethodGet, long, "", viewer)
 	if resp.StatusCode != 200 {
@@ -135,11 +137,15 @@ func TestContainerMetricHistoryScopedHTTP(t *testing.T) {
 	if err := json.Unmarshal(body, &clamped); err != nil {
 		t.Fatal(err)
 	}
-	if clamped.To-clamped.From != 7*86400 {
-		t.Fatalf("区间应夹到 7 天，实际 %d", clamped.To-clamped.From)
+	span := clamped.To - clamped.From
+	if span > 7*86400 || span < 7*86400-120 {
+		t.Fatalf("区间应夹到 7 天附近，实际 %d 秒", span)
 	}
-	if clamped.BucketSeconds != 1680 {
-		t.Fatalf("7 天区间应降采样到 1680 秒一桶，实际 %d", clamped.BucketSeconds)
+	if clamped.BucketSeconds%60 != 0 {
+		t.Fatalf("桶宽应对齐整分钟，实际 %d", clamped.BucketSeconds)
+	}
+	if points := span / clamped.BucketSeconds; points > 360 {
+		t.Fatalf("7 天区间降采样后应不超过 360 个点，实际 %d", points)
 	}
 }
 
