@@ -76,10 +76,11 @@ func (c *Controller) Delete(ctx context.Context, req *api.DeleteReq) (*api.Delet
 		if err := c.d.DB.DeleteAgentToken(ctx, req.AgentID); err != nil {
 			c.d.Log.Error("删除服务器后清理接入凭据失败，该凭据可能仍然可用", "agent_id", req.AgentID, "err", err)
 		}
-		// 资源历史跟着服务器一起消失：服务器都没了，曲线既没入口看也没人会看。
-		// 失败不阻断删除，残留会在 7 天保留期到期后被后台清理。
-		if err := c.d.DB.DeleteMonitorSamplesForAgent(ctx, req.AgentID); err != nil {
-			c.d.Log.Error("删除服务器后清理资源历史失败，将在保留期到期后自动清理", "agent_id", req.AgentID, "err", err)
+		// 资源历史、告警事件与投递记录跟着服务器一起消失：服务器都没了，
+		// 这些行既没有入口能查到，也没人再会去看。
+		// 失败不阻断删除，残留会在各自保留期到期后被后台清理。
+		if err := c.d.DB.PurgeMonitorAgentData(ctx, req.AgentID); err != nil {
+			c.d.Log.Error("删除服务器后清理监控数据失败，将在保留期到期后自动清理", "agent_id", req.AgentID, "err", err)
 		}
 		c.d.Registry.Close(req.AgentID, DeleteAgentCloseReason)
 		return nil

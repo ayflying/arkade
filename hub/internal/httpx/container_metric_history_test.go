@@ -149,16 +149,47 @@ func TestMonitorHistoryPurgedWhenAgentDeleted(t *testing.T) {
 	admin := e.login(t)
 	e.seedAgent(t, "purge-agent")
 	seedHistory(t, e.db, "purge-agent", "abc123", "proj", "web")
+	ctx := context.Background()
+	// 告警事件与投递记录同样要在删除后清空，否则会变成指向已删服务器的孤儿记录。
+	if err := e.db.UpsertMonitorIncident(ctx, store.MonitorIncident{
+		ID: "inc-1", Fingerprint: "inc-1", AgentID: "purge-agent", ContainerID: "abc123",
+		Kind: "cpu", Status: "firing", FirstSeen: 1, LastSeen: 2, DetailJSON: "{}",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.db.AddMonitorDelivery(ctx, store.MonitorDelivery{
+		ID: "del-1", IncidentID: "inc-1", Channel: "dingtalk", Event: "firing", Status: "ok", CreatedAt: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	rec, body := e.do(t, http.MethodDelete, "/api/agents/purge-agent", "", admin)
 	if rec.Code != 200 {
 		t.Fatalf("%d %s", rec.Code, body)
 	}
-	points, err := e.db.QueryMonitorSamples(context.Background(), "purge-agent", "abc123", 0, time.Now().Unix()+60, 60)
+	points, err := e.db.QueryMonitorSamples(ctx, "purge-agent", "abc123", 0, time.Now().Unix()+60, 60)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(points) != 0 {
 		t.Fatalf("删除服务器后仍有 %d 条历史残留", len(points))
+	}
+	incidents, err := e.db.ListMonitorIncidents(ctx, 500)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range incidents {
+		if row.AgentID == "purge-agent" {
+			t.Fatalf("删除服务器后仍有告警记录残留: %s", row.ID)
+		}
+	}
+	deliveries, err := e.db.ListMonitorDeliveries(ctx, 500)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range deliveries {
+		if row.ID == "del-1" {
+			t.Fatal("删除服务器后仍有投递记录残留")
+		}
 	}
 }

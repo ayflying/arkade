@@ -271,57 +271,5 @@ func (d *DB) PruneMonitorSamples(ctx context.Context, before int64) error {
 	return nil
 }
 
-// ============================ 删除对象时的清理 ============================
-//
-// 用户删除容器、编排或服务器后，历史行不能留下来变成查不到的孤儿数据：
-// 它们既没有页面能看到，又会一直占用 7 天保留期，属于纯粹的残留。
-//
-// 三个入口都是显式调用，不靠"从快照里消失"来推断删除——采集范围是按已接管
-// 项目收窄的，编排被删时容器消失是范围变化造成的，两者无法区分。
-
-// DeleteMonitorSamplesForAgent 删除某台服务器的全部历史样本（删除服务器时调用）。
-func (d *DB) DeleteMonitorSamplesForAgent(ctx context.Context, agentID string) error {
-	if agentID == "" {
-		return nil
-	}
-	return d.purgeMonitorSamples(ctx, `DELETE FROM monitor_samples WHERE agent_id = $1`, agentID)
-}
-
-// DeleteMonitorSamplesForProject 删除某台服务器上某个编排项目的全部历史样本。
-//
-// 用 project 列而不是"猜容器还剩哪些"：编排删除会让容器一起消失，
-// 但 Hub 拿不到它们的完整 ID 清单，只有项目名是确定且唯一的。
-func (d *DB) DeleteMonitorSamplesForProject(ctx context.Context, agentID, project string) error {
-	if agentID == "" || project == "" {
-		return nil
-	}
-	return d.purgeMonitorSamples(ctx, `DELETE FROM monitor_samples WHERE agent_id = $1 AND project = $2`, agentID, project)
-}
-
-// DeleteMonitorSamplesForContainer 删除单个容器的历史样本。
-//
-// 删除接口收到的引用可能是完整 ID、12 位短 ID，也可能是容器名（Agent 会原样
-// 回显请求里的引用），所以三种形态都匹配一次：容器名在宿主机内唯一，
-// 短 ID 前缀也只会命中同一个容器。
-func (d *DB) DeleteMonitorSamplesForContainer(ctx context.Context, agentID, containerRef string) error {
-	ref := strings.TrimSpace(containerRef)
-	if agentID == "" || ref == "" {
-		return nil
-	}
-	const query = `DELETE FROM monitor_samples WHERE agent_id = $1
-  AND (container_id = $2 OR container_id LIKE $3 || '%' OR container_name = $2)`
-	return d.purgeMonitorSamples(ctx, query, agentID, ref, escapeLikePattern(ref))
-}
-
-// escapeLikePattern 转义 LIKE 通配符。容器名里理论上可以出现 _ 或 %，
-// 不转义会让一次删除变成"删掉一批"。
-func escapeLikePattern(v string) string {
-	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(v)
-}
-
-func (d *DB) purgeMonitorSamples(ctx context.Context, query string, args ...any) error {
-	if _, err := d.gdb.DoExec(ctx, nil, query, args...); err != nil {
-		return gerror.Wrap(err, "清理容器资源历史失败")
-	}
-	return nil
-}
+// 删除对象时的清理见 monitor_purge.go：一个对象的残留数据不止样本表，
+// 告警事件与投递记录同样需要一起清掉。
