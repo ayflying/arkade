@@ -14,7 +14,7 @@ Arkade 的执行端：通过反向 WebSocket 连接 Hub，在授权后执行 Doc
 - [Agent 独立编排](https://raw.githubusercontent.com/ayflying/arkade/master/deploy/docker/agent-compose.yml)
 - [Agent 凭据样例](https://raw.githubusercontent.com/ayflying/arkade/master/deploy/docker/agent.env.example)
 
-将专属密钥填入 `.env` 的 `ARKADE_AGENT_TOKEN`，将编排中的 `ARKADE_HUB_URL` 改为可达的 Hub 地址；跨机器推荐 `wss://域名/agent/connect`。
+将专属密钥填入 `.env` 的 `AGENT_TOKEN`，将编排中的 `HUB_URL` 改为可达的 Hub 地址；跨机器推荐 `https://hub.example.com`。只填协议、主机和可选端口；Agent 自行调用 `/agent/discover` 获取 WebSocket 连接路径，不接受旧 `ws://` / `wss://` 或带连接路径的地址。
 
 ```sh
 chmod 600 .env

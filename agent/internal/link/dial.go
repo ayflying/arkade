@@ -1,110 +1,61 @@
 package link
 
 import (
-	"fmt"
+	"context"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
+	"arkade/protocol/envelope"
 	"github.com/gorilla/websocket"
 )
 
-// 认证协议约定（与 Hub 侧实现对齐，变更需两端同步）：
-//
-//	Authorization: Bearer <agent token>
-//	X-Arkade-Agent-Id: <agent_id>      // 首连时可能为空，由 HelloAck 下发
-//	X-Arkade-Proto: <协议版本>
-//	User-Agent: arkade-agent/<版本>
-//
-// 为什么认证信息放请求头而不是 URL 查询串：查询串会被各级代理与访问日志原样记录，
-// 令牌泄漏在日志里比泄漏在网络里更难察觉。认证只使用 Bearer 请求头。
 const (
-	headerAuth      = "Authorization"
-	headerAgentID   = "X-Arkade-Agent-Id"
-	headerProto     = "X-Arkade-Proto"
+	headerAuth      = envelope.HeaderAuthorization
+	headerAgentID   = envelope.HeaderAgentID
+	headerProto     = envelope.HeaderProtoVersion
 	headerUserAgent = "User-Agent"
-	// headerHostSecurity 是握手时的额外防护：服务器端本不应校验 Origin
-	// （Agent 不是浏览器），但某些反向代理会因为没有 Origin 而拒绝，
-	// 这里显式把 Origin 设为空字符串（gorilla 默认不发该头）。
-	authScheme = "Bearer "
+	connectTimeout  = 10 * time.Second
 )
 
-// defaultConnectPath 是 Hub 侧的 Agent 接入路径。
-const defaultConnectPath = "/agent/connect"
-
-// dialer 封装 WebSocket 握手参数。
-//
-// 超时控制：HandshakeTimeout 必须有值，否则在链路黑洞（丢包不回 RST）时
-// 建连会卡到 TCP 自身超时（分钟级），导致退避节奏完全失效。
+// dialer owns HTTP discovery and the WebSocket handshake on the same origin.
 type dialer struct {
-	u            *url.URL
+	origin       *url.URL
 	token        string
 	agentID      string
 	proto        int
 	agentVersion string
-	insecureTLS  bool
+	http         *http.Client
 	ws           *websocket.Dialer
 }
 
-// newDialer 归一化 Hub 地址并构造拨号器。
-//
-// 地址归一化规则：
-//   - http:// → ws://，https:// → wss://（用户常把面板地址直接粘过来）；
-//   - 未带路径或路径为 "/" → 补 /agent/connect；
-//   - 已有路径（如自定义网关前缀 /arkade/agent/connect）→ 原样保留。
 func newDialer(hubURL, token, agentID, agentVersion string, protoVer int, insecureTLS bool) (*dialer, error) {
-	raw := strings.TrimSpace(hubURL)
-	if raw == "" {
-		return nil, fmt.Errorf("hub 地址为空")
-	}
-	u, err := url.Parse(raw)
+	origin, err := envelope.ParseAgentHubOrigin(hubURL)
 	if err != nil {
-		return nil, fmt.Errorf("hub 地址格式非法(%s): %w", raw, err)
+		return nil, err
 	}
-	switch strings.ToLower(u.Scheme) {
-	case "ws", "wss":
-	case "http":
-		u.Scheme = "ws"
-	case "https":
-		u.Scheme = "wss"
-	default:
-		return nil, fmt.Errorf("hub 地址协议不支持: %q（只支持 ws:// / wss:// / http:// / https://）", u.Scheme)
-	}
-	if u.Host == "" {
-		return nil, fmt.Errorf("hub 地址缺少主机名: %s", raw)
-	}
-	if u.Path == "" || u.Path == "/" {
-		u.Path = defaultConnectPath
-	}
-
-	ws := &websocket.Dialer{
-		HandshakeTimeout: 10 * time.Second,
-		// 心跳周期远小于 60s，允许 60s 的读超时作为"最后一道防线"：
-		// 正常情况下由应用层心跳驱动，这里的超时只兜住"TCP 假连通"的情况。
-		EnableCompression: false,
-	}
+	ws := &websocket.Dialer{HandshakeTimeout: connectTimeout}
+	transport := &http.Transport{DisableKeepAlives: true}
 	if insecureTLS {
-		// 仅用于自签名证书的测试环境；生产必须让系统信任链生效。
+		// 仅用于开发自签名证书；发现和升级必须使用相同的 TLS 策略。
 		ws.TLSClientConfig = insecureTLSConfig()
+		transport.TLSClientConfig = insecureTLSConfig()
 	}
-
 	return &dialer{
-		u:            u,
-		token:        token,
-		agentID:      agentID,
-		proto:        protoVer,
-		agentVersion: agentVersion,
-		insecureTLS:  insecureTLS,
-		ws:           ws,
+		origin: origin, token: token, agentID: agentID, proto: protoVer, agentVersion: agentVersion,
+		ws: ws,
+		http: &http.Client{
+			Timeout: connectTimeout, Transport: transport,
+			// 不接受重定向，避免将凭据发送到其他主机或路径。
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		},
 	}, nil
 }
 
-// headers 构造握手请求头。
 func (d *dialer) headers() http.Header {
 	h := http.Header{}
 	if d.token != "" {
-		h.Set(headerAuth, authScheme+d.token)
+		h.Set(headerAuth, envelope.BearerPrefix+d.token)
 	}
 	if d.agentID != "" {
 		h.Set(headerAgentID, d.agentID)
@@ -116,24 +67,22 @@ func (d *dialer) headers() http.Header {
 	return h
 }
 
-// connectURL 返回不含认证令牌的连接地址，避免凭据进入代理访问日志。
-func (d *dialer) connectURL() string {
-	u := *d.u
-	q := u.Query()
-	q.Del("token")
-	u.RawQuery = q.Encode()
-	return u.String()
+// dial discovers the current path on every reconnect; no old path fallback.
+func (d *dialer) dial(ctx context.Context) (*websocket.Conn, *http.Response, error) {
+	path, err := d.discover(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	u := *d.origin
+	u.Path = path
+	if u.Scheme == "https" {
+		u.Scheme = "wss"
+	} else {
+		u.Scheme = "ws"
+	}
+	return d.ws.DialContext(ctx, u.String(), d.headers())
 }
 
-// dial 执行一次握手。
-func (d *dialer) dial() (*websocket.Conn, *http.Response, error) {
-	return d.ws.Dial(d.connectURL(), d.headers())
-}
-
-// setAgentID 更新握手时要带的身份。
-//
-// 握手成功后 Hub 会下发正式 agent_id，重连时必须带着它，否则 Hub 会误判
-// 成一台新机器。dialer 只在单 goroutine（连接循环）里被读写，故不加锁。
-func (d *dialer) setAgentID(id string) {
-	d.agentID = id
-}
+// setAgentID uses the Hub-assigned identity for reconnects. Only the connection
+// loop reads and writes the dialer, so no locking is needed.
+func (d *dialer) setAgentID(id string) { d.agentID = id }

@@ -28,7 +28,7 @@
 
 ## Casdoor 配置步骤
 
-1. 为 Arkade 设置稳定的公开访问地址 `server.base_url` / `ARKADE_BASE_URL`，生产使用 HTTPS。不要使用用户可控 Host 头推导回调地址。
+1. 为 Arkade 设置稳定的公开访问地址 `server.base_url` / `BASE_URL`，生产使用 HTTPS。不要使用用户可控 Host 头推导回调地址。
 2. 在 Casdoor 创建 OIDC 应用，启用 Authorization Code，并允许 PKCE S256。申请 `openid profile email`（可调整，但必须含 openid）。
 3. 管理员在 Arkade 系统设置 → 第三方登录中新建提供方，填显示名称、Casdoor 的精确 Issuer、Client ID 和 Client Secret。Issuer 必须与 discovery 文档及 ID Token 完全一致，尾部 `/` 有语义，不自动去除。
 4. 保存后复制 Arkade 展示的固定回调地址到 Casdoor 允许的 redirect URI，格式为 `https://你的域名/api/auth/oidc/<提供方ID>/callback`。
@@ -63,7 +63,7 @@ settings_key_file = "/run/secrets/arkade-settings.key"
 allow_insecure_oidc_loopback = false
 ```
 
-对应环境变量 `ARKADE_SETTINGS_KEY_FILE`、`ARKADE_ALLOW_INSECURE_OIDC_LOOPBACK`。后者仅本地测试允许 HTTP loopback Issuer；生产保持关闭，前端配置页默认只接受 HTTPS。
+对应环境变量 `SETTINGS_KEY_FILE`、`ALLOW_INSECURE_OIDC_LOOPBACK`。后者仅本地测试允许 HTTP loopback Issuer；生产保持关闭，前端配置页默认只接受 HTTPS。
 
 - Linux 密钥文件必须为普通文件且权限不宽于 0600；拒绝符号链接、错误长度或损坏格式。Windows 应用不修改系统 ACL，部署者需限制所在目录访问权限。
 - 第一次使用无凭据的新库可以自动生成密钥；已有加密凭据但密钥遗失时启动拒绝，不自动生成替代密钥。

@@ -49,7 +49,7 @@ func cmdRun(args []string, stderr io.Writer) int {
 	// 它会随配置文件一起被备份、复制、下发。这里不拒绝启动（那会让老部署突然起不来），
 	// 但必须显式警告，否则这个坏习惯会一直悄悄存在。
 	if config.TokenFromFile(*cfgPath) {
-		log.Warn("安全提醒：检测到配置文件里写有 token，建议改为环境变量 ARKADE_AGENT_TOKEN 注入。" +
+		log.Warn("安全提醒：检测到配置文件里写有 token，建议改为环境变量 AGENT_TOKEN 注入。" +
 			"配置文件容易被备份或复制，明文令牌会随之扩散。")
 	}
 

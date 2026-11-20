@@ -14,9 +14,9 @@ Arkade 控制端，提供 Web、权限、远程 Agent 连接与编排管理。Hu
 - [仅 Hub 编排](https://raw.githubusercontent.com/ayflying/arkade/master/deploy/docker/hub-compose.yml)
 - [凭据样例](https://raw.githubusercontent.com/ayflying/arkade/master/deploy/docker/hub.env.example)
 
-该编排**只创建 Hub，不创建、控制或删除 PostgreSQL 容器/数据卷**。先准备可达的 PostgreSQL 数据库/角色，在 YAML 把 `ARKADE_DB_HOST: 请填写PostgreSQL地址` 改成 Hub 容器可达地址，核对端口、用户名和库名；`.env` 填现有 PG 密码及初始管理员密码。容器内 `127.0.0.1` 是自身，另一个 Compose 的 `postgres` 名称不会自动可见。默认项目隔离网络不共享 combined 的显式 `arkade-hub-net`，网络接入需按实际数据库部署配置。
+该编排**只创建 Hub，不创建、控制或删除 PostgreSQL 容器/数据卷**。先准备可达的 PostgreSQL 数据库/角色，在 YAML 把 `DB_HOST: 请填写PostgreSQL地址` 改成 Hub 容器可达地址，核对端口、用户名和库名；`.env` 填现有 PG 密码及初始管理员密码。容器内 `127.0.0.1` 是自身，另一个 Compose 的 `postgres` 名称不会自动可见。默认项目隔离网络不共享 combined 的显式 `arkade-hub-net`，网络接入需按实际数据库部署配置。
 
-`ARKADE_DB_SSLMODE: disable` 仅适用于可信隔离网络；远程 PG 应配置匹配证书/主机名的 TLS 策略（例如 `verify-full` 并提供可信 CA），不要无保护开放数据库。普通参数改 YAML，不需克隆源码或 TOML。本机无需令牌，远程节点在后台创建专属密钥，全局共享准入默认关闭。
+`DB_SSLMODE: disable` 仅适用于可信隔离网络；远程 PG 应配置匹配证书/主机名的 TLS 策略（例如 `verify-full` 并提供可信 CA），不要无保护开放数据库。普通参数改 YAML，不需克隆源码或 TOML。本机无需令牌，远程节点在后台创建专属密钥，全局共享准入默认关闭。
 
 ```sh
 chmod 600 .env
@@ -26,13 +26,13 @@ docker compose --env-file .env up -d --no-deps hub
 docker compose --env-file .env ps
 ```
 
-访问 `http://服务器地址:8080`，对外部署前修改 `ARKADE_BASE_URL` 并配 HTTPS。需要一并部署 PostgreSQL 时，改用 [combined 编排](https://raw.githubusercontent.com/ayflying/arkade/master/deploy/docker/combined-compose.yml) 与其对应凭据样例，不要同时运行两套同名 Hub。
+访问 `http://服务器地址:8080`，对外部署前修改 `BASE_URL` 并配 HTTPS。需要一并部署 PostgreSQL 时，改用 [combined 编排](https://raw.githubusercontent.com/ayflying/arkade/master/deploy/docker/combined-compose.yml) 与其对应凭据样例，不要同时运行两套同名 Hub。
 
 ## 单卷布局与权限
 
-- 仅 Hub 为新安装提供 **一个命名数据卷** `arkade-hub-data`，挂载 `/data`；其中 `/data/settings.key` 保存设置主密钥，`/data/local` 保存本机身份、归属、Compose 文件和备份。`ARKADE_LOCAL_DATA_DIR` 为 `/data/local`，不再单独挂 Agent 数据卷。
+- 仅 Hub 为新安装提供 **一个命名数据卷** `arkade-hub-data`，挂载 `/data`；其中 `/data/settings.key` 保存设置主密钥，`/data/local` 保存本机身份、归属、Compose 文件和备份。`LOCAL_DATA_DIR` 为 `/data/local`，不再单独挂 Agent 数据卷。
 - `/var/run/docker.sock` 是宿主路径 bind mount，**不是第二个数据卷**。默认 Hub 以 root 访问 socket，权限等价于宿主高权限；`:ro` 不能把 Docker API 变为只读。镜像包含 Docker CLI、Compose 插件与本机执行代码，体积比纯控制面版增加。
-- 仅控制中心：把 YAML 的 `ARKADE_LOCAL_ENABLED` 改为 `"false"`，同时移除 socket 挂载；保留 `/data` 以保存设置主密钥。
+- 仅控制中心：把 YAML 的 `LOCAL_ENABLED` 改为 `"false"`，同时移除 socket 挂载；保留 `/data` 以保存设置主密钥。
 - combined 同样使用单个 Hub 数据卷，另提供独立 PostgreSQL 数据卷；与仅 Hub 二选一，不叠加部署。
 
 ## 数据与标签

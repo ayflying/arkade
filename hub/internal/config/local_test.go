@@ -10,8 +10,8 @@ import (
 func TestEmbeddedLocalRejectsInvalidEnvironmentSwitch(t *testing.T) {
 	for _, value := range []string{"flase", "", "endpointsecret"} {
 		t.Run(value, func(t *testing.T) {
-			t.Setenv("ARKADE_LOCAL_ENABLED", value)
-			t.Setenv("ARKADE_LOCAL_ENDPOINT", "tcp://endpointsecret@localhost:2375")
+			t.Setenv("LOCAL_ENABLED", value)
+			t.Setenv("LOCAL_ENDPOINT", "tcp://endpointsecret@localhost:2375")
 			_, err := Load("")
 			if err == nil || !strings.Contains(err.Error(), "合法布尔值") {
 				t.Fatalf("非法开关必须拒绝加载: %v", err)
@@ -57,11 +57,11 @@ func TestEmbeddedLocalDefaultsAndEnvironment(t *testing.T) {
 	if !cfg.Local.Enabled || cfg.Local.DataDir != "/data/local" || cfg.Local.Runtime != "auto" || cfg.Local.Endpoint != "" || cfg.Local.ComposeBin != "" {
 		t.Fatalf("defaults %+v", cfg.Local)
 	}
-	t.Setenv("ARKADE_LOCAL_ENABLED", "false")
-	t.Setenv("ARKADE_LOCAL_DATA_DIR", "/test/local")
-	t.Setenv("ARKADE_LOCAL_RUNTIME", "podman")
-	t.Setenv("ARKADE_LOCAL_ENDPOINT", "unix:///test/podman.sock")
-	t.Setenv("ARKADE_LOCAL_COMPOSE_BIN", "/bin/custom-compose")
+	t.Setenv("LOCAL_ENABLED", "false")
+	t.Setenv("LOCAL_DATA_DIR", "/test/local")
+	t.Setenv("LOCAL_RUNTIME", "podman")
+	t.Setenv("LOCAL_ENDPOINT", "unix:///test/podman.sock")
+	t.Setenv("LOCAL_COMPOSE_BIN", "/bin/custom-compose")
 	cfg, err := Load("")
 	if err != nil {
 		t.Fatal(err)

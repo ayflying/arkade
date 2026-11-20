@@ -12,16 +12,16 @@ func TestLoadEnvOnlyAndFileOverrides(t *testing.T) {
 	if err := os.WriteFile(path, []byte("[server]\naddr = \"127.0.0.1:1234\"\ntimeout = \"10s\"\n[auth]\ninitial_pass = \"FilePass123\"\n[database]\ndsn = \"host=localhost dbname=file_db\"\n[web]\ndist = \"file-dist\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("ARKADE_INITIAL_PASS", "EnvPass123!")
-	t.Setenv("ARKADE_INITIAL_USER", "env-admin")
-	t.Setenv("ARKADE_AGENT_TOKEN", "env-token-0123456789")
-	t.Setenv("ARKADE_DB_DSN", "host=postgres user=arkade dbname=arkade sslmode=disable")
-	t.Setenv("ARKADE_WEB_DIST", "/app/web/dist")
-	t.Setenv("ARKADE_LISTEN", "0.0.0.0:9090")
-	t.Setenv("ARKADE_BASE_URL", "https://hub.example.com")
-	t.Setenv("ARKADE_SESSION_TTL", "48h")
-	t.Setenv("ARKADE_SETTINGS_KEY_FILE", "/data/settings.key")
-	t.Setenv("ARKADE_ALLOW_INSECURE_OIDC_LOOPBACK", "false")
+	t.Setenv("INITIAL_PASS", "EnvPass123!")
+	t.Setenv("INITIAL_USER", "env-admin")
+	t.Setenv("AGENT_TOKEN", "env-token-0123456789")
+	t.Setenv("DB_DSN", "host=postgres user=arkade dbname=arkade sslmode=disable")
+	t.Setenv("WEB_DIST", "/app/web/dist")
+	t.Setenv("LISTEN", "0.0.0.0:9090")
+	t.Setenv("BASE_URL", "https://hub.example.com")
+	t.Setenv("SESSION_TTL", "48h")
+	t.Setenv("SETTINGS_KEY_FILE", "/data/settings.key")
+	t.Setenv("ALLOW_INSECURE_OIDC_LOOPBACK", "false")
 
 	for _, p := range []string{"", path} {
 		t.Run(p, func(t *testing.T) {
@@ -50,7 +50,7 @@ func TestLoadEnvOnlyAndFileOverrides(t *testing.T) {
 }
 
 func TestLoadExplicitMissingFileFailsWithEnv(t *testing.T) {
-	t.Setenv("ARKADE_INITIAL_PASS", "EnvPass123!")
+	t.Setenv("INITIAL_PASS", "EnvPass123!")
 	if _, err := Load(filepath.Join(t.TempDir(), "missing.toml")); err == nil {
 		t.Fatal("显式指定不存在的 TOML 不能静默使用环境变量启动")
 	}

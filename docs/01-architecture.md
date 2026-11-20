@@ -3,7 +3,7 @@
 > **2026-11-13 架构覆盖声明：Hub 默认内置本机执行，只有远程服务器需要独立 Agent。**
 > 本文以下保留最初的架构设计与探索记录；其中「Hub 绝不访问运行时」「所有服务器必须经独立 Agent/WebSocket」「Hub 不持有 docker.sock」等表述已被本声明覆盖，不能再作为当前实现红线。
 > 本机复用 `agent/embedded` 公开包，经内部 Registry 直接调用，不启动本地 WebSocket、不签发本机 Token；固定 `agent-local`，容器工作目录 `/data/local`，与设置主密钥共用一个 `/data` 数据卷。远程 Agent 继续主动反连 Hub。
-> `ARKADE_LOCAL_ENABLED=false` 或 `local.enabled=false` 可关闭本机执行，重启生效；Hub 仍依赖 PostgreSQL。启用本机时 Hub 需要 Docker/Compose 及运行时访问权限，容器版以 root 持有宿主 socket；这扩大了 Hub 的信任边界，不是隔离沙箱。
+> `LOCAL_ENABLED=false` 或 `local.enabled=false` 可关闭本机执行，重启生效；Hub 仍依赖 PostgreSQL。启用本机时 Hub 需要 Docker/Compose 及运行时访问权限，容器版以 root 持有宿主 socket；这扩大了 Hub 的信任边界，不是隔离沙箱。
 > 本机 `online` 表示进程内执行可用而不是 Docker 健康，运行时为 `none` 时，List 可成功返回空集合，不代表 Docker 零容器或健康；监控采样与实际控制不支持。Hub 停止时内置执行与自身通知均不可用，不提供自愈承诺；Hub 运行期间仍监控远程失联。
 > 当前部署及本机记录管理约束以 [内置本机执行](<21-embedded-local.md>) 为准；数据库相关旧描述由 [D-03 PostgreSQL 决策](<05-decisions.md#d-03-hub-存储postgresql全新数据库>) 覆盖。
 
@@ -40,7 +40,7 @@
 
 ### 3.1 建连方式
 
-Agent 主动向 Hub 发起 WebSocket 连接（`wss://hub/agent/connect`），携带：
+Agent 先对配置的 Hub HTTP(S) origin 请求 `GET /agent/discover`，再向同一站点上返回的路径发起 WebSocket 连接（默认 `/agent/connect`；HTTPS 对应 WSS）。外部反代可使用 Hub 公布的自定义连接前缀，但必须在转发时剥离；发现路径固定。连接交互携带：
 
 - Agent ID（注册时由 Hub 分配）
 - Agent 版本号、支持的协议版本、运行时能力清单

@@ -63,7 +63,7 @@ const tokenShow = ref(false)
  * 也不要打印它——一旦进控制台就等于泄漏。
  */
 const pendingEnrollment = ref<Enrollment | null>(null)
-/** 密钥所属服务器的显示名，用于生成 .env 里的 ARKADE_AGENT_NAME */
+/** 密钥所属服务器的显示名，用于生成编排里的 AGENT_NAME */
 const pendingAgentName = ref('')
 /** 本次密钥是「重置」产生的吗（影响文案：旧密钥已失效） */
 const tokenIsReset = ref(false)

@@ -34,7 +34,7 @@ func TestValidateRequiresInitialPassword(t *testing.T) {
 	if err == nil {
 		t.Fatal("缺少初始管理员密码时必须拒绝启动")
 	}
-	if !strings.Contains(err.Error(), "initial_pass") && !strings.Contains(err.Error(), "ARKADE_INITIAL_PASS") {
+	if !strings.Contains(err.Error(), "initial_pass") && !strings.Contains(err.Error(), "INITIAL_PASS") {
 		t.Errorf("错误信息应指明是哪个配置项有问题，实际: %v", err)
 	}
 }
@@ -180,17 +180,17 @@ func TestParseDuration(t *testing.T) {
 
 // TestApplyEnv 覆盖 Hub 侧的环境变量注入路径。
 //
-// 容器编排里所有可调项都通过 ARKADE_* 透传（见 deploy/docker/docker-compose.yml），
+// 容器编排通过环境变量注入配置（见 deploy/docker/hub-compose.yml），
 // 少支持一个变量，编排里写了也不生效，且失效是静默的，所以逐个盯死。
 func TestApplyEnv(t *testing.T) {
-	t.Setenv("ARKADE_AGENT_TOKEN", "env-token-0123456789")
-	t.Setenv("ARKADE_INITIAL_PASS", "EnvPass123!")
-	t.Setenv("ARKADE_INITIAL_USER", "envadmin")
-	t.Setenv("ARKADE_DB_DSN", "postgres://envuser@localhost/envdb?sslmode=disable")
-	t.Setenv("ARKADE_LISTEN", "0.0.0.0:9090")
-	t.Setenv("ARKADE_BASE_URL", "https://env.example.com")
-	t.Setenv("ARKADE_SESSION_TTL", "48h")
-	t.Setenv("ARKADE_WEB_DIST", "/tmp/env-web")
+	t.Setenv("AGENT_TOKEN", "env-token-0123456789")
+	t.Setenv("INITIAL_PASS", "EnvPass123!")
+	t.Setenv("INITIAL_USER", "envadmin")
+	t.Setenv("DB_DSN", "postgres://envuser@localhost/envdb?sslmode=disable")
+	t.Setenv("LISTEN", "0.0.0.0:9090")
+	t.Setenv("BASE_URL", "https://env.example.com")
+	t.Setenv("SESSION_TTL", "48h")
+	t.Setenv("WEB_DIST", "/tmp/env-web")
 
 	cfg := Config{}
 	applyEnv(&cfg)
@@ -224,12 +224,12 @@ func TestApplyEnv(t *testing.T) {
 
 func TestDatabaseFieldEnvEscapesCredentialsAndDSNPrecedence(t *testing.T) {
 	const password = "p@ss:'\\word /?#%"
-	t.Setenv("ARKADE_DB_HOST", "::1")
-	t.Setenv("ARKADE_DB_PORT", "15432")
-	t.Setenv("ARKADE_DB_USER", "test@user")
-	t.Setenv("ARKADE_DB_NAME", "isolated_db")
-	t.Setenv("ARKADE_DB_PASSWORD", password)
-	t.Setenv("ARKADE_DB_SSLMODE", "require")
+	t.Setenv("DB_HOST", "::1")
+	t.Setenv("DB_PORT", "15432")
+	t.Setenv("DB_USER", "test@user")
+	t.Setenv("DB_NAME", "isolated_db")
+	t.Setenv("DB_PASSWORD", password)
+	t.Setenv("DB_SSLMODE", "require")
 	cfg := Default()
 	applyEnv(&cfg)
 	uri, err := url.Parse(cfg.Database.DSN)
@@ -240,10 +240,45 @@ func TestDatabaseFieldEnvEscapesCredentialsAndDSNPrecedence(t *testing.T) {
 	if uri.Host != "[::1]:15432" || uri.User.Username() != "test@user" || gotPassword != password || uri.Path != "/isolated_db" || uri.Query().Get("sslmode") != "require" {
 		t.Fatal("database field environment failed to preserve connection parameters")
 	}
-	t.Setenv("ARKADE_DB_DSN", "host=explicit dbname=override")
+	t.Setenv("DB_DSN", "host=explicit dbname=override")
 	applyEnv(&cfg)
 	if cfg.Database.DSN != "host=explicit dbname=override" {
 		t.Fatal("explicit DSN must win over split fields")
+	}
+	t.Setenv("DB_DSN", "")
+	applyEnv(&cfg)
+	if cfg.Database.DSN != "" {
+		t.Fatal("explicit empty DSN must not fall back to split fields")
+	}
+}
+
+func TestAgentConnectPrefixAndSharedTokenOverrides(t *testing.T) {
+	cfg := Default()
+	if err := decodeTOML([]byte("[server]\nagent_connect_prefix = '/edge'\n[auth]\nagent_token = 'test-shared-token-at-least-16'\n"), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Server.AgentConnectPrefix != "/edge" {
+		t.Fatalf("TOML prefix wasn't applied: %q", cfg.Server.AgentConnectPrefix)
+	}
+	t.Setenv("AGENT_CONNECT_PREFIX", "/other")
+	t.Setenv("AGENT_TOKEN", "")
+	applyEnv(&cfg)
+	if cfg.Server.AgentConnectPrefix != "/other" || cfg.Auth.AgentToken != "" {
+		t.Fatal("environment must replace the TOML prefix and clear the shared token")
+	}
+	cfg.Auth.InitialPass = "test-initial-password"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("valid external prefix was rejected: %v", err)
+	}
+	t.Setenv("AGENT_CONNECT_PREFIX", "https://other.example/edge")
+	applyEnv(&cfg)
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "AGENT_CONNECT_PREFIX") {
+		t.Fatalf("invalid prefix did not fail startup: %v", err)
+	}
+	t.Setenv("AGENT_CONNECT_PREFIX", "")
+	applyEnv(&cfg)
+	if cfg.Server.AgentConnectPrefix != "" {
+		t.Fatal("explicit empty prefix must disable prefixing")
 	}
 }
 
@@ -268,17 +303,17 @@ func TestPostgresAndSettingsKeyConfigurationContracts(t *testing.T) {
 	}
 }
 
-// 会话覆盖仅识别标准 duration 环境变量，不再读取无前缀或秒数别名。
+// 会话覆盖仅识别无前缀的标准 duration 环境变量。
 func TestSessionTTLUsesCanonicalEnvironmentOnly(t *testing.T) {
 	t.Setenv("ARKADE_SESSION_TTL_SEC", "3600")
-	t.Setenv("SESSION_TTL", "1h")
-	t.Setenv("ARKADE_SESSION_TTL", "48h")
+	t.Setenv("ARKADE_SESSION_TTL", "1h")
+	t.Setenv("SESSION_TTL", "48h")
 	cfg := Default()
 	applyEnv(&cfg)
 	if cfg.Auth.SessionTTL != 48*time.Hour {
 		t.Fatalf("标准 duration 配置应独占优先级，实际 %v", cfg.Auth.SessionTTL)
 	}
-	t.Setenv("ARKADE_SESSION_TTL", "")
+	t.Setenv("SESSION_TTL", "")
 	cfg = Default()
 	applyEnv(&cfg)
 	if cfg.Auth.SessionTTL != 72*time.Hour {

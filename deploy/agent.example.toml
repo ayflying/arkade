@@ -6,9 +6,9 @@
 #
 # 字段说明见右侧注释；未知字段会被直接拒绝（防拼写错误被静默忽略）。
 
-# Hub 的反向连接地址，必须是 ws:// 或 wss://（http/https 会被拒绝并提示改写）。
-# 生产环境务必用 wss://，Agent 令牌走的是长连接请求头。
-hub_url = "wss://hub.example.com:8443/agent/connect"
+# Hub 的 HTTP(S) origin，只写协议、主机和可选端口；也可用 HUB_URL 覆盖。
+# 生产使用 HTTPS。Agent 会访问 /agent/discover，再连接发现返回的 WebSocket 路径。
+hub_url = "https://hub.example.com:8443"
 
 # 注册令牌：在 Hub 的 Agent 注册页面创建后复制。
 #
@@ -16,7 +16,7 @@ hub_url = "wss://hub.example.com:8443/agent/connect"
 #   - 配置文件会被备份、被复制到别的机器、被 ansible/脚本批量下发，
 #     令牌写进去等于同时泄露到所有这些副本；
 #   - 正确做法是用环境变量注入，优先级高于本文件：
-#       ARKADE_AGENT_TOKEN=<令牌> arkade-agent run -c /etc/arkade/agent.toml
+#       AGENT_TOKEN=<令牌> arkade-agent run -c /etc/arkade/agent.toml
 #     systemd 部署时写 EnvironmentFile（见 deploy/arkade-agent.service）。
 token = ""
 

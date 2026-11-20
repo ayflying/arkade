@@ -8,7 +8,7 @@ package store
 //	Hub 永远无法反推出明文——即使整库被拖走，攻击者也拿不到能直接用的密钥。
 //
 // 与旧的"全局共享 token"的关系：
-//   - 共享 token 明文在配置文件里（ARKADE_AGENT_TOKEN），所有机器共用一把；
+//   - 共享 token 明文在配置文件里（或环境变量 AGENT_TOKEN），所有机器共用一把；
 //   - 专属 token 一机一把，按摘要精确解析出它绑定的 agent_id。
 // 两者并存，但**共享 token 不允许认领已经拥有专属凭据的记录**，
 // 否则"专属"就形同虚设（见 verifyAgentToken 的说明）。

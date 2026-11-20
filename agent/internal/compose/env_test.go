@@ -418,23 +418,29 @@ func TestApplyProjectWithoutEnv(t *testing.T) {
 
 // ---- 环境隔离测试（本文件最重要的一组） ----
 
-// TestRunnerExcludesAgentVars 验证 ARKADE_* 变量不会被传给 compose 子进程。
-//
-// 危害场景：编排里写了 ${ARKADE_AGENT_TOKEN}（恶意或笔误），
-// 若子进程能读到该变量，它会被展开成 Hub 接入密钥，
-// 写进容器配置、出现在 docker inspect、被容器内进程读走。
-// 这不是理论风险——"只要写错一个变量名就泄漏"。
+// 远程 Agent 与 Hub 内置 Agent 均不得把自身部署配置传给 Compose。
 func TestRunnerExcludesAgentVars(t *testing.T) {
-	t.Setenv("ARKADE_AGENT_TOKEN", "super-secret-token")
-	t.Setenv("ARKADE_DATA_DIR", "/should/not/leak")
+	keys := []string{"AGENT_TOKEN", "AGENT_NAME", "HUB_URL", "DATA_DIR", "SOCKET", "RUNTIME_KIND",
+		"HEARTBEAT_SEC", "LOG_LEVEL", "LOG_FORMAT", "COMPOSE_SOURCE_ROOT", "COMPOSE_SOURCE_MOUNT",
+		"LISTEN", "BASE_URL", "AGENT_CONNECT_PREFIX", "SESSION_TTL", "WEB_DIST",
+		"DB_DSN", "DB_HOST", "DB_PORT", "DB_USER", "DB_NAME", "DB_PASSWORD", "DB_SSLMODE",
+		"INITIAL_USER", "INITIAL_PASS", "SETTINGS_KEY_FILE", "ALLOW_INSECURE_OIDC_LOOPBACK",
+		"LOCAL_ENABLED", "LOCAL_DATA_DIR", "LOCAL_RUNTIME", "LOCAL_ENDPOINT", "LOCAL_COMPOSE_BIN",
+		"ARKADE_AGENT_TOKEN", "ARKADE_DATA_DIR"}
+	for _, key := range keys {
+		t.Setenv(key, "do-not-inherit")
+	}
+	t.Setenv("DB_REPLICA_HOST", "keep-project-input")
 
 	r := &Runner{}
 	env := r.environ()
-	if hasEnvKey(env, "ARKADE_AGENT_TOKEN") {
-		t.Error("ARKADE_AGENT_TOKEN 不能出现在 compose 子进程环境里")
+	for _, key := range keys {
+		if hasEnvKey(env, key) {
+			t.Errorf("%s 不能出现在 compose 子进程环境里", key)
+		}
 	}
-	if hasEnvKey(env, "ARKADE_DATA_DIR") {
-		t.Error("ARKADE_* 变量一律不应传递")
+	if !hasEnvKey(env, "DB_REPLICA_HOST") {
+		t.Error("同类但非部署配置的变量不应被过滤")
 	}
 }
 

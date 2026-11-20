@@ -90,13 +90,11 @@ type Runner struct {
 	// 也就是说，如果 Agent 进程的环境里有 FOO，而项目 .env 里也定义了 FOO，
 	// 那么 ${FOO} 会取 **Agent 进程的 FOO**，.env 里的值被静默忽略。
 	//
-	// 真实危害：Agent 自己就带着 ARKADE_AGENT_TOKEN、ARKADE_DATA_DIR 等变量。
-	// 若某份编排里写了 ${ARKADE_AGENT_TOKEN}（恶意或用户笔误），
-	// 它就会被展开成 Hub 的接入密钥，然后写进容器配置、出现在 docker inspect、
-	// 甚至被容器里的进程读走。这不是理论风险，是"只要写错一个变量名就泄漏"。
+	// Agent 进程可能持有 AGENT_TOKEN；Hub 内置 Agent 就在 Hub 进程中，
+	// 还可能持有 DB_DSN、DB_PASSWORD、INITIAL_PASS 等。若编排引用这些键，
+	// 直接继承环境会把控制面凭据展开进容器配置。
 	//
-	// 因此规则是：把项目 .env 里定义的所有键，都从子进程的继承环境里剔除，
-	// 保证 .env 是真的生效；同时无条件剔除 ARKADE_* 前缀（见 environ）。
+	// 因此剔除继承环境中项目 .env 定义的键，以及 Hub/Agent 自身部署变量。
 	EnvExcludeKeys []string
 }
 
@@ -493,17 +491,31 @@ const (
 	longLineMarker = "（输出行过长，已截断丢弃）"
 )
 
-// agentEnvPrefix 是 Agent 自身配置变量名的前缀。
-//
-// 一律不传给 compose 子进程，理由见 Runner.EnvExcludeKeys 的注释：
-// compose 的插值会优先取 shell 环境，Agent 的密钥因此可能被 ${} 展开进容器。
-const agentEnvPrefix = "ARKADE_"
+// isDeploymentEnvKey 保留旧前缀的隔离（即使父进程仍有遗留变量），
+// 并精确匹配当前公开部署键，避免误伤项目的其他同类键。
+func isDeploymentEnvKey(key string) bool {
+	key = strings.ToUpper(key)
+	if strings.HasPrefix(key, "ARKADE_") {
+		return true
+	}
+	switch key {
+	case "AGENT_TOKEN", "AGENT_NAME", "HUB_URL", "DATA_DIR", "SOCKET", "RUNTIME_KIND",
+		"HEARTBEAT_SEC", "LOG_LEVEL", "LOG_FORMAT", "COMPOSE_SOURCE_ROOT", "COMPOSE_SOURCE_MOUNT",
+		"LISTEN", "BASE_URL", "AGENT_CONNECT_PREFIX", "SESSION_TTL", "WEB_DIST",
+		"DB_DSN", "DB_HOST", "DB_PORT", "DB_USER", "DB_NAME", "DB_PASSWORD", "DB_SSLMODE",
+		"INITIAL_USER", "INITIAL_PASS", "SETTINGS_KEY_FILE", "ALLOW_INSECURE_OIDC_LOOPBACK",
+		"LOCAL_ENABLED", "LOCAL_DATA_DIR", "LOCAL_RUNTIME", "LOCAL_ENDPOINT", "LOCAL_COMPOSE_BIN":
+		return true
+	default:
+		return false
+	}
+}
 
 // environ 组装子进程环境变量。
 //
 // 三条规则，顺序有意义：
 //  1. 先放入显式注入的 r.Env（测试用，优先级最高）；
-//  2. 再从继承环境里复制，但剔除：ARKADE_* 前缀、项目 .env 已定义的键、
+//  2. 再从继承环境里复制，但剔除：部署环境变量、项目 .env 已定义的键、
 //     以及将被显式覆盖的 DOCKER_HOST；
 //  3. 最后追加重设的 DOCKER_HOST。
 //
@@ -534,7 +546,7 @@ func (r *Runner) environ() []string {
 		if !ok {
 			continue
 		}
-		if strings.HasPrefix(key, agentEnvPrefix) {
+		if isDeploymentEnvKey(key) {
 			continue
 		}
 		if _, skip := exclude[key]; skip {

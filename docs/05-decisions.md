@@ -7,7 +7,7 @@
 以下为当前已确认的新架构，优先于本文后续历史记录及旧架构文档中与其冲突的表述；历史条目保留，不将旧设计误当成当前实现。
 
 - Hub 默认通过 `agent/embedded` 公开包复用本机执行能力，内部 Registry 直接调用；本机不启动 WebSocket、不创建接入 Token。独立 Agent 只用于远程服务器，继续反向连接。
-- 本机固定 ID 为 `agent-local`，容器工作目录 `/data/local`；`ARKADE_LOCAL_ENABLED=false` 或 `local.enabled=false` 可关闭本机执行，配置变更需重启 Hub。Hub 仍必须连接 PostgreSQL。
+- 本机固定 ID 为 `agent-local`，容器工作目录 `/data/local`；`LOCAL_ENABLED=false` 或 `local.enabled=false` 可关闭本机执行，配置变更需重启 Hub。Hub 仍必须连接 PostgreSQL。
 - Hub 镜像包含 Docker CLI/Compose；本机执行需要宿主 socket 权限，容器以 root 运行。这是明确的高权限信任边界，覆盖「Hub 绝不接触 Docker」的旧约束，不代表增加了运行时隔离。
 - 新安装统一单个 Hub 数据卷 `arkade-hub-data` → `/data`，包含 `settings.key` 与 `local`。仅 Hub 连接已有 PostgreSQL，combined 额外提供独立 PG 数据卷；不提供历史部署兼容流程。
 - 本机 `online` 只代表进程内执行可用；Docker 健康须看运行时与采集结果。运行时为 `none` 时，List 可成功返回空集合，不代表 Docker 零容器或健康；监控采样与实际控制不支持，不把缺少指标当作健康。

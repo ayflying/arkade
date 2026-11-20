@@ -33,7 +33,7 @@ interface Props {
   show: boolean
   /** 一次性密钥；关闭后由本组件与父组件共同清空 */
   enrollment: Enrollment | null
-  /** 服务器显示名，用于生成编排里的 ARKADE_AGENT_NAME */
+  /** 服务器显示名，用于生成编排里的 AGENT_NAME */
   agentName: string
   /** 是否是重置密钥（影响文案与提醒：旧密钥已失效） */
   isReset?: boolean
@@ -176,13 +176,13 @@ function handleClose(): void {
       </label>
       <n-input
         v-model:value="hubUrl"
-        placeholder="ws://10.0.0.5:8080/agent/connect"
+        placeholder="http://10.0.0.5:8080"
         :status="hubUrlError !== '' ? 'error' : undefined"
       />
       <p v-if="hubUrlError !== ''" class="enroll__error">{{ hubUrlError }}</p>
       <p v-else class="enroll__tip">
-        默认按当前访问地址推断。如果服务器在另一个网络，请改成它实际能访问到的地址
-        （例如内网 IP 或域名），并确保带上 /agent/connect。
+        默认使用当前页面的 HTTP(S) 源地址。若服务器在另一个网络，请填写它能访问的域名或 IP 地址及端口
+        （默认端口可省略）。不需要填写路径，Agent 会在通过密钥验证后自动获取连接路径。
       </p>
     </div>
 

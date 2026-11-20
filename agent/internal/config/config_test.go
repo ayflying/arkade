@@ -42,7 +42,7 @@ func TestLoadDefaults(t *testing.T) {
 
 func TestLoadValidFile(t *testing.T) {
 	p := writeTemp(t, `
-hub_url = "wss://hub.example.com:8443/agent/connect"
+hub_url = "https://hub.example.com:8443"
 token = "abc123"
 data_dir = "/tmp/arkade-test"
 socket = "/var/run/docker.sock"
@@ -88,31 +88,25 @@ func TestLoadMissingFile(t *testing.T) {
 
 func TestValidateHubURL(t *testing.T) {
 	base := func() Config {
-		return Config{HubURL: "ws://127.0.0.1:8080/agent/connect", Token: "t", DataDir: t.TempDir(),
+		return Config{HubURL: "http://127.0.0.1:8080", Token: "t", DataDir: t.TempDir(),
 			LogLevel: "info", LogFormat: "text", RuntimeKind: "auto", HeartbeatSec: 15}
 	}
-	// Validate 是指针方法，这里用临时变量接收以便直接调用。
-	ok := base()
-	if err := ok.Validate(); err != nil {
-		t.Fatalf("合法配置校验失败: %v", err)
+	for _, raw := range []string{DefaultHubURL, "https://hub.example.com:8443"} {
+		c := base()
+		c.HubURL = raw
+		if err := c.Validate(); err != nil {
+			t.Errorf("合法地址 %q 校验失败: %v", raw, err)
+		}
 	}
+	for _, raw := range []string{"ws://hub:8080", "wss://hub/agent/connect", "https://hub/agent/connect", "https://hub?x=y", "https://hub#frag", "https://user:pass@hub"} {
+		c := base()
+		c.HubURL = raw
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "HUB_URL") {
+			t.Errorf("非法地址 %q 应给出修复建议，实际: %v", raw, err)
+		}
+	}
+
 	c := base()
-	c.HubURL = "http://hub:8080"
-	err := c.Validate()
-	if err == nil {
-		t.Fatal("http:// 应被拒绝并提示改成 ws://")
-	}
-	if !strings.Contains(err.Error(), "ws://") {
-		t.Fatalf("错误信息应给出修复建议，实际: %v", err)
-	}
-
-	c = base()
-	c.HubURL = "ws://hub:8080"
-	if err := c.Validate(); err != nil {
-		t.Fatalf("ws:// 应合法: %v", err)
-	}
-
-	c = base()
 	c.Token = "  "
 	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "token") {
 		t.Fatalf("空 token 应报错并指出字段，实际: %v", err)
@@ -210,9 +204,9 @@ func TestTokenFromFile(t *testing.T) {
 		return p
 	}
 
-	withToken := write("with.toml", "hub_url = \"ws://h/agent/connect\"\ntoken = \"secret-value-123456\"\n")
-	emptyToken := write("empty.toml", "hub_url = \"ws://h/agent/connect\"\ntoken = \"\"\n")
-	noToken := write("none.toml", "hub_url = \"ws://h/agent/connect\"\n")
+	withToken := write("with.toml", "hub_url = \"http://h\"\ntoken = \"secret-value-123456\"\n")
+	emptyToken := write("empty.toml", "hub_url = \"http://h\"\ntoken = \"\"\n")
+	noToken := write("none.toml", "hub_url = \"http://h\"\n")
 	broken := write("broken.toml", "this is not toml ===\n")
 
 	cases := []struct {
@@ -238,28 +232,28 @@ func TestTokenFromFile(t *testing.T) {
 
 // TestEnvOverrides 覆盖环境变量注入路径。
 //
-// 容器编排里所有可调项都通过 ARKADE_* 环境变量透传（见 deploy/docker/docker-compose.yml），
+// 容器编排里所有可调项都通过 环境变量透传（见 deploy/docker/agent-compose.yml），
 // 因此每个变量都必须真的能覆盖配置文件的值：漏一个，编排里写了也不生效，
 // 而且这种失效是静默的——只能靠测试盯住。
 func TestEnvOverrides(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "agent.toml")
 	// 故意用与期望值不同的内容，确保断言看到的是环境变量生效的结果。
-	content := "hub_url = \"ws://from-file/agent/connect\"\ntoken = \"file-token\"\ndata_dir = \"" +
+	content := "hub_url = \"http://from-file\"\ntoken = \"file-token\"\ndata_dir = \"" +
 		strings.ReplaceAll(dir, "\\", "/") + "/d\"\nname = \"from-file\"\nruntime_kind = \"auto\"\nheartbeat_sec = 5\nlog_level = \"warn\"\nlog_format = \"json\"\n"
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("写配置失败: %v", err)
 	}
 
-	t.Setenv("ARKADE_AGENT_TOKEN", "env-token-value")
-	t.Setenv("ARKADE_HUB_URL", "ws://from-env/agent/connect")
-	t.Setenv("ARKADE_DATA_DIR", "/tmp/env-data")
-	t.Setenv("ARKADE_AGENT_NAME", "from-env")
-	t.Setenv("ARKADE_SOCKET", "/var/run/docker.sock")
-	t.Setenv("ARKADE_RUNTIME_KIND", "docker")
-	t.Setenv("ARKADE_HEARTBEAT_SEC", "30")
-	t.Setenv("ARKADE_LOG_LEVEL", "debug")
-	t.Setenv("ARKADE_LOG_FORMAT", "text")
+	t.Setenv("AGENT_TOKEN", "env-token-value")
+	t.Setenv("HUB_URL", "http://from-env")
+	t.Setenv("DATA_DIR", "/tmp/env-data")
+	t.Setenv("AGENT_NAME", "from-env")
+	t.Setenv("SOCKET", "/var/run/docker.sock")
+	t.Setenv("RUNTIME_KIND", "docker")
+	t.Setenv("HEARTBEAT_SEC", "30")
+	t.Setenv("LOG_LEVEL", "debug")
+	t.Setenv("LOG_FORMAT", "text")
 
 	cfg, err := Load(path)
 	if err != nil {
@@ -268,7 +262,7 @@ func TestEnvOverrides(t *testing.T) {
 
 	cases := []struct{ field, got, want string }{
 		{"Token", cfg.Token, "env-token-value"},
-		{"HubURL", cfg.HubURL, "ws://from-env/agent/connect"},
+		{"HubURL", cfg.HubURL, "http://from-env"},
 		{"DataDir", cfg.DataDir, "/tmp/env-data"},
 		{"Name", cfg.Name, "from-env"},
 		{"Socket", cfg.Socket, "/var/run/docker.sock"},
@@ -293,15 +287,15 @@ func TestEnvOverrides(t *testing.T) {
 func TestEnvOverridesEmptyIgnored(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "agent.toml")
-	content := "hub_url = \"ws://keep-me/agent/connect\"\ntoken = \"t\"\ndata_dir = \"" +
+	content := "hub_url = \"http://keep-me\"\ntoken = \"t\"\ndata_dir = \"" +
 		strings.ReplaceAll(dir, "\\", "/") + "/d\"\nsocket = \"/run/podman/podman.sock\"\n"
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("写配置失败: %v", err)
 	}
 
-	t.Setenv("ARKADE_SOCKET", "")
-	t.Setenv("ARKADE_AGENT_NAME", "")
-	t.Setenv("ARKADE_RUNTIME_KIND", "")
+	t.Setenv("SOCKET", "")
+	t.Setenv("AGENT_NAME", "")
+	t.Setenv("RUNTIME_KIND", "")
 
 	cfg, err := Load(path)
 	if err != nil {
@@ -310,7 +304,7 @@ func TestEnvOverridesEmptyIgnored(t *testing.T) {
 	if cfg.Socket != "/run/podman/podman.sock" {
 		t.Errorf("空环境变量不应清空 socket，实际 %q", cfg.Socket)
 	}
-	if cfg.HubURL != "ws://keep-me/agent/connect" {
+	if cfg.HubURL != "http://keep-me" {
 		t.Errorf("空环境变量不应影响 hub_url，实际 %q", cfg.HubURL)
 	}
 }

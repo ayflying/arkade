@@ -17,6 +17,7 @@ import (
 
 	"arkade/hub/internal/config"
 	"arkade/hub/internal/testdb"
+	"arkade/protocol/envelope"
 )
 
 func TestRuntimePostgresReconnectStartsWithExistingAccount(t *testing.T) {
@@ -65,6 +66,7 @@ func TestRuntimeAppHTTPContract(t *testing.T) {
 	cfg.Database.DSN = testdb.New(t)
 	cfg.Auth.SettingsKeyFile = filepath.Join(t.TempDir(), "settings.key")
 	cfg.Auth.AgentToken = "runtime-test-agent-token-only"
+	cfg.Server.AgentConnectPrefix = "/gateway"
 	cfg.Auth.InitialPass = "RuntimeTestPass123!"
 	cfg.Web.Dist = ""
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -130,13 +132,30 @@ func TestRuntimeAppHTTPContract(t *testing.T) {
 	}
 
 	// Agent 认证独立于浏览器会话：即使已登录，没有 Agent Bearer 仍应拒绝。
-	response, err = client.Get(baseURL + "/agent/connect")
+	for _, path := range []string{envelope.AgentDiscoveryPath, envelope.AgentConnectPath} {
+		response, err = client.Get(baseURL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		if response.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("Agent 接入 %s 错误地使用了浏览器会话: HTTP %d", path, response.StatusCode)
+		}
+	}
+	discoveryReq, err := http.NewRequest(http.MethodGet, baseURL+envelope.AgentDiscoveryPath, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+	discoveryReq.Header.Set(envelope.HeaderAuthorization, envelope.BearerPrefix+cfg.Auth.AgentToken)
+	response, err = client.Do(discoveryReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var discovery envelope.AgentDiscovery
+	err = json.NewDecoder(response.Body).Decode(&discovery)
 	response.Body.Close()
-	if response.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("Agent 连接错误地使用了浏览器会话: HTTP %d", response.StatusCode)
+	if response.StatusCode != http.StatusOK || err != nil || discovery.ConnectPath != "/gateway"+envelope.AgentConnectPath {
+		t.Fatalf("Agent 发现契约异常: HTTP %d %+v err=%v", response.StatusCode, discovery, err)
 	}
 
 	request, err := http.NewRequest(http.MethodPost, baseURL+"/api/auth/logout", nil)

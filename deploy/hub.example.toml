@@ -8,11 +8,14 @@
 addr = "0.0.0.0:8080"
 # 对外访问地址（用于前端与文档展示）
 base_url = "http://127.0.0.1:8080"
+# 可选外部 Agent 连接前缀（AGENT_CONNECT_PREFIX），由反代在转发连接请求时剥离。
+# 例如 "/edge" 只影响对外的 /edge/agent/connect，不影响 /agent/discover 或 Hub 内部路由。
+agent_connect_prefix = ""
 timeout = "30s"
 
 [database]
 # 仅 PostgreSQL，新库初始化，不兼容旧 SQLite 文件。
-# 密码通过 ARKADE_DB_PASSWORD 等分字段环境变量或 ARKADE_DB_DSN 注入。
+# 密码通过 DB_PASSWORD 等分字段环境变量或 DB_DSN 注入。
 dsn = "host=localhost port=5432 user=arkade dbname=arkade sslmode=disable"
 
 [auth]
@@ -22,13 +25,13 @@ settings_key_file = "./data/settings.key"
 session_ttl = "72h"
 # Agent 反向连接使用的预共享 Token，至少 16 位。
 #
-# 【安全约定】必须留空，用环境变量 ARKADE_AGENT_TOKEN 注入。
+# 【安全约定】必须留空，用环境变量 AGENT_TOKEN 注入。
 # 原因：配置文件会被备份、复制到其他机器、被批量下发，令牌写进去等于
 # 同时泄露到所有副本；环境变量只存在于进程环境中，不会随文件扩散。
 # 生成方式示例：openssl rand -hex 24
 agent_token = ""
 # 首次启动创建的管理员账号。初始密码不能为空，允许短密码，不提供默认值；登录后请尽快修改。
-# 【安全约定】同样留空，用环境变量 ARKADE_INITIAL_PASS 传入。
+# 【安全约定】同样留空，用环境变量 INITIAL_PASS 传入。
 initial_user = "admin"
 initial_pass = ""
 

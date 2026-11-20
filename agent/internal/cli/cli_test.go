@@ -44,8 +44,8 @@ func TestMainVersion(t *testing.T) {
 
 // 不传 -c 应进入配置校验，而不是用法错误；缺少凭据仍必须拒绝启动。
 func TestRunWithoutConfigRequiresToken(t *testing.T) {
-	t.Setenv("ARKADE_AGENT_TOKEN", "")
-	t.Setenv("ARKADE_HUB_URL", "ws://hub:8080/agent/connect")
+	t.Setenv("AGENT_TOKEN", "")
+	t.Setenv("HUB_URL", "http://hub:8080")
 	var out, errOut bytes.Buffer
 	if code := Main([]string{"run"}, &out, &errOut); code != exitFail {
 		t.Fatalf("退出码 = %d，期望 %d", code, exitFail)
@@ -57,20 +57,20 @@ func TestRunWithoutConfigRequiresToken(t *testing.T) {
 
 // 环境配置必须在 run 的实际入口生效；用非法 URL 在联网与文件副作用之前停止。
 func TestRunWithoutConfigAppliesEnv(t *testing.T) {
-	t.Setenv("ARKADE_AGENT_TOKEN", "env-token")
-	t.Setenv("ARKADE_HUB_URL", "http://env-hub:8080/agent/connect")
+	t.Setenv("AGENT_TOKEN", "env-token")
+	t.Setenv("HUB_URL", "http://env-hub:8080/agent/connect")
 	var out, errOut bytes.Buffer
 	if code := Main([]string{"run"}, &out, &errOut); code != exitFail {
 		t.Fatalf("退出码 = %d，期望 %d", code, exitFail)
 	}
-	if !strings.Contains(errOut.String(), "ws://") || strings.Contains(errOut.String(), "token 不能为空") {
+	if !strings.Contains(errOut.String(), "HUB_URL") || strings.Contains(errOut.String(), "token 不能为空") {
 		t.Fatalf("应校验环境变量提供的 URL 与 token: %q", errOut.String())
 	}
 }
 
 func TestRunExplicitMissingConfigFails(t *testing.T) {
-	t.Setenv("ARKADE_AGENT_TOKEN", "env-token")
-	t.Setenv("ARKADE_HUB_URL", "ws://hub:8080/agent/connect")
+	t.Setenv("AGENT_TOKEN", "env-token")
+	t.Setenv("HUB_URL", "http://hub:8080")
 	var out, errOut bytes.Buffer
 	if code := Main([]string{"run", "-c", t.TempDir() + "/missing.toml"}, &out, &errOut); code != exitFail {
 		t.Fatalf("退出码 = %d，期望 %d", code, exitFail)
@@ -84,15 +84,16 @@ func TestRunExplicitMissingConfigFails(t *testing.T) {
 func TestRunInvalidConfig(t *testing.T) {
 	dir := t.TempDir()
 	p := dir + "/agent.toml"
-	// 用 http:// 而不是 ws://，同时也缺 token，校验必须失败。
-	if err := writeFile(p, "hub_url = \"http://hub:8080\"\n"); err != nil {
+	// 旧式 WebSocket 连接地址必须在启动前被拒绝。
+	t.Setenv("HUB_URL", "")
+	if err := writeFile(p, "hub_url = \"ws://hub:8080/agent/connect\"\n"); err != nil {
 		t.Fatal(err)
 	}
 	var out, errOut bytes.Buffer
 	if code := Main([]string{"run", "-c", p}, &out, &errOut); code != exitFail {
 		t.Fatalf("退出码 = %d，期望 %d；stderr=%q", code, exitFail, errOut.String())
 	}
-	if !strings.Contains(errOut.String(), "ws://") {
+	if !strings.Contains(errOut.String(), "HUB_URL") {
 		t.Fatalf("错误信息应给出修复建议: %q", errOut.String())
 	}
 }

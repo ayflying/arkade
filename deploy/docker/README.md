@@ -21,23 +21,23 @@ Docker socket `/var/run/docker.sock` 是宿主路径 **bind mount，不是第二
 
 Hub 默认 root，安装 Docker CLI 和 Compose 插件，镜像体积包含本机执行依赖。**socket 权限等价于宿主高权限**；给挂载加 `:ro` 不会把 Docker API 变成只读。仅授予可信 Hub 和管理员；非 root/socket GID、rootless 或 Podman 需要部署者单独验证权限与兼容性，不建议 `chmod 666` 放开 socket。
 
-仅控制中心部署：将 YAML 的 `ARKADE_LOCAL_ENABLED` 改为 `"false"`，**同时移除 socket bind mount**，保留 `/data` 以保存设置主密钥。只关闭开关而继续挂 socket 不能撤销宿主权限。
+仅控制中心部署：将 YAML 的 `LOCAL_ENABLED` 改为 `"false"`，**同时移除 socket bind mount**，保留 `/data` 以保存设置主密钥。只关闭开关而继续挂 socket 不能撤销宿主权限。
 
 ## 普通配置与凭据
 
 - 镜像、端口、数据库地址/用户/库名、TLS、本机开关及日志直接修改 YAML。`.env` 仅填写对应密码/接入密钥，由 Compose 读取，程序不会自动加载它。
-- 两份 Hub 的本机默认配置为 `ARKADE_LOCAL_ENABLED: "true"`、`ARKADE_LOCAL_DATA_DIR: /data/local`、`ARKADE_LOCAL_RUNTIME: auto`、`ARKADE_LOCAL_ENDPOINT: /var/run/docker.sock`、`ARKADE_LOCAL_COMPOSE_BIN: docker`。YAML 字面量不会被 `.env` 同名项自动覆盖。
+- 两份 Hub 的本机默认配置为 `LOCAL_ENABLED: "true"`、`LOCAL_DATA_DIR: /data/local`、`LOCAL_RUNTIME: auto`、`LOCAL_ENDPOINT: /var/run/docker.sock`、`LOCAL_COMPOSE_BIN: docker`。YAML 字面量不会被 `.env` 同名项自动覆盖。
 - 本机不使用网络 token；远程节点在后台创建专属接入密钥。不要把管理员/数据库密码交给远程 Agent。
-- Hub 内部监听 `8080`，前端 `/app/web/dist`。修改外部端口无需修改内部监听或健康检查。生产设置稳定的 `ARKADE_BASE_URL` 并使用 HTTPS。
+- Hub 内部监听 `8080`，前端 `/app/web/dist`。修改外部端口无需修改内部监听或健康检查。生产设置稳定的 `BASE_URL` 并使用 HTTPS。
 - 会话期限、注册等系统策略由后台数据库设置管理。容器部署无需 TOML。
 
 ## 1. 仅 Hub：使用已有 PostgreSQL
 
 保存 [Hub 编排](<hub-compose.yml>) 与 [凭据样例](<hub.env.example>)。提前准备专用 PostgreSQL 数据库与账号；Hub 启动执行受版本管理的业务表迁移，不替你创建外部数据库服务或角色。
 
-必须将 YAML 的 `ARKADE_DB_HOST: 请填写PostgreSQL地址` 改为 **Hub 容器内可达**的地址，核对端口、用户名、库名，在 `.env` 填现有密码。容器内 `127.0.0.1` 是自身；另一 Compose 的 `postgres` 名称不会自动可见。默认网络为项目隔离的 `arkade-hub_default`，不共享 combined 网络，需按数据库部署安排受限网络、监听与授权。
+必须将 YAML 的 `DB_HOST: 请填写PostgreSQL地址` 改为 **Hub 容器内可达**的地址，核对端口、用户名、库名，在 `.env` 填现有密码。容器内 `127.0.0.1` 是自身；另一 Compose 的 `postgres` 名称不会自动可见。默认网络为项目隔离的 `arkade-hub_default`，不共享 combined 网络，需按数据库部署安排受限网络、监听与授权。
 
-`ARKADE_DB_SSLMODE: disable` 只适用于可信隔离网络。远程 PG 按证书和主机名配置 TLS，例如 `verify-full` 并提供可信 CA；不要为连接方便无保护公开数据库。
+`DB_SSLMODE: disable` 只适用于可信隔离网络。远程 PG 按证书和主机名配置 TLS，例如 `verify-full` 并提供可信 CA；不要为连接方便无保护公开数据库。
 
 ```sh
 chmod 600 .env
@@ -74,7 +74,9 @@ docker compose --env-file .env -f compose.yml pull
 docker compose --env-file .env -f compose.yml up -d
 ```
 
-跨机器使用 `wss://域名/agent/connect`，可信内网可用 `ws://Hub地址:8080/agent/connect`。Agent 容器的 `127.0.0.1` 是自己，不可代替 Hub 地址。只部署到可信宿主，socket 访问同样是高权限。
+`HUB_URL` 只填协议、主机和可选端口，例如 `https://hub.example.com`；可信内网可用 `http://Hub地址:8080`。Agent 容器的 `127.0.0.1` 是自己，不可代替 Hub 地址。只部署到可信宿主，socket 访问同样是高权限。
+
+部署升级时请手动更新 YAML、`.env` 或 systemd 环境文件：公开环境变量不再带 `ARKADE_`，Agent 的 `HUB_URL`（TOML：`hub_url`）也不再接受 `ws://`、`wss://` 或旧的完整连接路径。反代的发现与连接路径设置见[部署说明](<../README.md#agent-发现与反向代理>)。
 
 ## 镜像、备份与验证
 

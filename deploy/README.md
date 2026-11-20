@@ -8,14 +8,14 @@
 
 | 凭据 | 环境变量 | 写入位置 |
 | --- | --- | --- |
-| Agent 接入令牌 | `ARKADE_AGENT_TOKEN` | `/etc/arkade/agent.env`（0600） |
-| 初始管理员密码 | `ARKADE_INITIAL_PASS` | 仅 Hub 侧，交互式输入或 EnvironmentFile |
+| Agent 接入令牌 | `AGENT_TOKEN` | `/etc/arkade/agent.env`（0600） |
+| 初始管理员密码 | `INITIAL_PASS` | 仅 Hub 侧，交互式输入或 EnvironmentFile |
 
 原因很实际：配置文件会被备份、被复制到其他机器、被 ansible 之类的工具批量下发，
 令牌写进去等于同时泄露到所有这些副本；而环境变量只存在于进程环境中，不随文件扩散。
 
 `*.example.toml` 里的凭据字段一律留空，不是让你填完再提交——**复制成实际配置后也不填**，
-改用 `ARKADE_AGENT_TOKEN` 传入（Agent 读取环境变量的优先级高于配置文件）。
+改用 `AGENT_TOKEN` 传入（Agent 读取环境变量的优先级高于配置文件）。
 
 `.gitignore` 已拦截 `.env`、`agent.toml`、`hub.toml`、`config.toml` 等实际配置文件，
 只放行 `*.example`。新增配置文件时请沿用这个命名习惯。
@@ -43,10 +43,9 @@ sudo install -m 0640 -o arkade -g arkade deploy/agent.example.toml /etc/arkade/a
 sudo editor /etc/arkade/agent.toml
 
 # 3.1 令牌单独放环境变量文件，权限设为 0600（不要写进 agent.toml）
-sudo sh -c 'printf "ARKADE_AGENT_TOKEN=%s\n" "$(openssl rand -hex 24)" > /etc/arkade/agent.env'
-sudo chown arkade:arkade /etc/arkade/agent.env
-sudo chmod 0600 /etc/arkade/agent.env
-# 同一个令牌要填到 Hub 侧的 ARKADE_AGENT_TOKEN，两边必须一致
+sudo install -m 0600 -o arkade -g arkade /dev/null /etc/arkade/agent.env
+sudo editor /etc/arkade/agent.env
+# 写入 AGENT_TOKEN=<从 Hub 后台创建并复制的此节点专属密钥>
 
 # 4. 让 Agent 用户能访问运行时套接字
 #    Docker：加入 docker 组（等于给了等效 root 权限，属已知权衡）
@@ -59,6 +58,14 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now arkade-agent
 sudo journalctl -u arkade-agent -f
 ```
+
+## Agent 发现与反向代理
+
+Agent 只配置 Hub 的 HTTP(S) 地址，例如 `HUB_URL=https://hub.example.com`（TOML：`hub_url`）。地址只包含协议、主机和可选端口，默认 `http://127.0.0.1:8080`。生产使用 HTTPS；旧 `ws://`、`wss://` 和带路径的地址不再支持。升级时在 Compose、`.env` 或 systemd 环境文件中手动去掉公开部署变量的 `ARKADE_` 前缀。
+
+1. Agent 请求 `GET /agent/discover` 获取连接路径。反代将这个路径原样转发给 Hub，保留 `Authorization` 请求头。Hub 验证接入密钥后才返回路径，并在升级 WebSocket 前再次验证；已禁用的专属 Agent 同样会被拒绝。
+2. Agent 在同一站点对发现返回的路径发起 WebSocket 握手，HTTPS 使用 WSS。默认路径是 `/agent/connect`。
+3. 若在 Hub 设置 `server.agent_connect_prefix = "/edge"` 或 `AGENT_CONNECT_PREFIX=/edge`，发现会返回 `/edge/agent/connect`。反代须支持 WebSocket 升级，并在转发时剥离 `/edge`，使 Hub 仍收到 `/agent/connect`。不要修改 `/agent/discover`、Agent 的 `HUB_URL` 或 Hub 的其他路由。`AGENT_CONNECT_PREFIX=` 可清除 TOML 配置的前缀。
 
 ## Podman rootless 注意点
 

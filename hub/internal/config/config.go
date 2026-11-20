@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"arkade/protocol/envelope"
 )
 
 // Config 是 Hub 的完整运行配置。
@@ -27,9 +29,10 @@ type Config struct {
 
 // ServerConfig 是 HTTP 服务监听配置。
 type ServerConfig struct {
-	Addr    string        `toml:"addr"`     // 监听地址，如 0.0.0.0:8080
-	BaseURL string        `toml:"base_url"` // 对外地址，用于生成 Agent 连接说明
-	Timeout time.Duration `toml:"timeout"`  // 单请求读写超时
+	Addr               string        `toml:"addr"`                 // 监听地址，如 0.0.0.0:8080
+	BaseURL            string        `toml:"base_url"`             // 对外地址，用于生成 Agent 连接说明
+	AgentConnectPrefix string        `toml:"agent_connect_prefix"` // 外部代理公布的连接前缀，由代理在转发时剥离
+	Timeout            time.Duration `toml:"timeout"`              // 单请求读写超时
 }
 
 // DatabaseConfig 是 PostgreSQL 连接配置。不包含文件数据库兼容路径。
@@ -95,45 +98,49 @@ func Load(path string) (Config, error) {
 
 // applyEnv 应用环境变量覆盖。
 //
-// 约定（容器编排统一走这条路）：可配置项通过 ARKADE_* 环境变量覆盖，
-// 配置文件提供本地运行默认值。普通参数直接写在编排的 environment 中，
+// 容器编排使用环境变量覆盖配置文件提供的本地运行默认值。
+// 普通参数直接写在编排的 environment 中，
 // 仅密码、Token 等凭据引用 .env，不把所有配置间接转入 .env。
 func applyEnv(cfg *Config) {
 	applyLocalEnv(cfg)
-	if v := os.Getenv("ARKADE_AGENT_TOKEN"); v != "" {
+	// 显式空值关闭共享准入，即使 TOML 配置了令牌。
+	if v, ok := os.LookupEnv("AGENT_TOKEN"); ok {
 		cfg.Auth.AgentToken = v
 	}
-	if v := os.Getenv("ARKADE_INITIAL_PASS"); v != "" {
+	if v := os.Getenv("INITIAL_PASS"); v != "" {
 		cfg.Auth.InitialPass = v
 	}
-	if v := os.Getenv("ARKADE_SETTINGS_KEY_FILE"); v != "" {
+	if v := os.Getenv("SETTINGS_KEY_FILE"); v != "" {
 		cfg.Auth.SettingsKeyFile = v
 	}
-	if v := os.Getenv("ARKADE_ALLOW_INSECURE_OIDC_LOOPBACK"); v != "" {
+	if v := os.Getenv("ALLOW_INSECURE_OIDC_LOOPBACK"); v != "" {
 		cfg.Auth.AllowInsecureOIDCLoopback = v == "true"
 	}
-	if v := os.Getenv("ARKADE_INITIAL_USER"); v != "" {
+	if v := os.Getenv("INITIAL_USER"); v != "" {
 		cfg.Auth.InitialUser = v
 	}
 	// 完整 DSN 优先；分字段模式由 URL 编码处理密码中的 @、空格、引号等字符。
-	if v, ok := os.LookupEnv("ARKADE_DB_DSN"); ok {
+	if v, ok := os.LookupEnv("DB_DSN"); ok {
 		cfg.Database.DSN = v
 	} else if dsn, ok := databaseEnvDSN(); ok {
 		cfg.Database.DSN = dsn
 	}
-	if v := os.Getenv("ARKADE_LISTEN"); v != "" {
+	if v := os.Getenv("LISTEN"); v != "" {
 		cfg.Server.Addr = v
 	}
-	if v := os.Getenv("ARKADE_BASE_URL"); v != "" {
+	if v := os.Getenv("BASE_URL"); v != "" {
 		cfg.Server.BaseURL = v
 	}
-	// 会话有效期仅使用标准 duration，例如 ARKADE_SESSION_TTL=72h。
-	if v := os.Getenv("ARKADE_SESSION_TTL"); v != "" {
+	if v, ok := os.LookupEnv("AGENT_CONNECT_PREFIX"); ok {
+		cfg.Server.AgentConnectPrefix = v
+	}
+	// 会话有效期仅使用标准 duration，例如 SESSION_TTL=72h。
+	if v := os.Getenv("SESSION_TTL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d > 0 {
 			cfg.Auth.SessionTTL = d
 		}
 	}
-	if v := os.Getenv("ARKADE_WEB_DIST"); v != "" {
+	if v := os.Getenv("WEB_DIST"); v != "" {
 		cfg.Web.Dist = v
 	}
 }
@@ -143,7 +150,7 @@ func databaseEnvDSN() (string, bool) {
 	values := map[string]string{"HOST": "localhost", "PORT": "5432", "USER": "arkade", "NAME": "arkade", "PASSWORD": "", "SSLMODE": "disable"}
 	present := false
 	for field := range values {
-		if value, ok := os.LookupEnv("ARKADE_DB_" + field); ok {
+		if value, ok := os.LookupEnv("DB_" + field); ok {
 			values[field] = value
 			present = true
 		}
@@ -170,6 +177,9 @@ func (c Config) Validate() error {
 	if c.Server.Addr == "" {
 		errs = append(errs, errors.New("server.addr 不能为空"))
 	}
+	if _, err := envelope.AgentConnectPathForPrefix(c.Server.AgentConnectPrefix); err != nil {
+		errs = append(errs, fmt.Errorf("server.agent_connect_prefix (AGENT_CONNECT_PREFIX): %w", err))
+	}
 	if strings.TrimSpace(c.Database.DSN) == "" {
 		errs = append(errs, errors.New("database.dsn 不能为空"))
 	}
@@ -180,7 +190,7 @@ func (c Config) Validate() error {
 		errs = append(errs, errors.New("auth.session_ttl 必须大于 0"))
 	}
 	if c.Auth.InitialPass == "" {
-		errs = append(errs, errors.New("首次启动必须通过 auth.initial_pass 或环境变量 ARKADE_INITIAL_PASS 设置管理员密码"))
+		errs = append(errs, errors.New("首次启动必须通过 auth.initial_pass 或环境变量 INITIAL_PASS 设置管理员密码"))
 	}
 	if len(c.Auth.AgentToken) > 0 && len(c.Auth.AgentToken) < 16 {
 		errs = append(errs, errors.New("agent_token 至少 16 位，过短容易被爆破"))

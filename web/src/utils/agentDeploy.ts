@@ -7,36 +7,40 @@ interface DeploySnippetInput {
   hubUrl: string
 }
 
-/** 校验 Agent 使用的 WebSocket 地址，不允许在地址里携带凭据。 */
-export function validateHubUrl(url: string): string {
+/** 在 URL 规范化前检查输入，避免空查询、空凭据、点路径等被解析器吞掉。 */
+function parseHubUrl(url: string): URL | string {
   const value = url.trim()
   if (value === '') return '请填入 Hub 地址'
-  if (!/^wss?:\/\//i.test(value)) {
-    return 'Hub 地址必须以 ws:// 或 wss:// 开头（例如 ws://10.0.0.5:8080/agent/connect）'
-  }
-  if (/[\r\n\t]/.test(value)) return 'Hub 地址不能包含换行或制表符'
+  const scheme = /^https?:\/\//i.exec(value)
+  if (!scheme) return 'Hub 地址必须以 http:// 或 https:// 开头（例如 http://10.0.0.5:8080）'
+  if (/[\s\x00-\x1f\x7f]/.test(value)) return 'Hub 地址不能包含空白或控制字符'
+  if (value.includes('?')) return 'Hub 地址不能带查询参数'
+  if (value.includes('#')) return 'Hub 地址不能带 # 片段'
 
-  let parsed: URL
+  const address = value.slice(scheme[0].length)
+  const authority = address.endsWith('/') ? address.slice(0, -1) : address
+  if (/[\\/]/.test(authority)) return 'Hub 地址不能包含路径（末尾 / 除外）'
+  if (authority.includes('@')) return 'Hub 地址不能包含用户名或密码，请改用专属密钥'
+  if (authority === '' || authority.endsWith(':')) return 'Hub 地址格式不正确'
+
   try {
-    parsed = new URL(value)
+    const parsed = new URL(value)
+    return parsed.port === '0' ? 'Hub 地址端口必须在 1 至 65535 之间' : parsed
   } catch {
     return 'Hub 地址格式不正确'
   }
-  if (parsed.username !== '' || parsed.password !== '') {
-    return 'Hub 地址不能包含用户名或密码：Agent 不使用 URL 里的凭据认证，请改用专属密钥'
-  }
-  if (parsed.search !== '') return 'Hub 地址不能带查询参数（? 之后的部分会被忽略）'
-  if (parsed.hash !== '') return 'Hub 地址不能带 # 片段（会被忽略）'
-  if (parsed.pathname === '' || parsed.pathname === '/') return 'Hub 地址需要包含 /agent/connect 路径'
-  return ''
 }
 
-/** 用当前页面的 origin 作为初值，目标服务器跨网时可手动修改。 */
+export function validateHubUrl(url: string): string {
+  const result = parseHubUrl(url)
+  return typeof result === 'string' ? result : ''
+}
+
+/** 用当前页面的 HTTP(S) origin 作为初值，目标服务器跨网时可手动修改。 */
 export function guessHubUrl(): string {
   if (typeof window === 'undefined') return ''
-  const { protocol, host } = window.location
-  if (host === '') return ''
-  return `${protocol === 'https:' ? 'wss:' : 'ws:'}//${host}/agent/connect`
+  const { protocol, origin } = window.location
+  return protocol === 'http:' || protocol === 'https:' ? origin : ''
 }
 
 /** 先转义 Compose 的 $ 插值，再引用为 YAML 字符串，避免输入改变文件结构。 */
@@ -46,6 +50,9 @@ function quoteComposeValue(value: string): string {
 
 /** 镜像默认执行 run，直接读取环境变量，无需挂载 TOML。 */
 export function buildComposeSnippet(input: DeploySnippetInput): string {
+  const hubUrl = parseHubUrl(input.hubUrl)
+  if (typeof hubUrl === 'string') throw new Error(hubUrl)
+
   return `# Arkade Agent 部署配置：保存为 docker-compose.yml
 # 包含专属密钥，请妥善保管，不要分享或提交到版本库。
 # 启动：docker compose up -d
@@ -56,12 +63,12 @@ services:
     image: ${DEFAULT_AGENT_IMAGE}
     restart: unless-stopped
     environment:
-      ARKADE_AGENT_TOKEN: ${quoteComposeValue(input.token)}
-      ARKADE_HUB_URL: ${quoteComposeValue(input.hubUrl.trim())}
-      ARKADE_AGENT_NAME: ${quoteComposeValue(input.agentName || 'arkade-agent')}
-      ARKADE_DATA_DIR: ${AGENT_DATA_DIR}
-      ARKADE_RUNTIME_KIND: auto
-      ARKADE_LOG_LEVEL: info
+      AGENT_TOKEN: ${quoteComposeValue(input.token)}
+      HUB_URL: ${quoteComposeValue(hubUrl.origin)}
+      AGENT_NAME: ${quoteComposeValue(input.agentName || 'arkade-agent')}
+      DATA_DIR: ${AGENT_DATA_DIR}
+      RUNTIME_KIND: auto
+      LOG_LEVEL: info
     volumes:
       # 保留 Agent 身份和数据，避免重建容器后丢失。
       - agent-data:${AGENT_DATA_DIR}

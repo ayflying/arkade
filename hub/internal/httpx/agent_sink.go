@@ -34,14 +34,15 @@ var _ agentlink.HelloHandler = (*agentSink)(nil)
 // 被禁用的 Agent 在这里被拒：这是握手阶段，连接还没进入在线表，
 // 拒绝只需要返回错误即可，不需要额外的断连逻辑。
 func (s *agentSink) OnAgentHello(ctx context.Context, agentID string, info envelope.HelloPayload) error {
-	// 禁用检查必须在写库之前。
-	//
-	// 如果先 Upsert 再检查，被禁用的 Agent 依然会刷新 last_seen 与 status=online，
-	// 界面上一台"已禁用"的机器却显示刚活跃过——两个字段互相矛盾，
-	// 运维看到这种状态无法判断禁用到底生效没有。
-	//
-	// Agent 不存在时 IsAgentDisabled 返回 ErrNotFound，那是正常的首次注册，
-	// 不当作错误处理（首次连接的新机器当然还没有禁用标记）。
+	// 在握手临界区内最终复查，避免禁用与在途连接竞争。
+	if err := s.checkAgentAccess(ctx, agentID); err != nil {
+		return err
+	}
+	return s.upsertAgentHello(ctx, agentID, info)
+}
+
+func (s *agentSink) checkAgentAccess(ctx context.Context, agentID string) error {
+	// 不存在的 Agent 允许用共享密钥首次注册。数据库故障则拒绝。
 	disabled, err := s.db.IsAgentDisabled(ctx, agentID)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		// 查询失败时拒绝连接而不是放行：宁可让一台好机器重连失败，
@@ -51,13 +52,16 @@ func (s *agentSink) OnAgentHello(ctx context.Context, agentID string, info envel
 		return fmt.Errorf("无法确认该服务器的授权状态，请稍后重试: %w", err)
 	}
 	if disabled {
-		s.log.Warn("拒绝被禁用的 Agent 连接", "agent_id", agentID, "host", info.Hostname)
+		s.log.Warn("拒绝被禁用的 Agent 连接", "agent_id", agentID)
 		// 返回的文案会被连接层写回给 Agent（见 serve 的 hello 拒绝路径），
 		// 因此这里必须写成 Agent 运维能照做的中文说明，
 		// 而不是给 Hub 内部看的英文或错误码。
 		return errors.New(DisabledAgentMessage)
 	}
+	return nil
+}
 
+func (s *agentSink) upsertAgentHello(ctx context.Context, agentID string, info envelope.HelloPayload) error {
 	now := time.Now().UTC()
 
 	// 名称：优先沿用已有记录的 Name，其次用本次上报的主机名，最后兜底文案。

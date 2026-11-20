@@ -74,9 +74,15 @@ func NewApp(ctx context.Context, cfg config.Config, log *slog.Logger, version st
 	helloHandler := &agentSink{db: db, log: log}
 
 	agentSrv := agentlink.NewServer(reg, cfg.Auth.AgentToken, version, helloHandler, log)
+	discovery, err := agentSrv.DiscoveryHandler(cfg.Server.AgentConnectPrefix)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	// 注入专属凭据查询：有了它，专属密钥才能按摘要解析出绑定身份，
 	// 共享 token 也才能拒绝认领已被专属密钥绑定的服务器。
 	agentSrv.SetCredentialStore(NewCredentialStore(db))
+	agentSrv.SetAccessCheck(helloHandler.checkAgentAccess)
 	// 注入握手临界区守卫：握手侧与撤销侧（reset/delete/disable）共用同一把锁，
 	// 消除"认证通过后、注册前被撤销"的竞态。撤销侧拿的就是这个对象。
 	guard := agentlink.NewEnrollmentGuard()
@@ -126,6 +132,7 @@ func NewApp(ctx context.Context, cfg config.Config, log *slog.Logger, version st
 		Registry:                reg,
 		Ops:                     ops,
 		AgentConn:               connections.wrap(http.HandlerFunc(agentSrv.HandleConnect)),
+		AgentDiscovery:          discovery,
 		WebDist:                 cfg.Web.Dist,
 		HubVersion:              version,
 		// 传给 handler 只为"生成密钥时避开与共享 token 同值"。

@@ -6,7 +6,7 @@
 
 项目由 `compose.yml` 和可选 `.env` 组成，Hub保存权威副本并通过Agent下发。两份内容共用版本锁和联合哈希；保存时显式提供 `env_content`，空串表示无环境文件内容。
 
-`.env` 默认用于Compose `${VAR}` 插值，例如镜像标签、端口。传入容器需 `environment` 声明，或通过 `env_file` 显式加载；这两种用途不能混淆。Agent进程的 `ARKADE_*` 不参与项目插值，防止接入密钥被误注入容器。
+`.env` 默认用于Compose `${VAR}` 插值，例如镜像标签、端口。传入容器需 `environment` 声明，或通过 `env_file` 显式加载；这两种用途不能混淆。Hub 与 Agent 的部署环境变量（例如 `AGENT_TOKEN`、`INITIAL_PASS`、`DB_DSN`、`DB_PASSWORD`）不会传给 Compose 子进程，避免控制面凭据被插值注入容器。若业务也需要同名变量，请在该项目的 `.env` 中明确配置。
 
 配置接口只允许目标服务器的manage权限读取，禁止HTTP缓存；运行状态和普通列表不含配置正文。界面默认隐藏环境变量值，不写浏览器持久存储。Hub的PostgreSQL中环境内容**不是加密存储**，数据库、其备份和Agent数据目录必须由部署者限制访问，不能当成密钥保险库。Agent环境文件以0600写入，POSIX权限须在Linux实机验证。
 

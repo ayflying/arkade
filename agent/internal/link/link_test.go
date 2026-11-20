@@ -2,6 +2,7 @@ package link
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -79,7 +80,7 @@ func TestSnapshotCarriesAssignedAgentID(t *testing.T) {
 	var snapshotAgentID atomic.Value
 	done := make(chan struct{})
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newTestHub(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			return
@@ -111,7 +112,7 @@ func TestSnapshotCarriesAssignedAgentID(t *testing.T) {
 	defer srv.Close()
 
 	agent, err := New(Options{
-		HubURL:       "ws" + srv.URL[len("http"):],
+		HubURL:       srv.URL,
 		Token:        "tok",
 		AgentVersion: "0.1.0",
 		HeartbeatSec: 1,
@@ -169,20 +170,30 @@ func TestBackoffSequence(t *testing.T) {
 	}
 }
 
-// TestDialURLNormalization 验证 Hub 地址归一化（http→ws、补默认路径）。
+func newTestHub(connect http.Handler) *httptest.Server {
+	mux := http.NewServeMux()
+	mux.HandleFunc(envelope.AgentDiscoveryPath, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(envelope.AgentDiscovery{ConnectPath: envelope.AgentConnectPath})
+	})
+	mux.Handle(envelope.AgentConnectPath, connect)
+	return httptest.NewServer(mux)
+}
+
+// TestDialURLNormalization 验证只接受 HTTP(S) origin。
 func TestDialURLNormalization(t *testing.T) {
 	cases := map[string]string{
-		"http://hub.example.com":            "ws://hub.example.com/agent/connect",
-		"https://hub.example.com":           "wss://hub.example.com/agent/connect",
-		"ws://hub.example.com/":             "ws://hub.example.com/agent/connect",
-		"wss://hub.example.com:8443/custom": "wss://hub.example.com:8443/custom",
+		"http://hub.example.com":       "http://hub.example.com",
+		"https://hub.example.com/":     "https://hub.example.com",
+		"https://hub.example.com:8443": "https://hub.example.com:8443",
+		"http://[::1]:8080/":           "http://[::1]:8080",
 	}
 	for in, want := range cases {
 		d, err := newDialer(in, "tok", "", "1.0", envelope.Version, false)
 		if err != nil {
 			t.Fatalf("newDialer(%q) 失败: %v", in, err)
 		}
-		u := d.u.String()
+		u := d.origin.String()
 		if u != want {
 			t.Fatalf("newDialer(%q) = %q，期望 %q", in, u, want)
 		}
@@ -198,7 +209,7 @@ func TestDialURLNormalization(t *testing.T) {
 
 // TestDialHeaders 验证认证与身份头。
 func TestDialHeaders(t *testing.T) {
-	d, err := newDialer("ws://hub/agent/connect", "secret-token", "agent-1", "0.1.0", envelope.Version, false)
+	d, err := newDialer("http://hub", "secret-token", "agent-1", "0.1.0", envelope.Version, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +236,7 @@ func TestSessionRequestRouting(t *testing.T) {
 	var gotReply atomic.Bool
 	hubDone := make(chan struct{})
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newTestHub(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			return
@@ -272,7 +283,7 @@ func TestSessionRequestRouting(t *testing.T) {
 	defer srv.Close()
 
 	agent, err := New(Options{
-		HubURL:       "ws" + srv.URL[len("http"):],
+		HubURL:       srv.URL,
 		Token:        "tok",
 		DataDir:      t.TempDir(),
 		AgentVersion: "0.1.0",
@@ -307,7 +318,7 @@ func TestSessionRequestRouting(t *testing.T) {
 // TestHeartbeatSent 验证心跳按 Hub 指定的间隔发出。
 func TestHeartbeatSent(t *testing.T) {
 	var heartbeats atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newTestHub(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			return
@@ -343,7 +354,7 @@ func TestHeartbeatSent(t *testing.T) {
 	defer srv.Close()
 
 	agent, err := New(Options{
-		HubURL:       "ws" + srv.URL[len("http"):],
+		HubURL:       srv.URL,
 		Token:        "tok",
 		AgentVersion: "0.1.0",
 		HeartbeatSec: 1,
@@ -371,7 +382,7 @@ func TestHeartbeatSent(t *testing.T) {
 // TestReconnectAfterDisconnect 验证断线后会重连（退避不阻塞重连逻辑）。
 func TestReconnectAfterDisconnect(t *testing.T) {
 	var connects atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newTestHub(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			return
@@ -400,7 +411,7 @@ func TestReconnectAfterDisconnect(t *testing.T) {
 	defer srv.Close()
 
 	agent, err := New(Options{
-		HubURL:       "ws" + srv.URL[len("http"):],
+		HubURL:       srv.URL,
 		Token:        "tok",
 		AgentVersion: "0.1.0",
 		HeartbeatSec: 1,
@@ -428,7 +439,7 @@ func TestReconnectAfterDisconnect(t *testing.T) {
 
 // TestHandshakeRejectedIsReported 验证 Hub 拒绝握手时不会 panic 且能读到原因。
 func TestHandshakeRejectedIsReported(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newTestHub(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			return
@@ -444,7 +455,7 @@ func TestHandshakeRejectedIsReported(t *testing.T) {
 	defer srv.Close()
 
 	agent, err := New(Options{
-		HubURL:       "ws" + srv.URL[len("http"):],
+		HubURL:       srv.URL,
 		Token:        "bad",
 		AgentVersion: "0.1.0",
 		Logger:       quietLogger(),

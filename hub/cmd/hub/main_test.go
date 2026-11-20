@@ -23,8 +23,8 @@ func runWithArgs(t *testing.T, args ...string) error {
 }
 
 func TestRunWithoutConfigUsesEnv(t *testing.T) {
-	t.Setenv("ARKADE_INITIAL_PASS", "1")
-	t.Setenv("ARKADE_AGENT_TOKEN", "short")
+	t.Setenv("INITIAL_PASS", "1")
+	t.Setenv("AGENT_TOKEN", "short")
 	// 在配置校验阶段停止，不创建数据库或监听网络。
 	err := runWithArgs(t)
 	if err == nil || !strings.Contains(err.Error(), "agent_token 至少 16 位") {
@@ -33,10 +33,25 @@ func TestRunWithoutConfigUsesEnv(t *testing.T) {
 }
 
 func TestRunExplicitMissingConfigFails(t *testing.T) {
-	t.Setenv("ARKADE_INITIAL_PASS", "EnvPass123!")
+	t.Setenv("INITIAL_PASS", "EnvPass123!")
 	err := runWithArgs(t, "-c", filepath.Join(t.TempDir(), "missing.toml"))
 	if err == nil || !strings.Contains(err.Error(), "读取配置文件失败") {
 		t.Fatalf("显式 -c 文件缺失应报错: %v", err)
+	}
+}
+
+func TestResolveLogLevel(t *testing.T) {
+	t.Setenv("ARKADE_LOG_LEVEL", "error")
+	t.Setenv("LOG_LEVEL", "")
+	if got := resolveLogLevel(""); got != "info" {
+		t.Fatalf("want default info without legacy alias, got %q", got)
+	}
+	t.Setenv("LOG_LEVEL", "debug")
+	if got := resolveLogLevel(""); got != "debug" {
+		t.Fatalf("want environment level debug, got %q", got)
+	}
+	if got := resolveLogLevel("info"); got != "info" {
+		t.Fatalf("want explicit flag level info, got %q", got)
 	}
 }
 

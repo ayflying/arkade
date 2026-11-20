@@ -69,10 +69,11 @@ type Deps struct {
 	// 为 nil 时不注册 migrate 路由（返回 500 说明"未启用"，
 	// 而不是 404——404 会被前端理解成「后端尚未部署」）。
 	// 这样既能让测试按需省略它，又不会把"没装配"伪装成"没部署"。
-	StackMigrate *stackmigrate.Manager
-	AgentConn    http.Handler // Agent 连接处理器（不套会话中间件）
-	WebDist      string       // 前端产物目录，空则不托管
-	HubVersion   string
+	StackMigrate   *stackmigrate.Manager
+	AgentConn      http.Handler // Agent 连接处理器（不套会话中间件）
+	AgentDiscovery http.Handler // Agent HTTP 发现处理器（凭据认证）
+	WebDist        string       // 前端产物目录，空则不托管
+	HubVersion     string
 	// AgentSharedToken 是配置里的全局共享 token 明文。
 	//
 	// 只在生成专属密钥时用于"避免同值"检查，不会写库、不会出现在任何响应里。
@@ -169,7 +170,7 @@ func NewRouter(d Deps) *ghttp.Server {
 		group.Middleware(gfChainWithSanitizer(d.Log, func(req *ghttp.Request) { writeBareResult(req, d) }, nil,
 			func(_ *ghttp.Request, req *http.Request) (*http.Request, error) { return req, nil },
 			recoverer(d.Log), requestLogger(d.Log), securityHeaders))
-		group.Bind(&controller.AgentTransport{Handler: d.AgentConn})
+		group.Bind(&controller.AgentTransport{Handler: d.AgentConn, Discovery: d.AgentDiscovery})
 	})
 
 	// 登录不需要已有会话。

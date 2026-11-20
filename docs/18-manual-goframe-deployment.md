@@ -21,7 +21,7 @@ docker compose --env-file .env -f compose.yml up -d
 curl -fsS http://127.0.0.1:8080/healthz
 ```
 
-Hub 默认内置本机执行，镜像包含 Docker CLI/Compose，默认 root 并挂宿主 socket，等价于宿主高权限。仅控制中心设置 `ARKADE_LOCAL_ENABLED: "false"` 并移除 socket，保留 `/data`。远程节点只使用各自的接入密钥，不需要数据库或管理员密码。
+Hub 默认内置本机执行，镜像包含 Docker CLI/Compose，默认 root 并挂宿主 socket，等价于宿主高权限。仅控制中心设置 `LOCAL_ENABLED: "false"` 并移除 socket，保留 `/data`。远程节点只使用各自的接入密钥，不需要数据库或管理员密码。
 
 仅 Hub 默认网络不共享其他 Compose 网络。容器内 `127.0.0.1` 不是宿主或另一个 PG 容器；应安排受控可达地址和授权。`sslmode=disable` 仅适用于可信隔离网络，远程连接配置证书与 TLS。镜像固定提交标签或摘要，源码/测试通过不代表镜像已发布。
 

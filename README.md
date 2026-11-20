@@ -11,7 +11,7 @@ Arkade（中文名：容器方舟）是一个用于管理多台服务器上容�
 - **主程序（Hub）**：提供 Web 界面、用户鉴权、服务器管理、编排下发、镜像仓库凭据集中配置与迁移任务编排；默认还在进程内管理本机容器。内置执行复用 Agent 的公开 embedded 包，经内部 Registry 调用，不另起本地 WebSocket 连接、不创建本机接入 Token。
 - **代理程序（Agent）**：只需部署在远程受管服务器上，主动反向连接 Hub，执行该服务器的容器操作、编排文件落盘及镜像与数据卷搬运。同机不必再部署一个独立 Agent。
 
-本机固定标识为 `agent-local`，容器工作目录为 `/data/local`，与设置主密钥共用单个 `/data` 卷。只想运行控制面时，可设置 `ARKADE_LOCAL_ENABLED=false` 或配置 `local.enabled=false` 后重启 Hub，并移除容器 socket 挂载。Hub 仍必须连接 PostgreSQL。详见 [内置本机执行](<docs/21-embedded-local.md>)。
+本机固定标识为 `agent-local`，容器工作目录为 `/data/local`，与设置主密钥共用单个 `/data` 卷。只想运行控制面时，可设置 `LOCAL_ENABLED=false` 或配置 `local.enabled=false` 后重启 Hub，并移除容器 socket 挂载。Hub 仍必须连接 PostgreSQL。详见 [内置本机执行](<docs/21-embedded-local.md>)。
 
 ## 核心特性
 
@@ -93,7 +93,7 @@ cd ../hub && go build -o bin/arkade-hub ./cmd/hub
 # 3. 配置可用的 PostgreSQL DSN 后启动 Hub
 # 默认内置本机执行；需本机 Docker/Compose 与相应权限
 # 初始管理员密码必须显式提供，代码内无默认密码
-ARKADE_INITIAL_PASS='你的初始管理员密码' ./bin/arkade-hub -c config.toml
+INITIAL_PASS='你的初始管理员密码' ./bin/arkade-hub -c config.toml
 
 # 4. 可选：仅在远程被管服务器构建并启动 Agent（Hub 本机不需要）
 cd ../agent && go build -o bin/arkade-agent ./cmd/agent

@@ -1,5 +1,5 @@
 # 仅 Hub（内置本机执行面），连接已有 PostgreSQL；不创建或管理数据库容器。
-# 必须将 ARKADE_DB_HOST 改为 Hub 容器实际可达的数据库地址，并核对网络/TLS。
+# 必须将 DB_HOST 改为 Hub 容器实际可达的数据库地址，并核对网络/TLS。
 name: arkade-hub
 
 services:
@@ -10,27 +10,29 @@ services:
     ports:
       - "0.0.0.0:8080:8080"
     environment:
-      ARKADE_LISTEN: 0.0.0.0:8080
-      ARKADE_DB_HOST: 请填写PostgreSQL地址
-      ARKADE_DB_PORT: "5432"
-      ARKADE_DB_USER: arkade
-      ARKADE_DB_NAME: arkade
-      ARKADE_DB_PASSWORD: ${ARKADE_DB_PASSWORD:?请在 .env 设置已有 PostgreSQL 密码}
+      LISTEN: 0.0.0.0:8080
+      DB_HOST: 请填写PostgreSQL地址
+      DB_PORT: "5432"
+      DB_USER: arkade
+      DB_NAME: arkade
+      DB_PASSWORD: ${DB_PASSWORD:?请在 .env 设置已有 PostgreSQL 密码}
       # 仅可信隔离网络可用 disable；远程数据库应改为匹配证书的 TLS 策略。
-      ARKADE_DB_SSLMODE: disable
-      ARKADE_SETTINGS_KEY_FILE: /data/settings.key
-      ARKADE_WEB_DIST: /app/web/dist
-      ARKADE_INITIAL_USER: admin
-      ARKADE_INITIAL_PASS: ${ARKADE_INITIAL_PASS:?请在 .env 设置管理员初始密码}
+      DB_SSLMODE: disable
+      SETTINGS_KEY_FILE: /data/settings.key
+      WEB_DIST: /app/web/dist
+      INITIAL_USER: admin
+      INITIAL_PASS: ${INITIAL_PASS:?请在 .env 设置管理员初始密码}
       # 远程节点在后台创建专属接入密钥，全局共享准入默认关闭。
-      ARKADE_AGENT_TOKEN: ""
-      ARKADE_LOCAL_ENABLED: "true"
-      ARKADE_LOCAL_DATA_DIR: /data/local
-      ARKADE_LOCAL_RUNTIME: auto
-      ARKADE_LOCAL_ENDPOINT: /var/run/docker.sock
-      ARKADE_LOCAL_COMPOSE_BIN: docker
-      ARKADE_BASE_URL: http://127.0.0.1:8080
-      ARKADE_LOG_LEVEL: info
+      AGENT_TOKEN: ""
+      LOCAL_ENABLED: "true"
+      LOCAL_DATA_DIR: /data/local
+      LOCAL_RUNTIME: auto
+      LOCAL_ENDPOINT: /var/run/docker.sock
+      LOCAL_COMPOSE_BIN: docker
+      BASE_URL: http://127.0.0.1:8080
+      # 可选外部 WebSocket 路径前缀，仅在反代转发时会剥离该前缀的场景使用。
+      AGENT_CONNECT_PREFIX: ""
+      LOG_LEVEL: info
     volumes:
       # 同一个数据卷保存设置密钥及 /data/local 本机执行工作目录。
       - hub-data:/data

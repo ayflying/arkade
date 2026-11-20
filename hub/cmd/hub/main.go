@@ -39,7 +39,7 @@ func main() {
 func run() error {
 	var (
 		configPath = flag.String("c", "", "配置文件路径（可选，省略时使用默认值与环境变量）")
-		logLevel   = flag.String("log-level", "info", "日志级别: debug/info/warn/error")
+		logLevel   = flag.String("log-level", "", "日志级别: debug/info/warn/error（默认 info，或使用 LOG_LEVEL）")
 		showVer    = flag.Bool("version", false, "打印版本号后退出")
 		initCfg    = flag.Bool("init-config", false, "生成配置模板到指定路径后退出")
 	)
@@ -104,19 +104,17 @@ func run() error {
 	}
 }
 
-// resolveLogLevel 决定日志级别，优先级：命令行参数 > 环境变量 ARKADE_LOG_LEVEL > 默认 info。
+// resolveLogLevel 决定日志级别，优先级：命令行参数 > 环境变量 LOG_LEVEL > 默认 info。
 //
-// 为什么要读环境变量 -log-level 的默认值是 "info"，无法区分"用户显式写了 -log-level info"
-// 和"没写"。这里用 flag 的默认值判断是否被显式指定：未指定时才让环境变量生效，
-// 这样容器编排里设 ARKADE_LOG_LEVEL 就能生效，命令行仍可临时压过它。
+// flag 默认留空，显式传入 -log-level info 也会覆盖环境变量。
 func resolveLogLevel(flagValue string) string {
-	if flagValue != "" && flagValue != "info" {
+	if flagValue != "" {
 		return flagValue
 	}
-	if v := strings.TrimSpace(os.Getenv("ARKADE_LOG_LEVEL")); v != "" {
+	if v := strings.TrimSpace(os.Getenv("LOG_LEVEL")); v != "" {
 		return v
 	}
-	return flagValue
+	return "info"
 }
 
 // newLogger 构造结构化日志器。
@@ -145,11 +143,14 @@ func writeTemplate(path string, log *slog.Logger) error {
 [server]
 addr = "0.0.0.0:8080"
 base_url = "http://127.0.0.1:8080"
+# 可选的外部 Agent 连接前缀，例如 "/edge"；反代必须在转发 /edge/agent/connect 时去掉 /edge。
+# /agent/discover 不加前缀。也可用 AGENT_CONNECT_PREFIX 覆盖。
+agent_connect_prefix = ""
 timeout = "30s"
 
 [database]
-# PostgreSQL DSN（也可设置 ARKADE_DB_DSN）；不内置数据库密码。
-# 容器编排可用 ARKADE_DB_HOST/PORT/USER/NAME/PASSWORD/SSLMODE 安全组合连接 URL。
+# PostgreSQL DSN（也可设置 DB_DSN）；不内置数据库密码。
+# 容器编排可用 DB_HOST/PORT/USER/NAME/PASSWORD/SSLMODE 安全组合连接 URL。
 dsn = "host=localhost port=5432 user=arkade dbname=arkade sslmode=disable"
 
 [auth]
@@ -157,7 +158,7 @@ dsn = "host=localhost port=5432 user=arkade dbname=arkade sslmode=disable"
 session_ttl = "72h"
 # 本机不需要Token。远程推荐使用后台生成的专属凭据；共享准入默认关闭。
 agent_token = ""
-# 首次启动管理员密码不能为空，允许短密码；登录后请尽快修改，也可用 ARKADE_INITIAL_PASS
+# 首次启动管理员密码不能为空，允许短密码；登录后请尽快修改，也可用 INITIAL_PASS
 initial_user = "admin"
 initial_pass = "请替换为管理员初始密码"
 # OIDC 客户端密钥的加密主密钥文件，独立于 PostgreSQL 数据库连接。

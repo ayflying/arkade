@@ -46,6 +46,7 @@ type Server struct {
 	// 为 nil 时只支持共享 token（旧部署与本包的部分单元测试）。
 	// 生产路径一定注入，见 runtime.go 的装配。
 	credentials CredentialStore
+	checkAccess func(context.Context, string) error
 
 	// guard 把"握手最终校验 + 写库 + 登记"与"撤销写库 + 断开"串行化。
 	//
@@ -120,16 +121,8 @@ func NewServer(reg *Registry, agentToken, hubVersion string, handler HelloHandle
 
 // HandleConnect 处理 GET /agent/connect。
 func (s *Server) HandleConnect(w http.ResponseWriter, r *http.Request) {
-	auth, err := s.authorize(r)
-	if err != nil {
-		s.log.Warn("Agent 建连认证失败", "remote", r.RemoteAddr, "err", err)
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	// 协议版本在升级前就能拒绝，避免建立无用连接。
-	if v := r.Header.Get(envelope.HeaderProtoVersion); v != "" && v != "1" {
-		http.Error(w, "unsupported protocol version", http.StatusUpgradeRequired)
+	auth, ok := s.authorizeTransport(w, r)
+	if !ok {
 		return
 	}
 

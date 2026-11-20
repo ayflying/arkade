@@ -21,7 +21,7 @@
 默认启用本机执行。只做远程控制面时，可以二选一：
 
 ```sh
-ARKADE_LOCAL_ENABLED=false
+LOCAL_ENABLED=false
 ```
 
 ```toml

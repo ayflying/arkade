@@ -115,6 +115,6 @@ Webhook 含访问令牌，保存后不会回显，只显示是否已配置。**�
 
 通知凭据使用 Hub 已有的设置主密钥进行 AES-256-GCM 加密；钉钉完整 Webhook、签名密钥和 SMTP 密码不出现在配置读取响应中。页面只显示“已配置”标记，未更换目标时空输入保持原值，显式清除才删除。
 
-**数据库和原设置主密钥必须一起备份、一起恢复。** 主密钥由 `auth.settings_key_file` / `ARKADE_SETTINGS_KEY_FILE` 指定，默认 `./data/settings.key`，现有容器编排为 `/data/settings.key`。只备份 PostgreSQL 无法恢复通知凭据。不要把密钥放进 Git、镜像或日志；遗失后不能靠重新生成同名文件解密。部署项和权限约定见 [用户与设置：主密钥与备份](<21-users-settings-oidc.md#主密钥与备份>)，安装与恢复演练见 [PostgreSQL 部署与备份](<18-manual-goframe-deployment.md>)。
+**数据库和原设置主密钥必须一起备份、一起恢复。** 主密钥由 `auth.settings_key_file` / `SETTINGS_KEY_FILE` 指定，默认 `./data/settings.key`，现有容器编排为 `/data/settings.key`。只备份 PostgreSQL 无法恢复通知凭据。不要把密钥放进 Git、镜像或日志；遗失后不能靠重新生成同名文件解密。部署项和权限约定见 [用户与设置：主密钥与备份](<21-users-settings-oidc.md#主密钥与备份>)，安装与恢复演练见 [PostgreSQL 部署与备份](<18-manual-goframe-deployment.md>)。
 
 只读采集表示不修改被管容器，不表示无需权限：Hub 的内置执行器和远程 Agent 均需合法访问各自宿主的容器运行时。容器版 Hub 以 root 持有 Docker socket 权限，近似宿主 root；全局监控页面与通知目标应只交给受信管理员。邮件目标允许管理员配置内网 SMTP，部署者仍应控制 Hub 的出站网络和管理员账号。

@@ -10,19 +10,20 @@ package config
 import (
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	"arkade/protocol/envelope"
+
 	"github.com/BurntSushi/toml"
 )
 
 // Config 是 Agent 的运行期配置。
 type Config struct {
-	HubURL       string `toml:"hub_url"`       // Hub 的 ws:// 或 wss:// 地址
+	HubURL       string `toml:"hub_url"`       // Hub 的 HTTP(S) origin（不含路径）
 	Token        string `toml:"token"`         // 注册时由 Hub 下发的访问令牌
 	AgentID      string `toml:"agent_id"`      // Hub 分配的 Agent ID，首次连接后落盘
 	DataDir      string `toml:"data_dir"`      // 数据目录：persist 的 agent_id、后续编排文件与队列
@@ -49,7 +50,7 @@ type Config struct {
 
 // 默认值集中定义，避免散落在各处的魔法数字。
 const (
-	DefaultHubURL       = "ws://127.0.0.1:8080/agent/connect"
+	DefaultHubURL       = "http://127.0.0.1:8080"
 	DefaultDataDir      = "/opt/arkade/agent"
 	DefaultHeartbeatSec = 15
 	DefaultLogLevel     = "info"
@@ -107,41 +108,41 @@ func Load(path string) (Config, error) {
 // 必须在 applyDefaults 之后调用（否则空值会被默认值覆盖回），
 // 且在 Validate 之前（否则空 token 会被误判为配置错误）。
 func applyEnvOverrides(c *Config) {
-	if v := strings.TrimSpace(os.Getenv("ARKADE_AGENT_TOKEN")); v != "" {
-		c.Token = v
+	if v, ok := os.LookupEnv("AGENT_TOKEN"); ok {
+		c.Token = strings.TrimSpace(v)
 	}
-	if v := strings.TrimSpace(os.Getenv("ARKADE_HUB_URL")); v != "" {
+	if v := strings.TrimSpace(os.Getenv("HUB_URL")); v != "" {
 		c.HubURL = v
 	}
-	if v := strings.TrimSpace(os.Getenv("ARKADE_DATA_DIR")); v != "" {
+	if v := strings.TrimSpace(os.Getenv("DATA_DIR")); v != "" {
 		c.DataDir = v
 	}
-	if v := strings.TrimSpace(os.Getenv("ARKADE_AGENT_NAME")); v != "" {
+	if v := strings.TrimSpace(os.Getenv("AGENT_NAME")); v != "" {
 		c.Name = v
 	}
 	// 运行时相关：留空表示"不覆盖"，保持自动发现行为。
-	if v := strings.TrimSpace(os.Getenv("ARKADE_SOCKET")); v != "" {
+	if v := strings.TrimSpace(os.Getenv("SOCKET")); v != "" {
 		c.Socket = v
 	}
-	if v := strings.TrimSpace(os.Getenv("ARKADE_RUNTIME_KIND")); v != "" {
+	if v := strings.TrimSpace(os.Getenv("RUNTIME_KIND")); v != "" {
 		c.RuntimeKind = v
 	}
-	if v := strings.TrimSpace(os.Getenv("ARKADE_HEARTBEAT_SEC")); v != "" {
+	if v := strings.TrimSpace(os.Getenv("HEARTBEAT_SEC")); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			c.HeartbeatSec = n
 		}
 	}
-	if v := strings.TrimSpace(os.Getenv("ARKADE_LOG_LEVEL")); v != "" {
+	if v := strings.TrimSpace(os.Getenv("LOG_LEVEL")); v != "" {
 		c.LogLevel = v
 	}
-	if v := strings.TrimSpace(os.Getenv("ARKADE_LOG_FORMAT")); v != "" {
+	if v := strings.TrimSpace(os.Getenv("LOG_FORMAT")); v != "" {
 		c.LogFormat = v
 	}
 	// 容器化部署时的宿主目录换算。留空表示不配置（原生部署行为不变）。
-	if v := strings.TrimSpace(os.Getenv("ARKADE_COMPOSE_SOURCE_ROOT")); v != "" {
+	if v := strings.TrimSpace(os.Getenv("COMPOSE_SOURCE_ROOT")); v != "" {
 		c.ComposeSourceRoot = v
 	}
-	if v := strings.TrimSpace(os.Getenv("ARKADE_COMPOSE_SOURCE_MOUNT")); v != "" {
+	if v := strings.TrimSpace(os.Getenv("COMPOSE_SOURCE_MOUNT")); v != "" {
 		c.ComposeSourceMount = v
 	}
 }
@@ -214,8 +215,8 @@ func expandHome(p string) string {
 func (c *Config) Validate() error {
 	var problems []string
 
-	if err := validateHubURL(c.HubURL); err != nil {
-		problems = append(problems, err.Error())
+	if _, err := envelope.ParseAgentHubOrigin(c.HubURL); err != nil {
+		problems = append(problems, fmt.Sprintf("hub_url (HUB_URL) 必须是无路径的 HTTP(S) 地址，如 https://hub.example.com: %v", err))
 	}
 	if strings.TrimSpace(c.Token) == "" {
 		problems = append(problems, "token 不能为空：请在 Hub 的「Agent 注册」页面创建 Agent 后复制令牌")
@@ -244,32 +245,6 @@ func (c *Config) Validate() error {
 
 	if len(problems) > 0 {
 		return fmt.Errorf("配置校验未通过:\n  - %s", strings.Join(problems, "\n  - "))
-	}
-	return nil
-}
-
-// validateHubURL 校验 Hub 地址。
-//
-// 明确要求 ws:// 或 wss://：http:// 虽然能被"猜"成 ws://，但猜错时排障成本很高
-// （表现为握手失败而不是配置报错），所以直接拒绝并给出改法。
-func validateHubURL(raw string) error {
-	s := strings.TrimSpace(raw)
-	if s == "" {
-		return errors.New("hub_url 不能为空：形如 ws://hub.example.com:8080/agent/connect 或 wss://...")
-	}
-	u, err := url.Parse(s)
-	if err != nil {
-		return fmt.Errorf("hub_url 格式非法(%s): %w", s, err)
-	}
-	switch strings.ToLower(u.Scheme) {
-	case "ws", "wss":
-	case "http", "https":
-		return fmt.Errorf("hub_url 协议应为 ws:// 或 wss://，当前为 %s://（把 http 换成 ws、https 换成 wss 即可）", u.Scheme)
-	default:
-		return fmt.Errorf("hub_url 协议不支持: %q（只支持 ws:// 与 wss://）", u.Scheme)
-	}
-	if u.Host == "" {
-		return fmt.Errorf("hub_url 缺少主机名: %s", s)
 	}
 	return nil
 }

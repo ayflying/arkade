@@ -33,7 +33,7 @@ RUN VERSION="${VERSION:-$(cat /src/VERSION)}" && CGO_ENABLED=0 GOOS="$TARGETOS" 
 # ---------- 运行阶段 ----------
 FROM alpine:3.20
 
-# ca-certificates：Agent 走 wss:// 时需要校验 Hub 证书
+# ca-certificates：使用 HTTPS Hub 地址时，发现请求和 WebSocket 连接都需要校验 Hub 证书
 # tzdata：日志时区
 # docker-cli + docker-cli-compose：编排功能必须走 docker compose 命令行。
 #

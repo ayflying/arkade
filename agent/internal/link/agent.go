@@ -140,7 +140,7 @@ func (a *Agent) Run(ctx context.Context) error {
 
 // runOnce 建立一次连接并跑到断开为止。
 func (a *Agent) runOnce() error {
-	conn, resp, err := a.dialer.dial()
+	conn, resp, err := a.dialer.dial(a.ctx)
 	if err != nil {
 		// 握手失败时给出可读原因：401/403 多半是 token 错，404 多半是路径错。
 		detail := ""
