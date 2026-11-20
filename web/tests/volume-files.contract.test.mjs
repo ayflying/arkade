@@ -634,6 +634,13 @@ check(
   !/display:\s*none/.test(toolbarSrc),
   'display:none 会导致部分浏览器 .click() 无效'
 )
+check('文件列表: 仅展示名称、大小、修改时间和操作',
+  [...entryTableSrc.matchAll(/title: '([^']+)'/g)].map((match) => match[1]).join(',') === '名称,大小,修改时间,操作')
+check('文件列表: 更多菜单提供下载、重命名和删除',
+  /h\(NDropdown/.test(entryTableSrc) && ['download', 'rename', 'remove'].every((key) => entryTableSrc.includes(`key: '${key}'`)))
+check('文件列表: 下载与打开编辑走不同入口',
+  /@download="downloadEntry"/.test(viewSource) && /@open="handleOpen"/.test(viewSource))
+
 // 视图必须真的接上上传
 check('视图: 接上 handleUpload', /@upload="handleUpload"/.test(viewSource))
 check('视图: 用 busy 状态防重入', /if \(uploading\.value\) return/.test(viewSource))

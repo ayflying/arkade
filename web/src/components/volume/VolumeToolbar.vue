@@ -3,7 +3,7 @@
  * 卷文件页的顶部工具条
  *
  * 单独成组件而不是留在页面里：页面已承载路由、保存、增删改，
- * 工具条纯粹是「面包屑 + 过滤框 + 新建/上传按钮」，拆开后页面模板短一截。
+ * 工具条纯粹是「面包屑 + 新建/上传按钮」，拆开后页面模板短一截。
  *
  * ## 上传用隐藏的 <input type="file">
  *
@@ -11,13 +11,12 @@
  * 上传应该是**明确的一次点击动作**，不是随手拖进来就发生。
  */
 import { ref } from 'vue'
-import { NButton, NInput } from 'naive-ui'
+import { NButton, NDropdown } from 'naive-ui'
 import VolumeBreadcrumb from './VolumeBreadcrumb.vue'
 
 interface Props {
   volume: string
   path: string
-  keyword: string
   /** 服务器离线时禁用所有写入口 */
   disabled: boolean
   /** 上传进行中：禁用按钮并显示 loading，防止重复提交 */
@@ -27,7 +26,6 @@ interface Props {
 const props = withDefaults(defineProps<Props>(), { uploading: false })
 
 const emit = defineEmits<{
-  'update:keyword': [value: string]
   backToVolumes: []
   navigate: [path: string]
   create: [kind: 'file' | 'dir']
@@ -35,6 +33,12 @@ const emit = defineEmits<{
 }>()
 
 /** 隐藏的文件选择器 */
+const createOptions = [{ label: '文件', key: 'file' }, { label: '文件夹', key: 'dir' }]
+
+function selectCreate(key: string | number): void {
+  if (!props.disabled && (key === 'file' || key === 'dir')) emit('create', key)
+}
+
 const fileInputRef = ref<HTMLInputElement | null>(null)
 
 /** 点「上传」先打开文件选择器 */
@@ -63,21 +67,12 @@ function handleFileChange(event: Event): void {
       @navigate="emit('navigate', $event)"
     />
     <div class="vol-toolbar__actions">
-      <n-input
-        :value="keyword"
-        size="small"
-        placeholder="按名称过滤"
-        clearable
-        class="vol-toolbar__filter"
-        @update:value="emit('update:keyword', $event)"
-      />
       <n-button size="small" :disabled="disabled || uploading" :loading="uploading" @click="pickFile">
         上传文件
       </n-button>
-      <n-button size="small" :disabled="disabled" @click="emit('create', 'dir')">新建文件夹</n-button>
-      <n-button size="small" type="primary" :disabled="disabled" @click="emit('create', 'file')">
-        新建文件
-      </n-button>
+      <n-dropdown trigger="click" :options="createOptions" :disabled="disabled" @select="selectCreate">
+        <n-button size="small" type="primary" :disabled="disabled">新建</n-button>
+      </n-dropdown>
       <!-- 隐藏的原生文件选择器：只由上面的按钮触发 -->
       <input
         ref="fileInputRef"
@@ -106,12 +101,6 @@ function handleFileChange(event: Event): void {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-}
-
-/* 窄屏下也要能用：给下限而不是固定宽 */
-.vol-toolbar__filter {
-  width: 180px;
-  min-width: 120px;
 }
 
 /*

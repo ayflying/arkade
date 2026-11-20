@@ -20,7 +20,7 @@ import { useVolumeActions } from '@/composables/useVolumeActions'
 import { useUnsavedGuard } from '@/composables/useUnsavedGuard'
 import type { VolumeEntry } from '@/types/volumeFile'
 import { VOLUME_DIR_MAX_ENTRIES } from '@/types/volumeFile'
-import { base64ToBytes } from '@/utils/base64'
+import { downloadFile, useVolumeDownload } from '@/composables/useVolumeDownload'
 import { toastError, toastSuccess } from '@/utils/feedback'
 
 const route = useRoute()
@@ -48,7 +48,9 @@ const currentPath = computed<string>(() =>
 const store = useVolumeFiles({ agentId, volume: volumeName, currentPath })
 const actions = useVolumeActions({ store, currentPath })
 
-const keyword = ref('')
+const { downloadingName, downloadEntry } = useVolumeDownload(
+  () => agentId.value, () => volumeName.value, () => currentPath.value, () => isOnline.value
+)
 const fileBoxRef = ref<InstanceType<typeof VolumeFileBox> | null>(null)
 
 const atEntryLimit = computed(() => store.entries.value.length >= VOLUME_DIR_MAX_ENTRIES)
@@ -68,7 +70,6 @@ const { confirmLeaveDirty } = useUnsavedGuard({
   onLeaveConfirmed: () => {
     // 确认离开后才关面板：目录/卷变了，原文件已不在当前视图
     store.closeFile()
-    keyword.value = ''
   }
 })
 
@@ -79,7 +80,6 @@ watch(
   () => [agentId.value, volumeName.value, currentPath.value] as const,
   () => {
     store.invalidateFileRequests()
-    keyword.value = ''
     void store.loadEntries()
   }
 )
@@ -139,27 +139,11 @@ async function handleSave(content: string, expectedSha256: string): Promise<void
   toastSuccess('已保存')
 }
 
-/**
- * 下载（文本与二进制都支持）。
- *
- * blob URL + `<a download>`：内容已在手里，直接落盘。
- * 4 MiB 上限保证内存开销可控；打开文件时后端会重新 read，不依赖缓存。
- */
 function handleDownload(): void {
   const result = store.fileResult.value
   if (result === null) return
-  const bytes = base64ToBytes(result.data_base64 ?? '')
-  const blob = new Blob([bytes as unknown as BlobPart], { type: 'application/octet-stream' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  const segments = store.openFilePath.value.split('/').filter((s) => s !== '')
-  a.download = segments[segments.length - 1] ?? 'download'
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  // 不 revoke 会一直占着这份数据
-  URL.revokeObjectURL(url)
+  const name = store.openFilePath.value.split('/').at(-1) ?? 'download'
+  downloadFile(name, result.data_base64 ?? '')
 }
 
 /* ───────── 上传 ───────── */
@@ -211,7 +195,6 @@ const subtitle = computed(() => {
     </n-alert>
 
     <volume-toolbar
-      v-model:keyword="keyword"
       :volume="volumeName"
       :path="currentPath"
       :disabled="!isOnline"
@@ -228,8 +211,7 @@ const subtitle = computed(() => {
     </div>
 
     <n-alert v-if="atEntryLimit" type="info" :bordered="false" class="notice">
-      当前目录条目数已达上限（{{ VOLUME_DIR_MAX_ENTRIES }} 个），只显示前
-      {{ VOLUME_DIR_MAX_ENTRIES }} 条。可以用上方过滤框缩小范围。
+      当前目录已达 {{ VOLUME_DIR_MAX_ENTRIES }} 项上限。
     </n-alert>
 
     <volume-file-box
@@ -250,9 +232,11 @@ const subtitle = computed(() => {
     <volume-entry-table
       :entries="store.entries.value"
       :loading="store.listLoading.value"
-      :keyword="keyword"
+      :disabled="!isOnline || store.listError.value !== ''"
+      :downloading-name="downloadingName"
       :busy-name="store.busyName.value"
       @open="handleOpen"
+      @download="downloadEntry"
       @rename="actions.openRename"
       @remove="actions.confirmRemove"
     />
