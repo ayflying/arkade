@@ -60,5 +60,5 @@ export interface ContainerMetricHistory {
   points: ContainerMetricHistoryPoint[]
 }
 
-/** 时间范围预设：自定义之外都由服务端夹到 7 天保留期内。 */
-export type MetricHistoryRange = 'today' | 'yesterday' | 'week' | 'custom'
+/** 监控页的时间范围预设。 */
+export type MetricHistoryRange = 'today' | 'yesterday' | 'week'

@@ -17,7 +17,7 @@
  * 用户看到空图时最想知道是哪一种，所以空状态文案把两种情况都写出来。
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { NAlert, NButton, NButtonGroup, NDatePicker, NSpin } from 'naive-ui'
+import { NAlert, NButton, NButtonGroup, NSpin } from 'naive-ui'
 import TimeSeriesChart from '@/components/chart/TimeSeriesChart.vue'
 import type { ChartSeries } from '@/components/chart/TimeSeriesChart.vue'
 import { getContainerMetricHistory } from '@/api/containerMetrics'
@@ -39,14 +39,12 @@ const RANGES: { value: MetricHistoryRange; label: string }[] = [
 ]
 
 const range = ref<MetricHistoryRange>('today')
-const customRange = ref<[number, number] | null>(null)
 /** 拖拽缩放后的窗口；null 表示跟随预设。 */
 const zoomWindow = ref<{ from: number; to: number } | null>(null)
 
 const data = ref<ContainerMetricHistory | null>(null)
 const loading = ref(false)
 const errorText = ref('')
-const hintText = ref('')
 
 function startOfLocalDay(offsetDays = 0): number {
   const date = new Date()
@@ -56,23 +54,15 @@ function startOfLocalDay(offsetDays = 0): number {
 }
 
 /** 预设区间（Unix 秒）。 */
-const presetWindow = computed<{ from: number; to: number }>(() => {
+function presetWindow(): { from: number; to: number } {
   const now = Math.floor(Date.now() / 1000)
   if (range.value === 'yesterday') {
     // 昨天整天：00:00 到今天 00:00。to 取"现在"会和今天重叠，所以卡在整点。
     return { from: startOfLocalDay(-1), to: startOfLocalDay(0) }
   }
   if (range.value === 'week') return { from: now - 7 * DAY, to: now }
-  if (range.value === 'custom' && customRange.value !== null) {
-    return {
-      from: Math.floor(customRange.value[0] / 1000),
-      to: Math.floor(customRange.value[1] / 1000)
-    }
-  }
   return { from: startOfLocalDay(0), to: now }
-})
-
-const viewWindow = computed(() => zoomWindow.value ?? presetWindow.value)
+}
 
 const points = computed<number[]>(() => (data.value?.points ?? []).map((point) => point.at))
 
@@ -153,7 +143,7 @@ let seq = 0
 
 async function load(): Promise<void> {
   if (props.agentId === '' || props.containerId === '') return
-  const current = viewWindow.value
+  const current = zoomWindow.value ?? presetWindow()
   if (current.to <= current.from) return
   const mine = ++seq
   loading.value = true
@@ -179,47 +169,19 @@ async function load(): Promise<void> {
 
 function selectRange(value: MetricHistoryRange): void {
   range.value = value
-  if (value !== 'custom') customRange.value = null
-}
-
-function onCustomRange(value: [number, number] | null): void {
-  if (value === null) {
-    customRange.value = null
-    hintText.value = ''
-    if (range.value === 'custom') selectRange('today')
-    return
-  }
-  const [from, to] = value
-  // 超过保留期的区间就地夹紧并提示，不做静默截断
-  if (to - from > 7 * DAY * 1000) {
-    customRange.value = [to - 7 * DAY * 1000, to]
-    hintText.value = '自定义时间最多跨 7 天，已自动截取结束时间之前的 7 天'
-  } else {
-    customRange.value = [from, to]
-    hintText.value = ''
-  }
-  range.value = 'custom'
+  zoomWindow.value = null
 }
 
 function onZoom(from: number, to: number): void {
   zoomWindow.value = { from, to }
-  hintText.value = ''
 }
 
 function resetZoom(): void {
   zoomWindow.value = null
 }
 
-// 预设/自定义变化时清掉缩放窗口：否则用户切换"昨天"仍停留在旧的缩放区间里。
-watch(presetWindow, () => {
-  zoomWindow.value = null
-})
-
-watch(viewWindow, () => {
-  void load()
-}, { immediate: false })
-
-watch([range, customRange], () => {
+// 一次切换同时更新预设和缩放时，只查询一次。
+watch([range, zoomWindow, () => props.agentId, () => props.containerId], () => {
   void load()
 })
 
@@ -249,7 +211,6 @@ onBeforeUnmount(() => {
   timer = null
 })
 
-const showCustomPicker = computed(() => range.value === 'custom')
 </script>
 
 <template>
@@ -265,24 +226,7 @@ const showCustomPicker = computed(() => range.value === 'custom')
         >
           {{ item.label }}
         </n-button>
-        <n-button
-          :type="range === 'custom' ? 'primary' : 'default'"
-          :secondary="range !== 'custom'"
-          @click="selectRange('custom')"
-        >
-          自定义时间
-        </n-button>
       </n-button-group>
-
-      <n-date-picker
-        v-if="showCustomPicker"
-        size="small"
-        type="datetimerange"
-        clearable
-        :value="customRange"
-        class="metric-history__picker"
-        @update:value="onCustomRange"
-      />
 
       <n-button v-if="zoomWindow !== null" size="small" quaternary @click="resetZoom">
         重置缩放
@@ -296,7 +240,6 @@ const showCustomPicker = computed(() => range.value === 'custom')
       <span v-if="zoomWindow !== null">· 已缩放</span>
     </p>
 
-    <n-alert v-if="hintText !== ''" type="info" :bordered="false">{{ hintText }}</n-alert>
     <n-alert v-if="errorText !== ''" type="error" :bordered="false">{{ errorText }}</n-alert>
 
     <n-spin v-if="loading && data === null" size="small" />
@@ -385,10 +328,6 @@ const showCustomPicker = computed(() => range.value === 'custom')
   gap: 10px;
 }
 
-.metric-history__picker {
-  width: 320px;
-}
-
 .metric-history__summary {
   margin: 0;
   font-size: 12px;
@@ -398,7 +337,7 @@ const showCustomPicker = computed(() => range.value === 'custom')
 
 .metric-history__charts {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
 }
 
@@ -429,7 +368,6 @@ const showCustomPicker = computed(() => range.value === 'custom')
 }
 
 .metric-history__tip {
-  grid-column: 1 / -1;
   margin: 0;
   font-size: 12px;
   color: var(--arkade-text-tertiary);
