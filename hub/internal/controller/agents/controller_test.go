@@ -4,9 +4,11 @@ import (
 	api "arkade/hub/api/agents/v1"
 	"arkade/hub/internal/agentlink"
 	"arkade/hub/internal/controller"
+	"arkade/hub/internal/secretbox"
 	"arkade/hub/internal/store"
 	"arkade/hub/internal/testdb"
 	"arkade/hub/internal/user"
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -33,6 +35,22 @@ func setup(t *testing.T) (*Controller, *store.DB, *sessionStub) {
 	t.Cleanup(func() { _ = db.Close() })
 	s := &sessionStub{actor: user.User{ID: "admin", Username: "admin", Role: user.RoleAdmin}, ok: true}
 	return New(Deps{DB: db, Registry: agentlink.NewRegistry(), Guard: agentlink.NewEnrollmentGuard(), Session: s, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}), db, s
+}
+
+// setupWithBox 与 setup 相同，但带上加密器，用于验证「待接入可回看密钥」。
+func setupWithBox(t *testing.T) (*Controller, *store.DB, *sessionStub) {
+	t.Helper()
+	db, err := store.Open(t.Context(), testdb.New(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	s := &sessionStub{actor: user.User{ID: "admin", Username: "admin", Role: user.RoleAdmin}, ok: true}
+	box, err := secretbox.New(bytes.Repeat([]byte{7}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return New(Deps{DB: db, Registry: agentlink.NewRegistry(), Guard: agentlink.NewEnrollmentGuard(), Session: s, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Box: box}), db, s
 }
 func requireError(t *testing.T, err error, status int, message string) {
 	t.Helper()
@@ -136,4 +154,73 @@ func TestAgentViewOnlineOverridesPending(t *testing.T) {
 	if view.Status != "online" || view.Labels == nil {
 		t.Fatalf("view=%+v", view)
 	}
+}
+
+// TestEnrollmentViewableWhilePending 验证「待接入可反复查看密钥、接入后立刻不可用」。
+//
+// 这是本次需求的核心不变量：可回读的副本只在从未接入的窗口内存在。
+func TestEnrollmentViewableWhilePending(t *testing.T) {
+	c, db, _ := setupWithBox(t)
+	ctx := t.Context()
+	created, err := c.Create(ctx, &api.CreateReq{Name: "peek-host"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := created.Agent.ID
+
+	first, err := c.GetEnrollment(ctx, &api.GetEnrollmentReq{AgentID: id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Enrollment.Token != created.Enrollment.Token || first.Enrollment.AgentID != id {
+		t.Fatalf("回读的密钥与创建时不一致: %+v", first.Enrollment)
+	}
+	// 反复查看必须拿到同一把：不能每次读取都换密钥。
+	again, err := c.GetEnrollment(ctx, &api.GetEnrollmentReq{AgentID: id})
+	if err != nil || again.Enrollment.Token != first.Enrollment.Token {
+		t.Fatalf("第二次读取=%+v %v", again, err)
+	}
+
+	// 模拟首次握手成功：状态转为在线并抹掉密文。
+	if err := db.UpdateAgentStatus(ctx, id, "online", time.Now().Unix()); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.ClearAgentTokenCipher(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.GetEnrollment(ctx, &api.GetEnrollmentReq{AgentID: id})
+	requireError(t, err, 409, "该服务器已接入，接入密钥只在添加时展示一次；需要重新获取请重置密钥")
+
+	// 重置后进入"等待重新接入"的窗口，又应该能看。
+	if err := db.UpdateAgentStatus(ctx, id, store.StatusPending, 0); err != nil {
+		t.Fatal(err)
+	}
+	reset, err := c.ResetToken(ctx, &api.ResetTokenReq{AgentID: id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterReset, err := c.GetEnrollment(ctx, &api.GetEnrollmentReq{AgentID: id})
+	if err != nil || afterReset.Enrollment.Token != reset.Enrollment.Token {
+		t.Fatalf("重置后回读=%+v %v", afterReset, err)
+	}
+}
+
+// TestEnrollmentViewRequiresCipherAndAdmin 验证没有密文时明确报错，且非管理员被拒。
+func TestEnrollmentViewRequiresCipherAndAdmin(t *testing.T) {
+	c, _, s := setup(t)
+	ctx := t.Context()
+	created, err := c.Create(ctx, &api.CreateReq{Name: "no-box-host"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 没有装配加密器时不保存密文：查看必须给出可操作的提示，而不是返回空密钥。
+	_, err = c.GetEnrollment(ctx, &api.GetEnrollmentReq{AgentID: created.Agent.ID})
+	requireError(t, err, 409, "该服务器的接入信息已不可查看，请重置密钥")
+
+	s.actor.Role = user.RoleUser
+	_, err = c.GetEnrollment(ctx, &api.GetEnrollmentReq{AgentID: created.Agent.ID})
+	requireError(t, err, 403, "该操作仅管理员可用")
+
+	_, err = c.GetEnrollment(ctx, &api.GetEnrollmentReq{AgentID: "agent-missing"})
+	requireError(t, err, 404, "服务器不存在")
 }

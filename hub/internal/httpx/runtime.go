@@ -19,6 +19,7 @@ import (
 	"arkade/hub/internal/config"
 	"arkade/hub/internal/imagetask"
 	"arkade/hub/internal/monitor"
+	"arkade/hub/internal/secretbox"
 	"arkade/hub/internal/service/auditretention"
 	"arkade/hub/internal/service/stackmigration"
 	"arkade/hub/internal/stackmigrate"
@@ -105,6 +106,12 @@ func NewApp(ctx context.Context, cfg config.Config, log *slog.Logger, version st
 		_ = db.Close()
 		return nil, err
 	}
+	// 与监控共用同一把主密钥，但用途标签不同：两者密文不可互解。
+	// 拿不到加密器也不阻断启动，只是无法保存未接入服务器的密钥副本。
+	var secrets *secretbox.Box
+	if secrets, err = secretbox.New(monitorKey); err != nil {
+		log.Warn("初始化凭据加密器失败，未接入服务器的密钥将无法再次查看", "err", err)
+	}
 	if _, err := monitorService.Get(ctx); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -139,6 +146,7 @@ func NewApp(ctx context.Context, cfg config.Config, log *slog.Logger, version st
 		// 它不会写库、不会进响应、不会进日志。
 		AgentSharedToken: cfg.Auth.AgentToken,
 		Guard:            guard,
+		Secrets:          secrets,
 	})
 
 	retention := auditretention.New(context.Background(), db, log)

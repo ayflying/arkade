@@ -39,6 +39,8 @@ const emit = defineEmits<{
   (e: 'toggle-disabled'): void
   (e: 'delete'): void
   (e: 'self-update'): void
+  /** 待接入服务器的「查看接入信息」：再次展示密钥与编排示例 */
+  (e: 'view-enrollment'): void
 }>()
 
 const disabled = computed(() => isAgentDisabled(props.agent))
@@ -90,12 +92,26 @@ const updateDisabled = computed(() => props.busy || disabled.value || !isOnline.
   <div class="row-actions" @click.stop>
     <n-tooltip trigger="hover" placement="top">
       <template #trigger>
+        <!--
+          待接入时给「接入信息」而不是「容器」：这台机器还没有任何容器可看，
+          用户此刻真正需要的是密钥和编排示例（过几天回来也还能再看一遍）。
+        -->
+        <n-button
+          v-if="isPending && !isLocal"
+          size="tiny"
+          type="primary"
+          secondary
+          :disabled="busy"
+          @click="emit('view-enrollment')"
+        >
+          接入信息
+        </n-button>
         <!-- pending 时禁用：进去必然是空列表，会让人误以为机器上真的没有容器 -->
-        <n-button size="tiny" tertiary :disabled="busy || isPending" @click="emit('enter')">
+        <n-button v-else size="tiny" tertiary :disabled="busy || isPending" @click="emit('enter')">
           容器
         </n-button>
       </template>
-      {{ enterHint }}
+      {{ isPending && !isLocal ? '查看接入密钥和容器编排示例（接入成功后不再显示）' : enterHint }}
     </n-tooltip>
 
     <n-tooltip trigger="hover" placement="top">

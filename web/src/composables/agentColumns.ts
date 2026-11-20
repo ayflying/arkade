@@ -36,6 +36,8 @@ export interface AgentColumnHandlers {
   onDelete: (agent: Agent) => void
   /** 更新该服务器上的 Arkade 组件镜像（会重建容器，需二次确认） */
   onSelfUpdate: (agent: Agent) => void
+  /** 待接入服务器：再次查看密钥与编排示例 */
+  onViewEnrollment: (agent: Agent) => void
   isBusy: (agentId: string) => boolean
 }
 
@@ -131,7 +133,8 @@ export function createAgentColumns(handlers: AgentColumnHandlers): DataTableColu
           'onReset-token': () => handlers.onResetToken(row),
           'onToggle-disabled': () => handlers.onToggleDisabled(row),
           onDelete: () => handlers.onDelete(row),
-          'onSelf-update': () => handlers.onSelfUpdate(row)
+          'onSelf-update': () => handlers.onSelfUpdate(row),
+          onViewEnrollment: () => handlers.onViewEnrollment(row)
         })
     }
   ]

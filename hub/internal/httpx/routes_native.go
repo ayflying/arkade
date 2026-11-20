@@ -18,7 +18,7 @@ func bindOperationalRoutes(s *ghttp.Server, d Deps) {
 	if d.MonitorService != nil && d.MonitorEngine != nil {
 		bindNativeModule(s, d, monitorcontroller.New(d.MonitorService, d.MonitorEngine, d.DB, controller.Access{DB: d.DB, Session: session, Log: d.Log}))
 	}
-	bindNativeModule(s, d, agentscontroller.New(agentscontroller.Deps{DB: d.DB, Registry: d.Registry, Guard: d.Guard, SharedToken: d.AgentSharedToken, Session: session, Log: d.Log}))
+	bindNativeModule(s, d, agentscontroller.New(agentscontroller.Deps{DB: d.DB, Registry: d.Registry, Guard: d.Guard, SharedToken: d.AgentSharedToken, Session: session, Log: d.Log, Box: d.Secrets}))
 	resourcesDeps := resourcescontroller.Deps{DB: d.DB, Ops: d.Ops, Session: session, Log: d.Log}
 	if d.MonitorEngine != nil {
 		resourcesDeps.SuppressMonitor = d.MonitorEngine.Suppress

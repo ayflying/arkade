@@ -103,6 +103,15 @@ func (s *agentSink) upsertAgentHello(ctx context.Context, agentID string, info e
 		return err
 	}
 
+	// 握手成功即视为"已接入"：立刻抹掉可解密的密钥副本。
+	//
+	// 顺序刻意放在 Upsert 之后：状态已从 pending 变成 online，
+	// 此时清掉密文与"列表页不再提供查看"是同一个瞬间的事实。
+	// 清理失败只记日志——重连还会再来一次，且密钥本身已经生效。
+	if err := s.db.ClearAgentTokenCipher(ctx, agentID); err != nil {
+		s.log.Warn("清除接入密钥密文失败，将在下次握手重试", "agent_id", agentID, "err", err)
+	}
+
 	s.log.Info("Agent 握手完成",
 		"agent_id", agentID,
 		"host", info.Hostname,

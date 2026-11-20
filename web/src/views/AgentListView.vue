@@ -28,7 +28,7 @@ import PageHeader from '@/components/common/PageHeader.vue'
 import { agentRowProps, createAgentColumns } from '@/composables/agentColumns'
 import { usePolling } from '@/composables/usePolling'
 import { useResponsiveColumns } from '@/utils/responsiveColumns'
-import { deleteAgent, disableAgent, enableAgent, getAgentSelfUpdateStatus, listAgents, resetAgentToken, selfUpdateAgent } from '@/api/agents'
+import { deleteAgent, disableAgent, enableAgent, getAgentEnrollment, getAgentSelfUpdateStatus, listAgents, resetAgentToken, selfUpdateAgent } from '@/api/agents'
 import { useAgentsStore } from '@/stores/agents'
 import type { Agent, CreateAgentResponse, Enrollment } from '@/types/agent'
 import { ApiError } from '@/types/api'
@@ -67,6 +67,13 @@ const pendingEnrollment = ref<Enrollment | null>(null)
 const pendingAgentName = ref('')
 /** 本次密钥是「重置」产生的吗（影响文案：旧密钥已失效） */
 const tokenIsReset = ref(false)
+/**
+ * 弹窗里的接入信息是否还能再次查看（即该服务器仍是待接入）。
+ *
+ * 只影响文案与提示：真正能不能再取，由 Hub 的 pending 判断决定，
+ * 前端不据此做任何"缓存"。
+ */
+const enrollmentRevealable = ref(false)
 
 /**
  * 列定义用 computed 包一层：手机/桌面切换、旋屏时固定列状态要跟着变，
@@ -80,6 +87,7 @@ const columns = useResponsiveColumns(computed(() =>
     onToggleDisabled: (agent: Agent) => void handleToggleDisabled(agent),
     onDelete: (agent: Agent) => void handleDelete(agent),
     onSelfUpdate: (agent: Agent) => void handleSelfUpdate(agent),
+    onViewEnrollment: (agent: Agent) => void handleViewEnrollment(agent),
     isBusy: (agentId: string) => enteringId.value === agentId || busyId.value === agentId
   })
 ))
@@ -377,8 +385,36 @@ function handleCreated(payload: CreateAgentResponse): void {
   store.insert(payload.agent)
   pendingAgentName.value = agentDisplayName(payload.agent)
   tokenIsReset.value = false
+  // 刚创建必然是 pending：此后在列表里还能反复查看这些接入信息。
+  enrollmentRevealable.value = true
   pendingEnrollment.value = payload.enrollment
   tokenShow.value = true
+}
+
+/**
+ * 查看「待接入」服务器的接入信息（密钥 + 编排示例）。
+ *
+ * 为什么不复用重置：重置会换掉密钥、并断开可能正在连接的 Agent。
+ * 用户过几天回来部署时只是想再抄一遍密钥和编排，重置的代价完全没必要。
+ * Hub 只在 pending 期间保留加密副本，接入成功后本入口就不再出现。
+ */
+async function handleViewEnrollment(agent: Agent): Promise<void> {
+  if (busyId.value !== '') return
+  busyId.value = agent.id
+  try {
+    const res = await getAgentEnrollment(agent.id)
+    pendingAgentName.value = agentDisplayName(agent)
+    tokenIsReset.value = false
+    enrollmentRevealable.value = true
+    pendingEnrollment.value = res.enrollment
+    tokenShow.value = true
+  } catch (err) {
+    // 409 说明这期间它已经接入（或副本已被清理）：提示用户走重置，而不是让弹窗空白。
+    toastError(err instanceof ApiError ? err.message : '读取接入信息失败')
+    void store.refresh()
+  } finally {
+    busyId.value = ''
+  }
 }
 
 /**
@@ -405,7 +441,8 @@ async function handleResetToken(agent: Agent): Promise<void> {
         ? '，这台服务器上的 Agent 会马上断开，并且在它更新配置之前无法重新连接。\n\n'
         : '。\n\n') +
       '新的密钥只显示一次，请准备好把它更新到那台机器的部署配置里。\n\n' +
-      '如果只是想查看密钥：密钥在创建时只显示一次，无法再次查看，只能重置。',
+      '如果只是想查看密钥：待接入的服务器可以直接点「接入信息」再次查看；' +
+      '已经接入成功的服务器不再保留明文，只能重置。',
     positiveText: '重置密钥',
     negativeText: '取消',
     danger: true
@@ -419,6 +456,8 @@ async function handleResetToken(agent: Agent): Promise<void> {
     if (!store.replace(res.agent)) await store.refresh()
     pendingAgentName.value = agentDisplayName(res.agent)
     tokenIsReset.value = true
+    // 重置后服务器必然要重新接入，因此这批信息同样可以反复查看。
+    enrollmentRevealable.value = res.agent.status === 'pending'
     pendingEnrollment.value = res.enrollment
     tokenShow.value = true
     toastSuccess('已生成新的专属密钥')
@@ -439,6 +478,8 @@ function handleTokenClosed(): void {
   pendingEnrollment.value = null
   pendingAgentName.value = ''
   tokenIsReset.value = false
+  // 与密钥一起复位：这个标记只描述"当前这份密钥还能不能再看"。
+  enrollmentRevealable.value = false
 }
 
 onMounted(() => {
@@ -543,6 +584,7 @@ onUnmounted(() => {
       :enrollment="pendingEnrollment"
       :agent-name="pendingAgentName"
       :is-reset="tokenIsReset"
+      :reopenable="enrollmentRevealable"
       @closed="handleTokenClosed"
     />
   </div>

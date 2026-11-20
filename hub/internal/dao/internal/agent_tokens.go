@@ -21,16 +21,18 @@ type AgentTokensDao struct {
 
 // AgentTokensColumns defines and stores column names for the table agent_tokens.
 type AgentTokensColumns struct {
-	TokenHash string //
-	AgentId   string //
-	CreatedAt string //
+	TokenHash   string //
+	AgentId     string //
+	CreatedAt   string //
+	TokenCipher string //
 }
 
 // agentTokensColumns holds the columns for the table agent_tokens.
 var agentTokensColumns = AgentTokensColumns{
-	TokenHash: "token_hash",
-	AgentId:   "agent_id",
-	CreatedAt: "created_at",
+	TokenHash:   "token_hash",
+	AgentId:     "agent_id",
+	CreatedAt:   "created_at",
+	TokenCipher: "token_cipher",
 }
 
 // NewAgentTokensDao creates and returns a new DAO object for table data access.

@@ -37,9 +37,15 @@ interface Props {
   agentName: string
   /** 是否是重置密钥（影响文案与提醒：旧密钥已失效） */
   isReset?: boolean
+  /**
+   * 这些接入信息是否还能从列表里再次调出（即服务器仍是待接入）。
+   *
+   * 只影响提醒文案：为真时说「还能再看」，为假时才是真正的「只显示一次」。
+   */
+  reopenable?: boolean
 }
 
-const props = withDefaults(defineProps<Props>(), { isReset: false })
+const props = withDefaults(defineProps<Props>(), { isReset: false, reopenable: false })
 
 const emit = defineEmits<{
   (e: 'update:show', value: boolean): void
@@ -146,10 +152,23 @@ function handleClose(): void {
     @update:show="(v: boolean) => { if (!v) handleClose() }"
   >
     <!--
-      一次性提醒必须最显眼：这是整个弹窗存在的唯一理由。
-      用 warning 而不是 info，因为「关掉就再也看不到」是真实损失。
+      提示必须随语境变化：
+      - 待接入（reopenable）：用户随时能从列表里用「接入信息」再打开，说"只显示一次"是错的，
+        会把人吓去重置密钥；
+      - 已接入 / 正在接入：此时 Hub 已经抹掉副本，确实只有这一次机会。
+      用 warning 而不是 info，因为第二种情况下「关掉就再也看不到」是真实损失。
     -->
-    <n-alert type="warning" :bordered="false" title="密钥只显示这一次" class="enroll__lead">
+    <n-alert
+      v-if="reopenable"
+      type="info"
+      :bordered="false"
+      title="这台服务器还没接入"
+      class="enroll__lead"
+    >
+      在它第一次连接成功之前，你可以随时回到服务器列表点「接入信息」再次查看密钥和编排示例。
+      <strong>一旦接入成功，这里就只显示这一次了</strong>——之后只能重置密钥。
+    </n-alert>
+    <n-alert v-else type="warning" :bordered="false" title="密钥只显示这一次" class="enroll__lead">
       Arkade 不保存密钥原文，<strong>关闭这个窗口后就无法再次查看</strong>。
       请立刻复制并保存到安全的地方；如果丢失，只能在服务器列表里重置密钥，
       届时正在运行的 Agent 会断开，直到你更新它的部署配置。
