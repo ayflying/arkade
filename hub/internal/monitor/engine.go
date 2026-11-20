@@ -17,14 +17,19 @@ import (
 	"github.com/gogf/gf/v2/errors/gerror"
 )
 
+// Agent 是采集目标。Projects 是这台服务器上 Arkade 已接管的编排项目名：
+// 非 nil（含空切片）表示按项目收窄采集范围，nil 表示未提供范围、沿用全量。
+// 生产调用方总是提供非 nil 值——"没有接管任何项目"必须表达成空集合，
+// 否则会退化成把整台宿主的容器都采一遍。
 type Agent struct {
 	ID, Name string
 	Online   bool
 	LastSeen int64
+	Projects []string
 }
 type Source interface {
 	Agents(context.Context) ([]Agent, error)
-	Snapshot(context.Context, string) (envelope.MonitorSnapshot, error)
+	Snapshot(context.Context, string, []string) (envelope.MonitorSnapshot, error)
 }
 
 // Event is one channel delivery. The adapter must only send Channel, never fan
@@ -376,7 +381,9 @@ func (e *Engine) Tick(ctx context.Context) error {
 		}
 		snapshot, snapshotErr := result.snapshot, result.err
 		if snapshotErr == nil && snapshot.Error == "" {
-			e.cacheSnapshot(a, snapshot, c, result.receivedAt)
+			accepted := e.cacheSnapshot(a, snapshot, c, result.receivedAt)
+			// 历史与告警是两条路径：告警关闭时也记录，采集失败时只留空洞。
+			e.persistHistory(ctx, accepted, result.receivedAt)
 		} else {
 			e.metrics.markStale(a.ID, nil)
 		}
@@ -500,7 +507,7 @@ func (e *Engine) collect(ctx context.Context, agents []Agent, c Config) map[stri
 			defer wg.Done()
 			for a := range jobs {
 				call, cancel := context.WithTimeout(ctx, 5*time.Second)
-				snapshot, err := e.source.Snapshot(call, a.ID)
+				snapshot, err := e.source.Snapshot(call, a.ID, a.Projects)
 				cancel()
 				mu.Lock()
 				results[a.ID] = collectionResult{snapshot: snapshot, receivedAt: e.now(), err: err}

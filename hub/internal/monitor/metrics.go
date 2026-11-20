@@ -43,6 +43,14 @@ func counterRate(current, previous uint64, seconds float64) float64 {
 	return float64(current-previous) / seconds
 }
 func finite(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) }
+// get 返回单个容器的最新样本，用于把刚写入的缓存行同时交给历史落库。
+func (m *metricCache) get(agent, container string) (Metric, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	v, ok := m.values[metricKey(agent, container)]
+	return v, ok
+}
+
 func (m *metricCache) put(agent string, c envelope.ContainerMetric, now time.Time, staleAfter int64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -192,8 +200,11 @@ func metricStaleAfter(interval int) int64 {
 	return 2*seconds(interval, DefaultConfig().IntervalSeconds) + 25
 }
 
-func (e *Engine) cacheSnapshot(a Agent, snapshot envelope.MonitorSnapshot, c Config, now time.Time) {
+// cacheSnapshot 更新最新值缓存，并返回本次真正被采纳的样本（已排除排除列表）。
+// 返回值只用于历史落库：调用方不需要再遍历一次快照或重新加锁读缓存。
+func (e *Engine) cacheSnapshot(a Agent, snapshot envelope.MonitorSnapshot, c Config, now time.Time) []Metric {
 	seen := make(map[string]bool, len(snapshot.Containers))
+	accepted := make([]Metric, 0, len(snapshot.Containers))
 	for _, m := range snapshot.Containers {
 		if m.ID == "" {
 			continue
@@ -205,12 +216,16 @@ func (e *Engine) cacheSnapshot(a Agent, snapshot envelope.MonitorSnapshot, c Con
 		seen[m.ID] = true
 		e.metrics.put(a.ID, m, now, metricStaleAfter(c.IntervalSeconds))
 		e.metrics.annotate(a.ID, m.ID, a.Name, snapshot.Complete)
+		if v, ok := e.metrics.get(a.ID, m.ID); ok {
+			accepted = append(accepted, v)
+		}
 	}
 	if snapshot.Complete && snapshot.Error == "" {
 		e.metrics.retainAgentContainers(a.ID, seen)
 	} else {
 		e.metrics.markStale(a.ID, seen)
 	}
+	return accepted
 }
 func (m *metricCache) prune(before int64) {
 	m.mu.Lock()

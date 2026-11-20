@@ -27,6 +27,7 @@ import { NAlert, NButton, NPopconfirm, NSpace, NSpin, NTabPane, NTabs, NTooltip 
 import PageHeader from '@/components/common/PageHeader.vue'
 import ContainerDetailFacts from '@/components/container/ContainerDetailFacts.vue'
 import ContainerDetailMetrics from '@/components/container/ContainerDetailMetrics.vue'
+import ContainerMetricHistory from '@/components/container/ContainerMetricHistory.vue'
 import ContainerMountsTable from '@/components/container/ContainerMountsTable.vue'
 import ContainerDetailLogs from '@/components/container/ContainerDetailLogs.vue'
 import {
@@ -69,7 +70,7 @@ const forbidden = ref(false)
 /** 有容器操作正在执行（批量按钮与单个操作共用，避免并发下发） */
 const acting = ref(false)
 
-const activeTab = ref<'overview' | 'mounts' | 'logs'>('overview')
+const activeTab = ref<'overview' | 'metrics' | 'mounts' | 'logs'>('overview')
 const metricsEnabled = computed(() => activeTab.value === 'overview' && containerId.value !== '')
 const metrics = useContainerMetrics(agentId, metricsEnabled)
 // Links from container tables use full IDs. For legacy short links, only the
@@ -430,6 +431,11 @@ watch(
           :agent-id="agentId"
           :direct-address="directAddress"
         />
+      </n-tab-pane>
+
+      <!-- 历史曲线：view 权限，和实时指标同级别，不依赖详情的 manage 权限 -->
+      <n-tab-pane name="metrics" tab="监控">
+        <container-metric-history :agent-id="agentId" :container-id="metricContainerId" />
       </n-tab-pane>
 
       <n-tab-pane name="mounts" tab="挂载">

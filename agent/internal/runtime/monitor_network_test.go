@@ -39,7 +39,7 @@ func TestMonitorNetworkAttribution(t *testing.T) {
 					fmt.Fprint(w, tc.stats)
 				}
 			})
-			s := m.Snapshot(context.Background())
+			s := m.Snapshot(context.Background(), nil)
 			owner := s.Containers[0]
 			if !s.Complete || !owner.StatsAvailable || owner.NetworkAvailable != tc.available || (!tc.available && (owner.NetworkRXBytes != 0 || owner.NetworkTXBytes != 0)) {
 				t.Fatalf("unexpected owner metrics: %+v", owner)

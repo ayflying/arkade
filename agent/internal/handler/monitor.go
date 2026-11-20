@@ -21,11 +21,16 @@ func newMonitorSnapshotHandler(rt runtime.Runtime) Handler {
 		if collector == nil {
 			return nil, envelope.NewError(envelope.CodeUnsupported, "当前引擎不支持容器监控")
 		}
-		s := collector.Snapshot(ctx)
+		// scope 存在即表示"按范围采"：空集合必须采集零个容器，而不是退回全量。
+		var projects []string
+		if p.Scope != nil {
+			projects = append([]string{}, p.Scope.Projects...)
+		}
+		s := collector.Snapshot(ctx, projects)
 		out := envelope.MonitorSnapshot{At: s.At, Complete: s.Complete, Error: s.Error, Containers: make([]envelope.ContainerMetric, 0, len(s.Containers))}
 		for _, c := range s.Containers {
 			out.Containers = append(out.Containers, envelope.ContainerMetric{
-				ID: c.ID, Name: c.Name, Image: c.Image, State: c.State, Health: c.Health,
+				ID: c.ID, Name: c.Name, Image: c.Image, State: c.State, Health: c.Health, Project: c.Project,
 				ExitCode: c.ExitCode, RestartCount: c.RestartCount, StartedAt: c.StartedAt, FinishedAt: c.FinishedAt,
 				CPUPercent: c.CPUPercent, MemoryBytes: c.MemoryBytes, MemoryLimitBytes: c.MemoryLimitBytes, MemoryPercent: c.MemoryPercent,
 				NetworkAvailable: &c.NetworkAvailable, NetworkRXBytes: c.NetworkRXBytes, NetworkTXBytes: c.NetworkTXBytes, BlockAvailable: &c.BlockAvailable, BlockReadBytes: c.BlockReadBytes, BlockWriteBytes: c.BlockWriteBytes,

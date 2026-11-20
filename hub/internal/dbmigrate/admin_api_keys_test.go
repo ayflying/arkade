@@ -38,7 +38,7 @@ func TestAPIKeysUpgradeFromV5PreservesExistingKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	res, err := Run(ctx, dsn)
-	if err != nil || res.FromVersion != 5 || res.ToVersion != 6 || res.Applied != 1 || res.Dirty {
+	if err != nil || res.FromVersion != 5 || res.ToVersion != latestVersion(t) || res.Applied != latestVersion(t)-5 || res.Dirty {
 		t.Fatalf("upgrade: %+v %v", res, err)
 	}
 	var preserved bool
@@ -77,7 +77,7 @@ func TestAdminAPIKeysUpgradeFromV4(t *testing.T) {
 		t.Fatal(err)
 	}
 	res, err := Run(ctx, dsn)
-	if err != nil || res.FromVersion != 4 || res.ToVersion != 6 || res.Applied != 2 || res.Dirty {
+	if err != nil || res.FromVersion != 4 || res.ToVersion != latestVersion(t) || res.Applied != latestVersion(t)-4 || res.Dirty {
 		t.Fatalf("upgrade: %+v %v", res, err)
 	}
 	var username string

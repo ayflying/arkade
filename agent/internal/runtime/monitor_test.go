@@ -48,7 +48,7 @@ func TestMonitorHTTPFormula(t *testing.T) {
 			t.Errorf("unexpected path %s", r.URL.Path)
 		}
 	})
-	s := m.Snapshot(context.Background())
+	s := m.Snapshot(context.Background(), nil)
 	if !s.Complete || len(s.Containers) != 1 {
 		t.Fatalf("%+v", s)
 	}
@@ -74,11 +74,11 @@ func TestMonitorCPUCacheAndMissingFields(t *testing.T) {
 			fmt.Fprintf(w, `{"cpu_stats":{"cpu_usage":{"total_usage":%d},"system_cpu_usage":%d,"online_cpus":2},"memory_stats":{"usage":10,"limit":100},"networks":{},"blkio_stats":{"io_service_bytes_recursive":[]}}`, n*100, n*1000)
 		}
 	})
-	first := m.Snapshot(context.Background())
+	first := m.Snapshot(context.Background(), nil)
 	if first.Containers[0].StatsAvailable || !strings.Contains(first.Containers[0].Error, "baseline") {
 		t.Fatalf("first sample must be unavailable: %+v", first)
 	}
-	second := m.Snapshot(context.Background())
+	second := m.Snapshot(context.Background(), nil)
 	if !second.Containers[0].StatsAvailable || second.Containers[0].CPUPercent != 20 {
 		t.Fatalf("cache formula: %+v", second)
 	}
@@ -99,7 +99,7 @@ func TestMonitorUnavailableSanitized(t *testing.T) {
 					fmt.Fprint(w, body)
 				}
 			})
-			s := m.Snapshot(context.Background())
+			s := m.Snapshot(context.Background(), nil)
 			if !s.Complete || s.Containers[0].StatsAvailable || !strings.Contains(s.Containers[0].Error, "unavailable") || strings.Contains(s.Containers[0].Error, "secret") {
 				t.Fatalf("unsafe unavailable: %+v", s)
 			}
@@ -118,7 +118,7 @@ func TestMonitorCancellation(t *testing.T) {
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan MonitorSnapshot, 1)
-	go func() { done <- m.Snapshot(ctx) }()
+	go func() { done <- m.Snapshot(ctx, nil) }()
 	<-started
 	cancel()
 	select {
@@ -152,7 +152,7 @@ func TestMonitorWorkerAndContainerLimits(t *testing.T) {
 		time.Sleep(time.Millisecond)
 		fmt.Fprint(w, `{"State":{"Status":"exited"}}`)
 	})
-	s := m.Snapshot(context.Background())
+	s := m.Snapshot(context.Background(), nil)
 	if s.Complete || len(s.Containers) != 2000 || !strings.Contains(s.Error, "2000") || peak.Load() > 4 {
 		t.Fatalf("limits broken: complete=%v len=%d error=%s peak=%d", s.Complete, len(s.Containers), s.Error, peak.Load())
 	}

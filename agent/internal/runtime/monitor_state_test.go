@@ -19,7 +19,7 @@ func TestMonitorStoppedContainerStillComplete(t *testing.T) {
 			t.Error("stopped container must not request stats")
 		}
 	})
-	s := m.Snapshot(context.Background())
+	s := m.Snapshot(context.Background(), nil)
 	if !s.Complete || s.Error != "" || s.Containers[0].StatsAvailable || s.Containers[0].ExitCode != 137 || s.Containers[0].Health != "" || s.Containers[0].FinishedAt != 1704153600 {
 		t.Fatalf("stopped status lost: %+v", s)
 	}
@@ -33,7 +33,7 @@ func TestMonitorInspectFailureIncomplete(t *testing.T) {
 		w.WriteHeader(404)
 		fmt.Fprint(w, `{"message":"PASSWORD=secret"}`)
 	})
-	s := m.Snapshot(context.Background())
+	s := m.Snapshot(context.Background(), nil)
 	if s.Complete || len(s.Containers) != 1 || s.Containers[0].StatsAvailable || strings.Contains(s.Containers[0].Error, "secret") {
 		t.Fatalf("unsafe incomplete response: %+v", s)
 	}
@@ -56,7 +56,7 @@ func TestMonitorCPUResetAndAccountingMissing(t *testing.T) {
 					fmt.Fprint(w, stats)
 				}
 			})
-			s := m.Snapshot(context.Background())
+			s := m.Snapshot(context.Background(), nil)
 			c := s.Containers[0]
 			wantStats := name != "cpu-reset" && name != "memory-missing"
 			if !s.Complete || c.StatsAvailable != wantStats || (c.Error == "") != wantStats ||

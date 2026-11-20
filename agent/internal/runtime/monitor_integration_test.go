@@ -24,7 +24,7 @@ func TestMonitorDockerIntegration(t *testing.T) {
 	collector := (&engine{client: client}).NewMonitorCollector()
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 	defer cancel()
-	first := collector.Snapshot(ctx)
+	first := collector.Snapshot(ctx, nil)
 	if !first.Complete {
 		t.Fatalf("首次快照不完整: %s", first.Error)
 	}
@@ -37,7 +37,7 @@ func TestMonitorDockerIntegration(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("等待二采样时超时")
 	}
-	second := collector.Snapshot(ctx)
+	second := collector.Snapshot(ctx, nil)
 	if !second.Complete {
 		t.Fatalf("第二次快照不完整: %s", second.Error)
 	}

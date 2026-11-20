@@ -34,7 +34,7 @@ func (*containerMetricSource) Agents(context.Context) ([]monitor.Agent, error) {
 	return []monitor.Agent{{ID: "metrics-allowed", Online: true}, {ID: "metrics-denied", Online: true}}, nil
 }
 
-func (s *containerMetricSource) Snapshot(_ context.Context, id string) (envelope.MonitorSnapshot, error) {
+func (s *containerMetricSource) Snapshot(_ context.Context, id string, _ []string) (envelope.MonitorSnapshot, error) {
 	s.calls.Add(1)
 	safe := true
 	return envelope.MonitorSnapshot{Complete: true, Containers: []envelope.ContainerMetric{

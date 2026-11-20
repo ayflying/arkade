@@ -93,6 +93,11 @@ func (c *Controller) Delete(ctx context.Context, r *api.DeleteReq) (*api.DeleteR
 	if e := c.d.DB.DeleteComposeStack(ctx, r.AgentID, r.Name); e != nil {
 		return nil, c.storeError(e, "编排不存在")
 	}
+	// 编排删了，它下面容器留下的资源历史也一起清掉；失败只记日志，
+	// 因为这些行没有入口能查到，最坏情况就是多占几天磁盘直到保留期到期。
+	if e := c.d.DB.DeleteMonitorSamplesForProject(ctx, r.AgentID, r.Name); e != nil {
+		c.d.Log.Error("删除编排后清理资源历史失败，将在保留期到期后自动清理", "agent", r.AgentID, "name", r.Name, "err", e)
+	}
 	c.d.Log.Info("删除编排", "agent", r.AgentID, "name", r.Name, "下发成功", true)
 	return &api.DeleteRes{Name: r.Name, SyncOK: true, SyncHint: "", Result: comp.SyncResult(res, true), ConfigHash: rec.ConfigHash}, nil
 }

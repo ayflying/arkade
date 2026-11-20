@@ -72,6 +72,13 @@ func (c *Controller) ContainerRemove(ctx context.Context, req *api.ContainerRemo
 	if err != nil {
 		return nil, controller.ConnectionError(err)
 	}
+	// 容器没了，它的资源历史就是没有任何入口能看到的残留。
+	// 请求里的引用可能是完整 ID、短 ID 或容器名，清理时三种都匹配。
+	if c.deps.DB != nil {
+		if e := c.deps.DB.DeleteMonitorSamplesForContainer(ctx, req.AgentID, req.ContainerID); e != nil && c.deps.Log != nil {
+			c.deps.Log.Error("删除容器后清理资源历史失败，将在保留期到期后自动清理", "agent", req.AgentID, "container", req.ContainerID, "err", e)
+		}
+	}
 	return &api.ContainerOpRes{ContainerID: out.ContainerID, State: out.State}, nil
 }
 

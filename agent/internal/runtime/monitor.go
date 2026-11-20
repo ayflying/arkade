@@ -24,11 +24,13 @@ type MonitorSnapshot struct {
 	Complete   bool
 	Error      string
 }
+// ContainerMetric 的 Project 是容器所属的 compose 项目名；非 compose 容器为空。
 type ContainerMetric struct {
 	inspectAvailable                                                bool
 	networkMode                                                     string
 	NetworkAvailable, BlockAvailable                                bool
 	ID, Name, Image, State, Health                                  string
+	Project                                                         string
 	ExitCode, RestartCount                                          int
 	StartedAt, FinishedAt                                           int64
 	CPUPercent                                                      float64
@@ -42,6 +44,44 @@ type ContainerMetric struct {
 const monitorMaxContainers = 2000
 const monitorTimeout = 15 * time.Second
 const monitorBodyLimit = 16 << 20
+
+// labelMonitorComposeProject 是 compose 写在容器上的项目名标签。
+// 监控只用它判定"属于哪个已接管项目"，绝不把标签原文回传 Hub。
+const labelMonitorComposeProject = "com.docker.compose.project"
+
+// monitorListedContainer 只声明列表接口里需要的字段。Labels 只取项目标签，
+// 不解析镜像、环境等敏感内容。
+type monitorListedContainer struct {
+	ID     string            `json:"Id"`
+	Names  []string          `json:"Names"`
+	Image  string            `json:"Image"`
+	State  string            `json:"State"`
+	Labels map[string]string `json:"Labels"`
+}
+
+// scopeContainers 按 compose 项目收窄采集列表。
+//
+// nil 与空切片的含义必须区分：nil 表示调用方没有下发范围（旧 Hub、或内部
+// 全量调用），保留全部；非 nil（含空切片）表示"只采这些"，没有项目标签的
+// 容器一并排除——这正是"只监听 Arkade 接管过的容器"的落点。
+func scopeContainers(list []monitorListedContainer, projects []string) []monitorListedContainer {
+	if projects == nil {
+		return list
+	}
+	allowed := make(map[string]bool, len(projects))
+	for _, p := range projects {
+		if p != "" {
+			allowed[p] = true
+		}
+	}
+	out := make([]monitorListedContainer, 0, len(list))
+	for _, c := range list {
+		if allowed[c.Labels[labelMonitorComposeProject]] {
+			out = append(out, c)
+		}
+	}
+	return out
+}
 
 // MonitorCollector 的缓存仅属于当前处理器，不使用全局表，不持有 inspect 内容。
 type MonitorCollector struct {
@@ -131,22 +171,21 @@ func (c *client) monitorGet(ctx context.Context, path string, out any) error {
 }
 
 // Snapshot 使用固定四个 worker；包括排队时间在内由请求上下文控制。
-func (m *MonitorCollector) Snapshot(ctx context.Context) MonitorSnapshot {
+// projects 为 nil 时采集全部容器，非 nil 时只采集这些 compose 项目的容器。
+func (m *MonitorCollector) Snapshot(ctx context.Context, projects []string) MonitorSnapshot {
 	ctx, cancel := context.WithTimeout(ctx, monitorTimeout)
 	defer cancel()
 	out := MonitorSnapshot{At: time.Now().Unix(), Containers: []ContainerMetric{}, Complete: true}
 	// 列表只声明必要字段，避免存储 Labels、Env 等无关信息。
-	var list []struct {
-		ID    string   `json:"Id"`
-		Names []string `json:"Names"`
-		Image string   `json:"Image"`
-		State string   `json:"State"`
-	}
+	var list []monitorListedContainer
 	if err := m.engine.client.monitorGet(ctx, pathContainers+"?all=1", &list); err != nil {
 		out.Complete = false
 		out.Error = err.Error()
 		return out
 	}
+	// 先按项目收窄再套上限：上限约束的是"实际要采的容器数"，
+	// 否则宿主机上无关容器多的时候会把采集名额挤掉。
+	list = scopeContainers(list, projects)
 	if len(list) > monitorMaxContainers {
 		list = list[:monitorMaxContainers]
 		out.Complete = false
@@ -154,7 +193,7 @@ func (m *MonitorCollector) Snapshot(ctx context.Context) MonitorSnapshot {
 	}
 	out.Containers = make([]ContainerMetric, len(list))
 	for i, c := range list {
-		out.Containers[i] = ContainerMetric{ID: c.ID, Name: firstContainerName(c.Names), Image: c.Image, State: c.State, Error: "stats unavailable: not collected"}
+		out.Containers[i] = ContainerMetric{ID: c.ID, Name: firstContainerName(c.Names), Image: c.Image, State: c.State, Project: c.Labels[labelMonitorComposeProject], Error: "stats unavailable: not collected"}
 	}
 	jobs := make(chan int)
 	var wg sync.WaitGroup

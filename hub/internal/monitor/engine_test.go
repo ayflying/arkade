@@ -17,7 +17,7 @@ type fakeSource struct {
 }
 
 func (f *fakeSource) Agents(context.Context) ([]Agent, error) { return f.agents, nil }
-func (f *fakeSource) Snapshot(context.Context, string) (envelope.MonitorSnapshot, error) {
+func (f *fakeSource) Snapshot(context.Context, string, []string) (envelope.MonitorSnapshot, error) {
 	f.calls++
 	return f.snapshot, f.err
 }

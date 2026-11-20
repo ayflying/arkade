@@ -1,6 +1,9 @@
 package v1
 
-import "github.com/gogf/gf/v2/frame/g"
+import (
+	"arkade/hub/internal/store"
+	"github.com/gogf/gf/v2/frame/g"
+)
 
 type ContainerMetricsReq struct {
 	g.Meta  `path:"/api/agents/{agentID}/container-metrics" method:"get" tags:"Resources"`
@@ -11,6 +14,26 @@ type ContainerMetricsRes struct {
 	AgentID           string            `json:"agent_id"`
 	StaleAfterSeconds int64             `json:"stale_after_seconds"`
 	Containers        []ContainerMetric `json:"containers"`
+}
+
+// ContainerMetricHistoryReq 查询单个容器的资源历史。
+// from/to 是 Unix 秒，服务端会限制在保留期内并把跨度降采样到点数上限。
+type ContainerMetricHistoryReq struct {
+	g.Meta      `path:"/api/agents/{agentID}/containers/{containerID}/metrics/history" method:"get" tags:"Resources"`
+	AgentID     string `json:"-" in:"path"`
+	ContainerID string `json:"-" in:"path"`
+	From        int64  `json:"from" in:"query"`
+	To          int64  `json:"to" in:"query"`
+}
+
+type ContainerMetricHistoryRes struct {
+	AgentID       string                     `json:"agent_id"`
+	ContainerID   string                     `json:"container_id"`
+	From          int64                      `json:"from"`
+	To            int64                      `json:"to"`
+	BucketSeconds int64                      `json:"bucket_seconds"`
+	RetentionDays int                        `json:"retention_days"`
+	Points        []store.MonitorSamplePoint `json:"points"`
 }
 
 // ContainerMetric is a whitelist of the latest container measurements. Optional

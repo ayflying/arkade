@@ -79,7 +79,7 @@ func TestProductionLocalExecutorNone(t *testing.T) {
 	if err != nil || len(agents) != 1 || agents[0].ID != store.LocalAgentID || !agents[0].Online {
 		t.Fatalf("监控源未看到在线本机: %+v %v", agents, err)
 	}
-	snapshot, err := source.Snapshot(ctx, store.LocalAgentID)
+	snapshot, err := source.Snapshot(ctx, store.LocalAgentID, nil)
 	if err == nil && snapshot.Error == "" {
 		t.Fatalf("none 监控必须明确不可用: %+v", snapshot)
 	}
