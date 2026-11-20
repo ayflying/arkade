@@ -74,7 +74,10 @@ function openDeployModal(): void {
       {{ config.error.value }} <n-button size="tiny" @click="config.load">重新加载</n-button>
     </n-alert>
     <template v-else-if="config.loaded.value">
-      <div class="config-panel__meta">{{ config.dirty.value ? '有未保存的修改' : '内容与 Hub 一致' }} · 版本 v{{ config.version.value }}</div>
+      <div class="config-panel__meta">
+        {{ config.dirty.value ? '有未保存的修改' : config.savedPendingDeploy.value ? '配置已保存到 Hub · 待确认部署' : '内容与 Hub 一致' }}
+        <template v-if="!config.savedPendingDeploy.value"> · 版本 v{{ config.version.value }}</template>
+      </div>
       <n-alert v-if="config.saveError.value" type="error">{{ config.saveError.value }}</n-alert>
       <n-alert v-if="config.syncWarning.value" type="warning">{{ config.syncWarning.value }}</n-alert>
       <label for="managed-compose">compose.yml</label>
@@ -127,6 +130,7 @@ function openDeployModal(): void {
       :expected-config-hash="config.pendingDeploy.value?.expectedConfigHash"
       auto-start
       @finished="handleDeployFinished"
+      @config-saved="config.handleSavedPendingDeploy"
       @busy="config.setDeployBusy"
       @update:show="handleDeployShow"
     />

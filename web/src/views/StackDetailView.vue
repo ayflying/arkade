@@ -72,7 +72,7 @@ function back() { void router.push({ name: 'agent-stacks', params: { id: agentId
             <stack-containers-table v-else :containers="detail.containers.value" :agent-id="agentId ?? ''" :direct-address="agent?.direct_address ?? ''" />
           </n-tab-pane>
           <n-tab-pane name="config" tab="配置" display-directive="show:lazy">
-            <managed-stack-config-panel v-if="managed" :key="projectKey + ':managed'" :agent-id="agentId ?? ''" :stack-name="stackName" @changed="detail.load" />
+            <managed-stack-config-panel v-if="managed" :key="projectKey + ':managed'" :agent-id="agentId ?? ''" :stack-name="stackName" :online="isOnline" @changed="detail.load" />
             <external-stack-config-section v-else :key="projectKey + ':external'" :agent-id="agentId ?? ''" :stack-name="stackName" :online="isOnline" @changed="detail.load" />
           </n-tab-pane>
           <n-tab-pane name="logs" tab="日志">

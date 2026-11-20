@@ -519,6 +519,7 @@ const config = read('src/composables/useManagedStackConfig.ts')
       start: async () => {
         const err = new Error('配置已保存，尚未执行；同请求重试')
         err.status = 503
+        err.code = 'config_saved_deploy_unconfirmed'
         throw err
       },
       fetch: async () => types.normalizeOperationTask({ task_id: 'B' }),
@@ -534,6 +535,15 @@ const config = read('src/composables/useManagedStackConfig.ts')
   )
   check('503(保存类): 提示点明已保存', /已保存/.test(r503.errorText.value), r503.errorText.value)
   r503.dispose()
+
+  const proxy503 = track(useStackOperationTask({
+    start: async () => { throw Object.assign(new Error('gateway unavailable'), { status: 503 }) },
+    fetch: async () => types.normalizeOperationTask({ task_id: 'proxy' }),
+    savesConfig: true
+  }))
+  await proxy503.start()
+  check('普通网关 503 不等于 Hub 已保存', !proxy503.savedNotDeployed.value && proxy503.uncertain.value)
+  proxy503.dispose()
 }
 
 {

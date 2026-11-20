@@ -468,7 +468,7 @@ const managedActionsSrc = source('components/stack/ManagedStackActions.vue')
 /* 保存与所有动作都改走操作任务，冲突/确认/删卷文案在任务层与弹窗里 */
 const opTaskSrc = source('composables/useStackOperationTask.ts')
 const opModalSrc = source('components/stack/StackOperationModal.vue')
-check('配置: env 三态通过真实 payload builder，未变省略/空串清空/新值替换', /env !== originalEnv \? \{ env_content: env \} : \{\}/.test(managedConfigSrc) && /managedUpdatePayload\(content.value, version.value, envContent.value, originalEnv.value\)/.test(managedConfigSrc))
+check('配置: env 三态通过真实 payload builder，未变省略/空串清空/新值替换', /env !== originalEnv \? \{ env_content: env \} : \{\}/.test(managedConfigSrc) && /managedUpdatePayload\(content.value, version.value, savedEnv, originalEnv.value\)/.test(managedConfigSrc))
 check('配置: env 编辑器仍接入且保存时锁定', /<stack-env-editor v-model="config.envContent.value" :disabled="config.saving.value"/.test(managedPanelSrc))
 /*
  * .env 展开后默认是打码态，打码态下**没有输入框**。

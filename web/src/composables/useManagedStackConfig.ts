@@ -16,6 +16,7 @@ export function useManagedStackConfig(agentId: string, name: string, changed: ()
   const error = ref(''), saveError = ref(''), syncWarning = ref('')
   /** 是否显示「保存并部署」执行弹窗 */
   const deployShow = ref(false)
+  const savedPendingDeploy = ref(false)
   /**
    * 部署任务是否仍在执行。
    *
@@ -49,11 +50,22 @@ export function useManagedStackConfig(agentId: string, name: string, changed: ()
   const pendingDeploy = ref<{
     content: string
     envContent: string | undefined
+    savedEnv: string
     version: number
     expectedConfigHash: string | undefined
   } | null>(null)
   let seq = 0, alive = true
   const dirty = computed(() => content.value !== originalContent.value || envContent.value !== originalEnv.value)
+
+  function handleSavedPendingDeploy(): void {
+    const submitted = pendingDeploy.value
+    if (submitted === null || savedPendingDeploy.value) return
+    // 只对齐已保存的快照，保留新编辑，并继续用原 request_id 确认部署。
+    originalContent.value = submitted.content
+    originalEnv.value = submitted.savedEnv
+    savedPendingDeploy.value = true
+    changed()
+  }
   async function load() {
     const mine = ++seq
     loading.value = true
@@ -89,7 +101,8 @@ export function useManagedStackConfig(agentId: string, name: string, changed: ()
      * 快照提交的内容：确认对话框之后的编辑不能影响这一次请求。
      * env 只在真的改过时才带上（undefined = 保留 Hub 上原文件）。
      */
-    const payload = managedUpdatePayload(content.value, version.value, envContent.value, originalEnv.value)
+    const savedEnv = envContent.value
+    const payload = managedUpdatePayload(content.value, version.value, savedEnv, originalEnv.value)
     try {
       if (
         !(await confirmAction({
@@ -112,10 +125,12 @@ export function useManagedStackConfig(agentId: string, name: string, changed: ()
        */
       deployGeneration.value += 1
       deploySettled.value = false
+      savedPendingDeploy.value = false
       deployAttempted.value = true
       pendingDeploy.value = {
         content: payload.content,
         envContent: payload.env_content,
+        savedEnv,
         version: payload.version,
         // 当前没有独立的内容哈希来源；留空表示不做额外内容校验
         expectedConfigHash: undefined
@@ -151,6 +166,7 @@ export function useManagedStackConfig(agentId: string, name: string, changed: ()
      * 之后用户再改内容点保存，才允许换 generation 起新任务。
      */
     deploySettled.value = true
+    savedPendingDeploy.value = false
 
     if (succeeded) {
       /*
@@ -257,6 +273,8 @@ export function useManagedStackConfig(agentId: string, name: string, changed: ()
     syncWarning,
     dirty,
     deployShow,
+    savedPendingDeploy,
+    handleSavedPendingDeploy,
     pendingDeploy,
     load,
     save,

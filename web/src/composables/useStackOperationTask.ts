@@ -347,11 +347,11 @@ export function useStackOperationTask(options: StackOperationRunnerOptions) {
         permanentError.value = true
         errorText.value = '配置已被他人修改，本次内容未提交。请先复制当前修改，再重新加载配置。'
       } else if (httpStatus(err) === 503) {
-        if (options.savesConfig === true) {
+        if (options.savesConfig === true && (err as { code?: string } | null)?.code === 'config_saved_deploy_unconfirmed') {
           /*
            * 保存类请求（up+content / create）：Hub 先持久化配置再下发，
-           * 503 通常意味着配置已入库但执行没成。必须明确告诉用户
-           * "已保存"，否则他会以为刚写的 YAML 白写了而重新编辑一遍。
+           * 只有 Hub 明确确认已持久化才显示「已保存」；代理返回的普通 503
+           * 不代表请求到过 Hub。
            */
           savedNotDeployed.value = true
           errorText.value =

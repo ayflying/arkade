@@ -68,12 +68,16 @@ const props = withDefaults(defineProps<Props>(), {
 const emit = defineEmits<{
   (e: 'update:show', value: boolean): void
   (e: 'finished', task: unknown): void
+  (e: 'config-saved'): void
   (e: 'removed'): void
   /** 该动作是否有任务正在执行（父级据此禁用冲突动作） */
   (e: 'busy', value: boolean): void
 }>()
 
 const meta = computed(() => STACK_OPERATION_META[props.action])
+const savesConfig = computed(() => props.action === 'up' && (props.create || props.content !== undefined || props.envContent !== undefined))
+// 保存由 Hub 完成；Agent 离线只影响后续部署，不应阻止提交配置。
+const canSubmit = computed(() => props.online || savesConfig.value)
 
 /** 删除时是否同时删卷：弹窗内的勾选（外部初值可被用户改） */
 const removeVolumesLocal = ref(props.removeVolumes)
@@ -143,7 +147,7 @@ const runner = useStackOperationTask({
    * 只有 up 带内容（保存并部署）或新建才会把配置写进 Hub。
    * 其余动作的 503 只是"不知道有没有跑"，不能说成"配置已保存"。
    */
-  savesConfig: props.create || (props.action === 'up' && props.content !== undefined)
+  savesConfig: savesConfig.value
 })
 
 const {
@@ -160,6 +164,8 @@ const {
   savedNotDeployed,
   errorText
 } = runner
+
+watch(savedNotDeployed, (saved) => { if (saved) emit('config-saved') })
 
 /** 终态后重跑需确认 */
 const showNewTaskConfirm = ref(false)
@@ -186,7 +192,7 @@ const phaseText = computed(() => {
     case 'blocked':
       return '状态未知'
     default:
-      return '尚未开始'
+      return savedNotDeployed.value ? '已保存 · 待确认部署' : '尚未开始'
   }
 })
 
@@ -294,7 +300,7 @@ function onShow(): void {
     hasTask: task.value !== null,
     taskFinished: runner.finished.value,
     startAttempted: runner.hasStartAttempted(),
-    autoStart: props.autoStart && props.online,
+    autoStart: props.autoStart && canSubmit.value,
     autoStarted,
     /*
      * 「更新部署」再点一次要重新检查一次：上一次的结论（有没有新版本）
@@ -429,10 +435,11 @@ function close(): void {
  */
 const canStart = computed(
   () =>
-    props.online &&
+    canSubmit.value &&
     !starting.value &&
     phase.value !== 'starting' &&
     !uncertain.value &&
+    !savedNotDeployed.value &&
     (task.value === null || runner.finished.value)
 )
 
@@ -455,8 +462,8 @@ const logLabel = computed(() => `「${props.stackName}」${meta.value.label}的�
       {{ meta.description }}
     </n-alert>
 
-    <n-alert v-if="!props.online && task === null" type="warning" :bordered="false" class="op-modal__alert">
-      服务器当前离线，无法执行该操作。恢复在线后可以再试。
+    <n-alert v-if="!props.online && task === null && !savedNotDeployed" type="warning" :bordered="false" class="op-modal__alert">
+      {{ savesConfig ? '服务器当前离线，仍可向 Hub 提交配置；部署需等服务器恢复在线后重试。' : '服务器当前离线，无法执行该操作。恢复在线后可以再试。' }}
     </n-alert>
 
     <!-- 删除选项：删卷是不可逆的，勾选必须在弹窗里可见可控 -->
@@ -579,7 +586,7 @@ const logLabel = computed(() => `「${props.stackName}」${meta.value.label}的�
         {{ task === null ? `开始${meta.label}` : `重新执行${meta.label}` }}
       </n-button>
       <n-button
-        v-else-if="uncertain"
+        v-else-if="uncertain || (savedNotDeployed && props.online)"
         type="primary"
         size="small"
         :loading="starting"

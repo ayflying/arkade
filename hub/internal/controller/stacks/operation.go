@@ -148,7 +148,7 @@ func (c *Controller) StartOperation(ctx context.Context, r *api.StartOperationRe
 		result, ce := c.d.Ops.ComposeOperationStart(ctx, r.AgentID, payload)
 		if ce != nil {
 			if save {
-				return nil, controller.Failure(ce.Code, "配置已保存，尚未确认执行；请使用同一请求重试确认任务")
+				return nil, controller.Failure("config_saved_deploy_unconfirmed", "配置已保存，尚未确认执行；请使用同一请求重试确认任务").WithErr(ce)
 			}
 			return nil, controller.ConnectionError(ce)
 		}

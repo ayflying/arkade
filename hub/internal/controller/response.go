@@ -38,7 +38,7 @@ func Failure(code, message string) *Error {
 		status = http.StatusBadRequest
 	case "conflict":
 		status = http.StatusConflict
-	case "agent_offline", "timeout", "agent_busy", "runtime_failed":
+	case "agent_offline", "timeout", "agent_busy", "runtime_failed", "config_saved_deploy_unconfirmed":
 		status = http.StatusServiceUnavailable
 	case "unsupported":
 		status = http.StatusNotImplemented

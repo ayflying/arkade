@@ -312,6 +312,8 @@ function check(name, ok, detail) {
 
   check('组件: 引入决策函数', /import \{[^}]*decideEntry[^}]*\} from '@\/utils\/stackOperationEntry'/.test(modal))
   check('组件: 调用 decideEntry', /decideEntry\(\{/.test(modal))
+  check('组件: 离线时仅带配置的 up 允许提交', /props\.action === 'up' && \(props\.create \|\| props\.content !== undefined \|\| props\.envContent !== undefined\)/.test(modal) && /props\.online \|\| savesConfig\.value/.test(modal) && /autoStart: props\.autoStart && canSubmit\.value/.test(modal))
+  check('组件: 已保存待部署走同请求重试', /savedNotDeployed && props\.online/.test(modal) && /@click="handleRetryConfirm"/.test(modal))
   check('组件: 调用 shouldSnapshot 守快照', /if \(shouldSnapshot\(action\)\) \{/.test(modal))
 
   /*

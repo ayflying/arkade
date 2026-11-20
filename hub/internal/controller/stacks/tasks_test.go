@@ -2,6 +2,7 @@ package stacks
 
 import (
 	api "arkade/hub/api/stacks/v1"
+	"arkade/hub/internal/controller"
 	"arkade/hub/internal/stackmigrate"
 	"arkade/hub/internal/store"
 	"arkade/protocol/envelope"
@@ -21,6 +22,9 @@ func TestOperationValidationAndSavedOfflineRetry(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		_, e = c.StartOperation(bodyCtx(p), &api.StartOperationReq{AgentID: "agent", Name: "app"})
 		wantError(t, e, 503, "配置已保存，尚未确认执行；请使用同一请求重试确认任务")
+		if e.(*controller.Error).Code != "config_saved_deploy_unconfirmed" {
+			t.Fatalf("expected confirmed persistence error, got %v", e)
+		}
 	}
 	rec, e := db.GetComposeStack(context.Background(), "agent", "app")
 	if e != nil || rec.Version != 1 || rec.EnvContent != "PASSWORD=secret" {
