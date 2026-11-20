@@ -9,7 +9,7 @@ import "github.com/gogf/gf/v2/frame/g"
 // `docker compose up` 用的是**编排文件里写的镜像 tag**，不是调用方传的值。
 // 因此"更新到哪个版本"由用户自己的 compose.yml 决定：
 //   - 写 `:latest` → 拉到最新；
-//   - 固定 `:0.0.24` → 只会重新拉 0.0.24（版本不会变，前端据此提示用户改 tag）。
+//   - 固定 `:0.0.24` → 只会重新拉 0.0.24（不保证运行版本变化）。
 //
 // 在这里加一个 tag 参数会产生"我选了 0.0.25 但它没生效"的假象，
 // 比没有这个参数更糟。
@@ -43,4 +43,16 @@ type SelfUpdateRes struct {
 
 	// Message 后端写好的中文说明，直接展示，不要在前端重拼。
 	Message string `json:"message"`
+}
+
+// SelfUpdateStatusReq 根据请求 ID 查询独立更新助手，Hub 重启后仍可查询。
+type SelfUpdateStatusReq struct {
+	g.Meta    `path:"/api/agents/{agentID}/self-update/{requestID}" method:"get" tags:"Agents" summary:"查询服务器组件更新结果"`
+	AgentID   string `json:"-" in:"path"`
+	RequestID string `json:"-" in:"path"`
+}
+
+type SelfUpdateStatusRes struct {
+	State   string `json:"state"`
+	Message string `json:"message,omitempty"`
 }

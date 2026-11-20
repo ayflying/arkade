@@ -50,9 +50,24 @@ func (c *Controller) SelfUpdate(ctx context.Context, req *api.SelfUpdateReq) (*a
 	}
 
 	requestID := newSelfUpdateRequestID()
-	out, cerr := c.d.Registry.SelfUpdate(ctx, req.AgentID, envelope.SelfUpdatePayload{
-		RequestID: requestID,
-	})
+	payload := envelope.SelfUpdatePayload{RequestID: requestID}
+	if c.d.Registry.IsLocal(req.AgentID) {
+		// 先让本机执行器确认自身项目；不能相信浏览器提供的项目名，
+		// 也不把 Hub 保存的 .env 发给任何远程 Agent。
+		probe, cerr := c.d.Registry.SelfUpdate(ctx, req.AgentID, envelope.SelfUpdatePayload{Probe: true})
+		if cerr != nil {
+			return nil, controller.ConnectionError(cerr)
+		}
+		if len(probe.Blockers) > 0 || probe.Project == "" {
+			return &api.SelfUpdateRes{Blockers: probe.Blockers, Message: "无法确认本机所属的 Docker Compose 编排"}, nil
+		}
+		managed, err := c.selfUpdateManagedConfig(ctx, req.AgentID, probe.Project)
+		if err != nil {
+			return nil, err
+		}
+		payload.Managed = managed
+	}
+	out, cerr := c.d.Registry.SelfUpdate(ctx, req.AgentID, payload)
 	if cerr != nil {
 		return nil, controller.ConnectionError(cerr)
 	}

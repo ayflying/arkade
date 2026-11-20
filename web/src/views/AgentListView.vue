@@ -28,11 +28,12 @@ import PageHeader from '@/components/common/PageHeader.vue'
 import { agentRowProps, createAgentColumns } from '@/composables/agentColumns'
 import { usePolling } from '@/composables/usePolling'
 import { useResponsiveColumns } from '@/utils/responsiveColumns'
-import { deleteAgent, disableAgent, enableAgent, resetAgentToken, selfUpdateAgent } from '@/api/agents'
+import { deleteAgent, disableAgent, enableAgent, getAgentSelfUpdateStatus, listAgents, resetAgentToken, selfUpdateAgent } from '@/api/agents'
 import { useAgentsStore } from '@/stores/agents'
 import type { Agent, CreateAgentResponse, Enrollment } from '@/types/agent'
 import { ApiError } from '@/types/api'
 import { agentDisplayName, isAgentDisabled } from '@/utils/agentDisplay'
+import { isSelfUpdateSubmissionUnconfirmed, watchAgentSelfUpdate } from '@/utils/agentSelfUpdate'
 import { confirmAction } from '@/utils/confirm'
 import { toastError, toastSuccess, toastWarning } from '@/utils/feedback'
 
@@ -43,6 +44,8 @@ const router = useRouter()
 const enteringId = ref('')
 /** 正在执行写操作的 agentId（删除/禁用/启用/重置密钥/更新），用于行按钮 loading 与防连点 */
 const busyId = ref('')
+/** 切走页面只停止观察，不会取消已经提交的更新。 */
+const selfUpdateObserver = new AbortController()
 
 /** 编辑弹窗 */
 const editShow = ref(false)
@@ -232,22 +235,7 @@ async function handleDelete(agent: Agent): Promise<void> {
   }
 }
 
-/**
- * 更新这台服务器上的 Arkade 组件镜像（自更新）。
- *
- * ============================ 为什么这个流程看起来很绕 ============================
- *
- * 更新会把目标容器**重建**掉：
- * - 目标是内置本机时，重建的正是 Hub 自己 → 这个请求的应答可能根本发不出去；
- * - 所以**不能**按「接口成功 = 更新成功」来做，否则本机永远显示失败。
- *
- * 正确的判断是：**它有没有带着新版本重新上线**。因此流程是：
- * 提交 → 提示「正在更新」 → 轮询列表直到它回来 → 比对版本。
- *
- * 另一个必须讲清楚的点：`docker compose up` 用的是**编排文件里写的镜像 tag**。
- * 如果用户把 tag 固定成了某个旧版本，更新完版本不会变——这不是失败，
- * 而是需要他去改 tag。所以版本没变时要给这条提示，而不是让他反复点。
- */
+/** 提交只代表受理；结合助手结果和服务器版本确认本次更新。 */
 async function handleSelfUpdate(agent: Agent): Promise<void> {
   if (busyId.value !== '') return
   const name = agentDisplayName(agent)
@@ -260,87 +248,65 @@ async function handleSelfUpdate(agent: Agent): Promise<void> {
     title: `确认更新服务器「${name}」的 Arkade 组件？`,
     content:
       '将拉取该服务器编排文件中声明的镜像，并重建 Arkade 自己的容器。\n\n' +
-      '过程中与这台服务器的连接会中断约 10～30 秒，期间页面上的操作不可用，' +
-      '恢复后会自动重新连上。\n\n' +
-      '你的容器、数据卷与编排配置都不会被删除；如果镜像拉取失败，' +
-      '旧容器会保持原样不动。',
+      '过程中与这台服务器的连接可能短暂中断，恢复后页面会继续检查更新结果。\n\n' +
+      '你的容器、数据卷与编排配置都不会被删除；如果镜像拉取失败，旧容器会保持原样不动。',
     positiveText: '开始更新',
     negativeText: '取消'
   })
-  if (!confirmed) return
+  const signal = selfUpdateObserver.signal
+  if (!confirmed || signal.aborted || busyId.value !== '') return
 
   busyId.value = agent.id
-  const beforeVersion = agent.version
+  const beforeVersion = store.findById(agent.id)?.version || agent.version
   try {
-    const res = await selfUpdateAgent(agent.id)
-
-    // 部署方式不支持（例如不是用 compose 启动的）：后端给了明确原因，原样展示
-    if (!res.accepted) {
-      toastError(res.blockers.length > 0 ? res.blockers.join('；') : res.message || '当前部署方式不支持自更新')
-      return
+    let requestId: string | undefined
+    try {
+      const res = await selfUpdateAgent(agent.id)
+      if (signal.aborted) return
+      if (!res.accepted) {
+        toastError(res.blockers?.join('；') || res.message || '更新请求未被受理')
+        return
+      }
+      requestId = res.request_id || undefined
+      toastSuccess(`「${name}」的更新请求已受理，正在确认结果。`)
+    } catch (err) {
+      if (signal.aborted) return
+      if (!(err instanceof ApiError && isSelfUpdateSubmissionUnconfirmed(err.status, err.code))) {
+        toastError(err instanceof ApiError ? err.message : '提交更新请求失败')
+        return
+      }
+      // 自更新 Hub 可能打断 POST 应答。没有请求 ID，只观察版本，不能重发写请求。
+      toastWarning(`「${name}」的更新请求未收到确认，正在检查运行版本。`)
     }
 
-    void watchSelfUpdate(agent.id, name, beforeVersion)
-  } catch (err) {
-    /*
-     * 请求失败**不等于**更新没开始：本机更新时 Hub 正在被重建，
-     * 连接被重置完全正常。因此这里不报错，而是照常进入观察流程，
-     * 由「它是否带着新版本回来」给出最终结论。
-     * 只有在服务器随即消失且长时间不回来时，观察流程才会提示失败。
-     */
-    if (err instanceof ApiError && err.status === 409) {
-      // 409 是后端明确拒绝（离线/禁用），这类才是真的没开始
-      toastError(err.message)
-      return
+    const result = await watchAgentSelfUpdate({
+      agentId: agent.id,
+      beforeVersion,
+      requestId,
+      signal,
+      loadAgents: (readSignal) => listAgents({ signal: readSignal, cache: 'no-store' }),
+      loadStatus: (id, readSignal) => getAgentSelfUpdateStatus(agent.id, id, readSignal)
+    })
+    if (signal.aborted) return
+    switch (result.kind) {
+      case 'updated':
+        store.replace(result.agent)
+        toastSuccess(`「${name}」已更新：${beforeVersion} → ${result.agent.version}`)
+        break
+      case 'failed':
+        toastError(`「${name}」更新失败：${result.message || '更新助手执行失败，请查看更新日志。'}`)
+        break
+      case 'unconfirmed': {
+        const detail = result.helperSucceeded ? '更新助手已执行完毕，但' : ''
+        const version = result.lastObservedVersion ? `（最后一次观测到的在线版本：${result.lastObservedVersion}）` : ''
+        toastWarning(`「${name}」${detail}2 分钟内未确认新版本上线${version}，请刷新页面查看。`)
+        break
+      }
     }
-    void watchSelfUpdate(agent.id, name, beforeVersion)
   } finally {
+    // 整个观察流程占用操作锁，避免还在拉镜像时再次提交更新。
     busyId.value = ''
   }
-}
-
-/**
- * 观察一次自更新的结果。
- *
- * 独立成一个函数而不是写在 handleSelfUpdate 里，是因为它会在**请求已经结束之后**
- * 继续跑：更新本机时 Hub 会重启，这一轮的连接必然中断，
- * 只有等它重新上来才能下结论。
- *
- * 按 **agentId** 找回同一台服务器，而不是按显示名：
- * 观察期间用户可能顺手改了名字，按名字找会认错行。
- */
-async function watchSelfUpdate(agentId: string, name: string, beforeVersion: string): Promise<void> {
-  toastSuccess(`已开始更新「${name}」，连接会短暂中断；恢复后页面会自动刷新。`)
-
-  // 轮询列表：直到该服务器重新在线，或超时。
-  // 60 次 × 2 秒 = 2 分钟，足够覆盖镜像拉取较慢的情况；
-  // 再久也不该无限转下去，超时后交回给用户手动刷新。
-  const maxAttempts = 60
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 2000))
-    const ok = await store.refresh()
-    if (!ok) continue
-    const latest = store.agents.find((a) => a.id === agentId)
-    // 服务器还在重建中：列表里看不到它，或它还没重新连上，继续等
-    if (!latest || latest.status !== 'online') continue
-
-    if (latest.version && beforeVersion && latest.version !== beforeVersion) {
-      toastSuccess(`「${name}」已更新：${beforeVersion} → ${latest.version}`)
-      return
-    }
-    /*
-     * 重新上线但版本没变。最常见的原因是编排文件里把镜像 tag 固定成了旧版本：
-     * `docker compose up` 只会去拉那个 tag，自然不会升级。
-     * 必须把这条原因说出来，否则用户会以为按钮坏了。
-     */
-    toastWarning(
-      `「${name}」已重新上线，但版本仍然是 ${latest.version || '未知'}。` +
-      '如果那里把镜像 tag 固定成了具体版本号，请改成 latest 或新版本号后再更新一次。'
-    )
-    return
-  }
-
-  toastWarning(`「${name}」超过 2 分钟仍未重新上线，请刷新页面查看；若持续失败可在服务器上手动重建。`)
 }
 
 /**
@@ -502,13 +468,14 @@ usePolling(
 )
 
 /**
- * 卸载时清空密钥。
+ * 卸载时停止自更新观察，并清空密钥。
  *
  * 用户可能在密钥还显示着的时候切走页面（前进/后退/点别的菜单），
  * 此时组件被销毁但内存里的 ref 仍可能被闭包引用住，
  * 显式置空是零成本保险。
  */
 onUnmounted(() => {
+  selfUpdateObserver.abort()
   handleTokenClosed()
 })
 </script>

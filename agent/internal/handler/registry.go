@@ -203,6 +203,12 @@ func RegisterDefaultsFull(reg *Registry, rt runtime.Runtime, composeMgr *compose
 	registerAll(reg, rt, composeMgr, imageMgr, transferDir, log)
 }
 
+// RegisterEmbeddedSelfUpdate 仅供 Hub 的内嵌执行器在注册默认方法后启用。
+// 独立 Agent 仍可更新自己，但不接受含 Hub 本机密钥的纳管快照。
+func RegisterEmbeddedSelfUpdate(reg *Registry, rt runtime.Runtime) {
+	reg.Register(envelope.MethodSelfUpdate, newSelfUpdateHandler(rt, true))
+}
+
 // registerAll 是全部注册逻辑的唯一实现。
 func registerAll(reg *Registry, rt runtime.Runtime, composeMgr *compose.Manager,
 	imageMgr *imagetransfer.Manager, transferDir string, log *slog.Logger) {
@@ -275,7 +281,7 @@ func registerAll(reg *Registry, rt runtime.Runtime, composeMgr *compose.Manager,
 	// 同样只依赖运行时（要有引擎 socket 才能起一次性容器），与编排工作区无关，
 	// 因此注册在 composeMgr 提前返回之前——本机执行器即使没有编排工作区，
 	// 也仍然应该能更新自己。
-	reg.Register(envelope.MethodSelfUpdate, newSelfUpdateHandler(rt))
+	reg.Register(envelope.MethodSelfUpdate, newSelfUpdateHandler(rt, false))
 
 	if composeMgr == nil {
 		return

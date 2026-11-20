@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 
 	"arkade/agent/internal/runtime"
 	"arkade/protocol/envelope"
@@ -26,15 +27,24 @@ import (
 //
 // 与卷文件/配置来源一样属于"有引擎就能提供"的能力，因此注册在
 // composeMgr 分支之外；引擎不支持时由可选接口断言兜底成 unsupported。
-func newSelfUpdateHandler(rt runtime.Runtime) Handler {
+func newSelfUpdateHandler(rt runtime.Runtime, allowManaged bool) Handler {
+	var mu sync.Mutex
 	return func(ctx context.Context, payload []byte) (any, error) {
 		var p envelope.SelfUpdatePayload
+		// JSON 类型错误可能带上不可信的配置字段，统一返回固定诊断。
 		if err := decodePayloadInto(payload, &p); err != nil {
-			return nil, err
+			return nil, badRequestf("自更新载荷无效")
 		}
 		requestID := strings.TrimSpace(p.RequestID)
-		if requestID == "" {
+		if p.Probe {
+			if requestID != "" || p.Managed != nil {
+				return nil, badRequestf("探测不能携带更新请求 ID 或纳管配置")
+			}
+		} else if requestID == "" {
 			return nil, badRequestf("request_id 不能为空")
+		}
+		if p.Managed != nil && !allowManaged {
+			return nil, envelope.NewError(envelope.CodeUnsupported, "纳管配置自更新只能由 Hub 内嵌执行器执行")
 		}
 
 		cap, ok := rt.(runtime.SelfUpdateRuntime)
@@ -47,12 +57,21 @@ func newSelfUpdateHandler(rt runtime.Runtime) Handler {
 			return selfUpdateBlockerResult(err)
 		}
 
-		// 先清掉上一次失败留下的容器：它们占着名字，也可能还在
-		// 尝试重建。放在探测之后、创建之前，避免误删"正在跑的这一次"。
-		// 清理失败不影响本次更新（残留最多留到下次再清）。
-		_, _ = cap.CleanupSelfUpdateHelpers(ctx, "")
+		if p.Probe {
+			return envelope.SelfUpdateResult{Project: info.Project, Service: info.Service, CurrentImage: info.ImageRef}, nil
+		}
+		if p.Managed != nil && p.Managed.Project != info.Project {
+			return selfUpdateBlockerResult(&runtime.SelfUpdateBlocker{Reason: "纳管配置的项目与当前容器所属项目不一致，已拒绝自更新"})
+		}
 
-		name := runtime.SelfUpdateHelperName(requestID)
+		// 探测不加锁；只有清理与创建需要串行，避免另一请求在
+		// 本次 PUT 归档/启动的间隙把刚创建的助手当成残留。
+		mu.Lock()
+		defer mu.Unlock()
+		if err := ctx.Err(); err != nil {
+			return selfUpdateBlockerResult(err)
+		}
+		name := envelope.SelfUpdateHelperName(requestID)
 		id, err := cap.RunDetachedComposeUp(ctx, runtime.DetachedComposeUp{
 			ImageID:    info.ImageID,
 			Project:    info.Project,
@@ -61,6 +80,7 @@ func newSelfUpdateHandler(rt runtime.Runtime) Handler {
 			Service:    info.Service,
 			Name:       name,
 			RequestID:  requestID,
+			Managed:    p.Managed,
 		})
 		if err != nil {
 			return selfUpdateBlockerResult(err)

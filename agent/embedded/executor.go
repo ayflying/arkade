@@ -135,6 +135,7 @@ func newWithRuntime(ctx context.Context, opts Options, rt runtime.Runtime, dir s
 		mgr.SetLabelSource(src)
 	}
 	handler.RegisterDefaultsFull(e.reg, rt, mgr, image, filepath.Join(dir, imagetransfer.TransfersDirName()), log)
+	handler.RegisterEmbeddedSelfUpdate(e.reg, rt)
 	go func() { defer close(e.sweepDone); image.RunSweeper(root) }()
 	// 残留 helper 回收与独立 Agent 走的是同一套运行时和同一个回收器。
 	//

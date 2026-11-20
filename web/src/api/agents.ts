@@ -36,8 +36,8 @@ function agentPath(agentId: string): string {
 }
 
 /** 拉取全部 Agent 列表（首期无分页，后端一次性返回） */
-export async function listAgents(): Promise<Agent[]> {
-  const res = await httpGet<AgentListResponse>('/agents')
+export async function listAgents(init?: Pick<RequestInit, 'signal' | 'cache'>): Promise<Agent[]> {
+  const res = await httpGet<AgentListResponse>('/agents', init)
   // 兜底：后端异常返回 null 时不让页面拿到 undefined 崩在 .map 上
   return Array.isArray(res.agents) ? res.agents : []
 }
@@ -131,14 +131,8 @@ export async function enableAgent(agentId: string): Promise<Agent> {
  * ## 这是「受理」不是「完成」
  *
  * 更新会把目标容器重建掉（对内置本机而言就是重启 Hub 自己），
- * 因此**不可能**同步拿到成败：
- * - 请求可能正常返回 accepted=true，也可能因为 Hub 正在重启而直接断连；
- *   两种都可能是"已经开始了"，调用方不要因为抛错就断言失败。
- * - 真正的结果要靠列表轮询：看它是否带着**新的 version** 重新上线。
- *
- * 注意 `docker compose up` 用的是编排文件里写的镜像 tag，
- * 所以如果用户把 tag 固定成了某个旧版本，更新后版本不会变。
- * 这种情况不是 bug，必须在提示里讲清「去改 tag」而不是让用户反复点。
+ * 正常受理后可用 request_id 查询助手状态；如果 Hub 重启导致应答丢失，
+ * 只能轮询同一服务器的在线版本，不能据断连认定失败，也不能重发 POST。
  */
 export async function selfUpdateAgent(agentId: string): Promise<SelfUpdateAgentResponse> {
   const res = await httpPost<SelfUpdateAgentResponse>(`${agentPath(agentId)}/self-update`)
@@ -153,5 +147,22 @@ export async function selfUpdateAgent(agentId: string): Promise<SelfUpdateAgentR
       helper_container_name: '',
       message: '更新请求没有返回结果'
     }
+  )
+}
+
+export interface AgentSelfUpdateStatus {
+  state: 'pending' | 'running' | 'succeeded' | 'failed'
+  message?: string
+}
+
+/** 查询已受理的这一次更新；不用缓存的助手状态判断结果。 */
+export function getAgentSelfUpdateStatus(
+  agentId: string,
+  requestId: string,
+  signal?: AbortSignal
+): Promise<AgentSelfUpdateStatus> {
+  return httpGet<AgentSelfUpdateStatus>(
+    `${agentPath(agentId)}/self-update/${encodeURIComponent(requestId)}`,
+    { signal, cache: 'no-store' }
   )
 }

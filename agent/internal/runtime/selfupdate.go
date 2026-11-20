@@ -16,11 +16,10 @@ package runtime
 // 这个 helper 必须能操作编排（要有 socket、要能看到编排目录），
 // 权限实际上接近宿主机管理员。因此本文件坚守三条：
 //
-//  1. **命令写死**：只可能是 `compose up -d --no-deps --pull always <service>`，
-//     不存在任何"把调用方传进来的命令拿去执行"的代码路径；
-//  2. **参数白名单**：服务名、项目名、目录、配置文件全部来自容器标签，
-//     且逐项校验（名字走严格正则，目录必须绝对且非根，
-//     配置文件必须在编排目录之内）；
+//  1. **命令固定**：只运行 `compose up` 更新自身服务；纳管分支的固定
+//     shell 包装仅准备并清理私有快照，禁止解释调用方传进来的脚本；
+//  2. **参数白名单**：服务名、项目名、目录来自容器标签并逐项校验；
+//     文件来自同目录的原配置，或来自同项目的私有快照；
 //  3. **镜像用当前容器自己的镜像 ID**：不额外拉取，也就不存在
 //     "为了自更新而先拉一个陌生镜像"的风险。
 //
@@ -38,6 +37,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"arkade/protocol/envelope"
 )
 
 const (
@@ -46,7 +47,7 @@ const (
 	// 必须与 helper_reaper 的清理前缀区分开：那个 reaper 清的是
 	// 卷/配置读取用的 helper，而本容器要活过我方容器重启，
 	// 被提前回收就会让更新半途而废。清理由调用方在重启后负责。
-	selfUpdateHelperPrefix = "arkade-selfupdate-"
+	selfUpdateHelperPrefix = envelope.SelfUpdateHelperPrefix
 
 	// selfUpdateLabel 打在一次性容器上，便于重启后找回并清理。
 	selfUpdateLabel = "io.arkade.role.selfupdate"
@@ -111,6 +112,7 @@ type DetachedComposeUp struct {
 	Name string
 	// RequestID 写入标签，便于重启后对账。
 	RequestID string
+	Managed   *envelope.SelfUpdateManagedConfig
 }
 
 // SelfUpdateRuntime 是可选能力：更新自己所在容器的镜像。
@@ -124,8 +126,6 @@ type SelfUpdateRuntime interface {
 	// RunDetachedComposeUp 创建并启动一次性容器执行重建，返回容器 ID。
 	// 本方法**不等待**它结束——等待必然等不到，因为自己会被它杀掉。
 	RunDetachedComposeUp(ctx context.Context, req DetachedComposeUp) (string, error)
-	// CleanupSelfUpdateHelpers 删除残留的一次性容器，keepID 非空时保留它。
-	CleanupSelfUpdateHelpers(ctx context.Context, keepID string) (int, error)
 }
 
 // selfUpdateNamePattern 是服务名 / 项目名白名单。
@@ -202,7 +202,7 @@ func (e *engine) SelfContainerInfo(ctx context.Context) (SelfContainerInfo, erro
 		}
 		// 配置文件必须在工作目录内：否则 helper 挂载了工作目录却读不到配置，
 		// 或读到的其实是另一个项目的配置。
-		if !strings.HasPrefix(info.ConfigFile, strings.TrimSuffix(info.WorkingDir, "/")+"/") {
+		if info.ConfigFile != selfUpdatePrivateCompose && !strings.HasPrefix(info.ConfigFile, strings.TrimSuffix(info.WorkingDir, "/")+"/") {
 			return SelfContainerInfo{}, selfUpdateBlocked("当前编排的配置文件不在其工作目录内，已拒绝自更新")
 		}
 	}
@@ -429,6 +429,12 @@ func (e *engine) RunDetachedComposeUp(ctx context.Context, req DetachedComposeUp
 		return "", err
 	}
 
+	if err := validateManagedSelfUpdate(req); err != nil {
+		return "", err
+	}
+	if id, err := e.checkSelfUpdateHelpers(ctx, req.Name); err != nil || id != "" {
+		return id, err
+	}
 	body := helperContainerConfig{
 		Image: req.ImageID,
 		// 直接用 docker 本体作为入口：镜像里本来就有 CLI 与 compose 插件，
@@ -476,6 +482,11 @@ func (e *engine) RunDetachedComposeUp(ctx context.Context, req DetachedComposeUp
 		Networking: helperNetworkConfig{NetworkMode: "default"},
 	}
 
+	if req.Managed != nil {
+		body.Entrypoint = []string{"/bin/sh", "-c", selfUpdateManagedScript, "arkade-selfupdate"}
+		body.HostConfig.Mounts[1].ReadOnly = true
+		body.Env = append(body.Env, "COMPOSE_DISABLE_ENV_FILE=1", "COMPOSE_REMOVE_ORPHANS=0", "COMPOSE_MENU=0")
+	}
 	raw, merr := json.Marshal(body)
 	if merr != nil {
 		return "", fmt.Errorf("序列化自更新容器配置失败: %w", merr)
@@ -485,12 +496,25 @@ func (e *engine) RunDetachedComposeUp(ctx context.Context, req DetachedComposeUp
 	if cerr != nil {
 		return "", fmt.Errorf("创建自更新容器失败: %w", cerr)
 	}
-	// 启动失败时把容器删掉，不留一个躺在那里等人排查的半成品。
-	if serr := e.client.post(ctx, pathContainerPrefix+url.PathEscape(id)+actionStart); serr != nil {
+	removeFailed := func(force bool) {
 		delCtx, cancel := context.WithTimeout(context.Background(), selfUpdateRemoveTimeout)
 		defer cancel()
-		_ = e.client.delete(delCtx, pathContainerPrefix+url.PathEscape(id)+"?force=1&v=0")
-		return "", fmt.Errorf("启动自更新容器失败: %w", serr)
+		query := "?v=1"
+		if force {
+			query += "&force=1"
+		}
+		_ = e.client.delete(delCtx, pathContainerPrefix+url.PathEscape(id)+query)
+	}
+	if req.Managed != nil {
+		if err := e.putManagedSelfUpdateArchive(ctx, id, req.Managed); err != nil {
+			removeFailed(true) // 尚未尝试启动，可确定不会中断 Compose。
+			return "", errors.New("无法将纳管配置交付给自更新容器")
+		}
+	}
+	if err := e.client.post(ctx, pathContainerPrefix+url.PathEscape(id)+actionStart); err != nil {
+		// 若启动已送达但响应丢失，Docker 会拒绝删除运行中的容器。
+		removeFailed(false)
+		return "", fmt.Errorf("启动自更新容器失败: %w", err)
 	}
 	return id, nil
 }
@@ -509,61 +533,54 @@ func composeUpArgs(req DetachedComposeUp) []string {
 		"--project-name", req.Project,
 		"--project-directory", req.WorkingDir,
 	}
+	if req.Managed != nil {
+		args = append(args, "--file", selfUpdatePrivateCompose, "--env-file", selfUpdatePrivateEnv)
+		return append(args, "up", "-d", "--no-deps", "--no-build", "--pull", "always", req.Service)
+	}
 	if req.ConfigFile != "" {
 		args = append(args, "--file", req.ConfigFile)
 	}
 	return append(args, "up", "-d", "--no-deps", "--pull", "always", req.Service)
 }
 
-// CleanupSelfUpdateHelpers 删除残留的一次性自更新容器。
-//
-// 何时会残留：更新成功但新进程来不及清理；或更新中途失败。
-// 只在**发起新的自更新之前**调用，不做周期性扫描——
-// 周期扫描可能在重建进行中把正在干活的容器删掉。
-//
-// keepID 非空时保留它（自身即当前进行中的那个）。
-func (e *engine) CleanupSelfUpdateHelpers(ctx context.Context, keepID string) (int, error) {
+// checkSelfUpdateHelpers 先阻断尚未完成的助手，再回收过期诊断容器。
+// 不强制删除容器：从列表读取后它仍可能改变状态。
+func (e *engine) checkSelfUpdateHelpers(ctx context.Context, name string) (string, error) {
 	filters, _ := json.Marshal(map[string][]string{"label": {selfUpdateLabel}})
 	var list []struct {
-		ID string `json:"Id"`
+		ID      string
+		Names   []string
+		State   string
+		Created int64
 	}
 	query := "/containers/json?all=1&filters=" + url.QueryEscape(string(filters))
 	if err := e.client.getJSON(ctx, query, &list); err != nil {
-		return 0, fmt.Errorf("列出残留的自更新容器失败: %w", err)
+		return "", fmt.Errorf("确认是否有正在执行的自更新失败: %w", err)
 	}
-	removed := 0
 	for _, c := range list {
-		if c.ID == "" || c.ID == keepID {
+		// 进程异常终止可能遗留未启动的快照。超过窗口才回收，
+		// 且不加 force，以免把已经开始工作的助手杀掉。
+		stale := c.ID != "" && c.Created > 0 && time.Since(time.Unix(c.Created, 0)) > 24*time.Hour
+		if stale && c.State == "created" && e.client.delete(ctx, pathContainerPrefix+url.PathEscape(c.ID)+"?v=1") == nil {
 			continue
 		}
-		if err := e.client.delete(ctx, pathContainerPrefix+url.PathEscape(c.ID)+"?force=1&v=0"); err != nil {
-			continue
+		for _, n := range c.Names {
+			// created 可能是未完成上传或异常退出的残留，不能报已受理。
+			if strings.TrimPrefix(n, "/") == name && c.State != "created" {
+				return c.ID, nil
+			}
 		}
-		removed++
+		if c.State != "exited" && c.State != "dead" {
+			return "", selfUpdateBlocked("已有自更新助手尚未结束，请检查后再试")
+		}
+		if stale {
+			_ = e.client.delete(ctx, pathContainerPrefix+url.PathEscape(c.ID)+"?v=1")
+		}
 	}
-	return removed, nil
+	return "", nil
 }
 
-// SelfUpdateHelperName 生成一次性容器名。
-//
-// 名字只能含 [a-zA-Z0-9][a-zA-Z0-9_.-]，因此把 request_id 里的非法字符
-// 统一折成 "-"，并截断到安全长度。名字同时是幂等键的可见部分。
+// SelfUpdateHelperName 保留 runtime 调用方的旧入口，协议层共享算法。
 func SelfUpdateHelperName(requestID string) string {
-	var b strings.Builder
-	for _, r := range requestID {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
-			b.WriteRune(r)
-		default:
-			b.WriteByte('-')
-		}
-	}
-	s := strings.Trim(b.String(), "-_")
-	if s == "" {
-		s = "manual"
-	}
-	if len(s) > 40 {
-		s = s[:40]
-	}
-	return selfUpdateHelperPrefix + s
+	return envelope.SelfUpdateHelperName(requestID)
 }

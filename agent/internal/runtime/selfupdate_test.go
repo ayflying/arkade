@@ -272,6 +272,8 @@ func TestRunDetachedComposeUpUsesFixedArgv(t *testing.T) {
 	var started bool
 	e := newTestEngine(t, func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.URL.Path == "/containers/json":
+			_, _ = w.Write([]byte(`[]`))
 		case strings.HasSuffix(r.URL.Path, "/containers/create"):
 			_ = json.NewDecoder(r.Body).Decode(&created)
 			_, _ = w.Write([]byte(`{"Id":"newid"}`))

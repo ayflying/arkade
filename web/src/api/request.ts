@@ -18,6 +18,11 @@ const API_BASE = '/api'
 /** 响应体未知类型：先按 unknown 收下，由调用方用契约类型断言 */
 type JsonValue = unknown
 
+function networkError(cause: unknown): ApiError {
+  const detail = cause instanceof Error ? cause.message : String(cause)
+  return new ApiError(0, 'network', `无法连接服务器：${detail}`)
+}
+
 /**
  * 发起请求并解析为 T。
  *
@@ -41,8 +46,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     })
   } catch (cause) {
     // fetch 只有在网络层失败时才 reject（DNS、连接被拒、被打断）
-    const detail = cause instanceof Error ? cause.message : String(cause)
-    throw new ApiError(0, 'network', `无法连接服务器：${detail}`)
+    throw networkError(cause)
   }
 
   // 204 / 205：无响应体，直接返回 undefined，绝不调 response.json()（会抛 SyntaxError）
@@ -50,7 +54,16 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     return undefined as T
   }
 
-  const text = await response.text()
+  let text: string
+  try {
+    text = await response.text()
+  } catch (cause) {
+    // 响应头可能已到，但 Hub 重启会截断响应体。保留已收到的错误状态。
+    if (!response.ok) {
+      throw new ApiError(response.status, `http_${response.status}`, translateErrorCode(`http_${response.status}`, ''))
+    }
+    throw networkError(cause)
+  }
   let parsed: JsonValue = null
   let parseFailed = false
   if (text !== '') {
@@ -78,8 +91,8 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 /** GET 请求 */
-export function httpGet<T>(path: string): Promise<T> {
-  return request<T>(path, { method: 'GET' })
+export function httpGet<T>(path: string, init: Pick<RequestInit, 'signal' | 'cache'> = {}): Promise<T> {
+  return request<T>(path, { ...init, method: 'GET' })
 }
 
 /** POST 请求；body 会被序列化为 JSON */
