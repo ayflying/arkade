@@ -1,4 +1,4 @@
-const DEFAULT_AGENT_IMAGE = 'ghcr.io/ayflying/arkade-agent:latest'
+const DEFAULT_AGENT_IMAGE = 'ayflying/arkade-agent:latest'
 const AGENT_DATA_DIR = '/opt/arkade/agent'
 
 interface DeploySnippetInput {

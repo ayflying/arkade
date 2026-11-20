@@ -8,9 +8,9 @@ const input = {
   token: 'test-token'
 }
 
-test('部署只需要 Compose，默认使用 latest、无前缀变量并保留现有挂载', () => {
+test('部署只需要 Compose，默认使用 Docker Hub 的 latest、无前缀变量并保留现有挂载', () => {
   const compose = buildComposeSnippet(input)
-  assert.match(compose, /^    image: ghcr\.io\/ayflying\/arkade-agent:latest$/m)
+  assert.match(compose, /^    image: ayflying\/arkade-agent:latest$/m)
   assert.match(compose, /^    restart: unless-stopped$/m)
   assert.match(compose, /^      HUB_URL: "https:\/\/hub\.example\.com:8443"$/m)
   assert.match(compose, /^      AGENT_TOKEN: "test-token"$/m)
