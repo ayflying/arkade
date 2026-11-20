@@ -465,6 +465,39 @@ check(
   )
 )
 
+/*
+ * 日志面板打开即贴底，并提供「自动滚动」开关（默认开启）。
+ * 关掉后刷新不能把阅读位置冲走，否则用户往上翻根本看不稳。
+ */
+const detailLogsSrc = readFileSync(
+  join(here, '..', 'src', 'components', 'container', 'ContainerDetailLogs.vue'),
+  'utf8'
+)
+check(
+  '详情日志: 自动滚动默认开启',
+  /const autoScroll = ref\(true\)/.test(detailLogsSrc),
+  '默认应是自动滚到底部'
+)
+check(
+  '详情日志: 提供自动滚动开关',
+  /n-switch[\s\S]{0,120}autoScroll/.test(detailLogsSrc) && /自动滚动/.test(detailLogsSrc),
+  '需要给用户一个可关的开关'
+)
+check(
+  '详情日志: 加载后按开关贴底',
+  /applyScroll/.test(detailLogsSrc) && /scrollLogToBottom/.test(detailLogsSrc),
+  '打开日志应直接看到最新一行'
+)
+check(
+  '详情日志: 关掉开关后不再自动贴底',
+  /if \(!autoScroll\.value\) return/.test(detailLogsSrc),
+  '否则用户手动关闭无效'
+)
+check(
+  '详情日志: 往上翻可暂停、翻回底部恢复',
+  /handleScroll/.test(detailLogsSrc) && /isLogNearBottom/.test(detailLogsSrc)
+)
+
 /* 契约无 Env，也不反推 */
 /*
  * 检查前先剥掉注释和 script 段：注释里写「契约里没有 Env」是说明，

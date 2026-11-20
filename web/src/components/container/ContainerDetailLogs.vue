@@ -9,9 +9,10 @@
  * 复用同一个接口 `GET .../logs?tail=N`（**view 权限**），
  * 所以即使详情 403，这个面板仍然正常工作。
  */
-import { onMounted, ref } from 'vue'
-import { NButton, NSelect } from 'naive-ui'
+import { nextTick, onMounted, ref } from 'vue'
+import { NButton, NSelect, NSwitch } from 'naive-ui'
 import { fetchContainerLogs } from '@/api/containers'
+import { isLogNearBottom, scrollLogToBottom } from '@/utils/logScroll'
 
 interface Props {
   agentId: string
@@ -35,7 +36,40 @@ const loading = ref(false)
 const errorText = ref('')
 const truncated = ref(false)
 
+/**
+ * 自动滚动开关，默认开启。
+ *
+ * 日志更新后默认贴到底部（最新一行在最下面），用户主动往上翻时自动关掉，
+ * 免得下一轮刷新把阅读位置冲走；翻回底部附近再自动打开。
+ * 用户也可以直接点开关手动控制。
+ */
+const autoScroll = ref(true)
+
+const scrollRef = ref<HTMLElement | null>(null)
+
 let seq = 0
+
+/** 加载完成后按开关决定是否贴底 */
+async function applyScroll(): Promise<void> {
+  if (!autoScroll.value) return
+  await nextTick()
+  scrollLogToBottom(scrollRef.value)
+}
+
+/**
+ * 滚动事件：用户往上翻就停止自动滚动，翻回底部附近再恢复。
+ *
+ * 不区分「用户滚动」和「程序滚动」：程序滚到底后本就处于底部附近，
+ * 判定结果同样是保持开启，无需额外标志位。
+ */
+function handleScroll(): void {
+  autoScroll.value = isLogNearBottom(scrollRef.value)
+}
+
+/** 手动切换开关：打开时立即贴底，符合「我要看最新」的预期 */
+function handleToggleAutoScroll(): void {
+  if (autoScroll.value) void applyScroll()
+}
 
 async function load(): Promise<void> {
   if (props.agentId === '' || props.containerId === '') return
@@ -47,6 +81,7 @@ async function load(): Promise<void> {
     if (mine !== seq) return
     lines.value = res.lines
     truncated.value = res.truncated
+    await applyScroll()
   } catch (err) {
     if (mine !== seq) return
     errorText.value = err instanceof Error ? err.message : '日志加载失败'
@@ -76,12 +111,16 @@ onMounted(() => {
         @update:value="handleTailChange"
       />
       <n-button size="small" :loading="loading" @click="load">刷新</n-button>
+      <label class="detail-logs__auto">
+        <n-switch v-model:value="autoScroll" size="small" @update:value="handleToggleAutoScroll" />
+        <span>自动滚动</span>
+      </label>
       <span v-if="truncated" class="detail-logs__muted">内容已被截断，仅显示最近 {{ tail }} 行</span>
     </div>
 
     <p v-if="errorText !== ''" class="detail-logs__error">{{ errorText }}</p>
     <pre v-else-if="lines.length === 0 && !loading" class="detail-logs__empty">暂无日志输出。</pre>
-    <pre v-else class="detail-logs__box">{{ lines.join('\n') }}</pre>
+    <pre v-else ref="scrollRef" class="detail-logs__box" @scroll="handleScroll">{{ lines.join('\n') }}</pre>
   </div>
 </template>
 
@@ -101,6 +140,17 @@ onMounted(() => {
 
 .detail-logs__tail {
   width: 140px;
+}
+
+/* 自动滚动开关：和刷新按钮同排，不抢视觉重点 */
+.detail-logs__auto {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--arkade-text-secondary);
+  cursor: pointer;
+  user-select: none;
 }
 
 .detail-logs__box,
