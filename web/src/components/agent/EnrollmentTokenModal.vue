@@ -26,6 +26,7 @@ import { computed, ref, watch } from 'vue'
 import { NAlert, NButton, NInput, NModal, NTag } from 'naive-ui'
 import { buildComposeSnippet, guessHubUrl, validateHubUrl } from '@/utils/agentDeploy'
 import type { Enrollment } from '@/types/agent'
+import { copyToClipboard, selectElementText } from '@/utils/clipboard'
 import { toastError, toastSuccess } from '@/utils/feedback'
 
 interface Props {
@@ -59,6 +60,17 @@ const hubUrl = ref('')
 /** 是否已确认「我已知晓密钥只显示一次」——勾选后才显示片段，降低误关风险 */
 const acknowledged = ref(false)
 
+/** 编排片段与密钥输入框：复制失败时用它们把文本选中，交回用户 Ctrl+C */
+const snippetRef = ref<HTMLElement | null>(null)
+const tokenFieldRef = ref<HTMLElement | null>(null)
+
+/** n-input 内部才是原生 <input>，选中要落到它身上 */
+function tokenInputElement(): HTMLElement | null {
+  const root = tokenFieldRef.value
+  if (!root) return null
+  return root instanceof HTMLInputElement ? root : root.querySelector('input')
+}
+
 const hubUrlError = computed(() => validateHubUrl(hubUrl.value))
 const composeSnippet = computed(() => {
   if (token.value === '' || hubUrlError.value !== '') return ''
@@ -82,29 +94,28 @@ watch(
   { immediate: true }
 )
 
-/** 复制到剪贴板 */
-async function copyText(text: string, label: string): Promise<void> {
+/**
+ * 复制到剪贴板。
+ *
+ * 必须看返回值：内网 http 是非安全上下文，没有 Clipboard API，
+ * 只能靠 execCommand，而它失败时只返回 false、不抛异常。
+ * 以前这里无条件提示「已复制」，用户粘出来的其实是上一次复制的密钥。
+ *
+ * 失败时把目标文本选中交给用户：只提示「请手动复制」是不够的，
+ * 用户选中困难时仍会用旧剪贴板内容，问题看起来就和没修一样。
+ */
+async function copyText(text: string, label: string, selectable?: HTMLElement | null): Promise<void> {
   if (text === '') return
-  try {
-    if (navigator.clipboard && window.isSecureContext) {
-      await navigator.clipboard.writeText(text)
-    } else {
-      // 非 HTTPS 环境（内网 http 很常见）没有 clipboard API，退化成 execCommand
-      const el = document.createElement('textarea')
-      el.value = text
-      // 放到视口外，避免滚动跳动；同时不能让页面看到明文
-      el.style.position = 'fixed'
-      el.style.opacity = '0'
-      document.body.appendChild(el)
-      el.select()
-      document.execCommand('copy')
-      document.body.removeChild(el)
-    }
+  if (await copyToClipboard(text)) {
     toastSuccess(`${label}已复制`)
-  } catch {
-    // 不打印错误对象：异常里可能带上被复制的文本
-    toastError('复制失败，请手动选中文本复制')
+    return
   }
+  if (selectable) {
+    selectElementText(selectable)
+    toastError(`浏览器阻止了自动复制，内容已选中，请按 Ctrl+C 复制`)
+    return
+  }
+  toastError(`浏览器阻止了自动复制，请手动选中${label}内容后按 Ctrl+C 复制`)
 }
 
 /** 关闭：先清空本地密钥，再通知父组件 */
@@ -146,14 +157,16 @@ function handleClose(): void {
 
     <!-- 密钥本体 -->
     <div class="enroll__token-row">
-      <n-input
-        :value="token"
-        readonly
-        size="large"
-        class="enroll__token"
-        @focus="(e: FocusEvent) => (e.target as HTMLInputElement).select()"
-      />
-      <n-button type="primary" size="large" @click="copyText(token, '密钥')">复制密钥</n-button>
+      <div ref="tokenFieldRef" class="enroll__token-field">
+        <n-input
+          :value="token"
+          readonly
+          size="large"
+          class="enroll__token"
+          @focus="(e: FocusEvent) => (e.target as HTMLInputElement).select()"
+        />
+      </div>
+      <n-button type="primary" size="large" @click="copyText(token, '密钥', tokenInputElement())">复制密钥</n-button>
     </div>
 
     <div class="enroll__field">
@@ -183,12 +196,12 @@ function handleClose(): void {
     <template v-else>
       <div class="enroll__snippet-header">
         <strong>docker-compose.yml</strong>
-        <n-button size="tiny" quaternary :disabled="composeSnippet === ''" @click="copyText(composeSnippet, '配置')">
+        <n-button size="tiny" quaternary :disabled="composeSnippet === ''" @click="copyText(composeSnippet, '配置', snippetRef)">
           复制编排文件
         </n-button>
       </div>
 
-      <pre v-if="composeSnippet !== ''" class="enroll__code">{{ composeSnippet }}</pre>
+      <pre v-if="composeSnippet !== ''" ref="snippetRef" class="enroll__code">{{ composeSnippet }}</pre>
 
       <n-alert type="info" :bordered="false" class="enroll__steps">
         <ol class="enroll__ol">
@@ -237,6 +250,13 @@ function handleClose(): void {
 .enroll__token {
   flex: 1;
   min-width: 240px;
+}
+
+/* 包裹层只为拿到原生 input 做「复制失败后选中」，flex 规则跟着它走，布局保持不变 */
+.enroll__token-field {
+  flex: 1;
+  min-width: 240px;
+  display: flex;
 }
 
 /* 密钥用等宽字体：容易分辨 0/O、1/l 这类易混字符 */
@@ -344,7 +364,8 @@ function handleClose(): void {
 
 @media (max-width: 767.98px) {
   /* 手机：密钥输入独占一行，复制按钮拉满，避免横向挤压 */
-  .enroll__token {
+  .enroll__token,
+  .enroll__token-field {
     min-width: 100%;
   }
 

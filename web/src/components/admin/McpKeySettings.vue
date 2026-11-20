@@ -4,6 +4,7 @@ import { NAlert, NButton, NInput, NModal, NSpace, NTable } from 'naive-ui'
 import { createMcpKey, listMcpKeys, revokeMcpKey, type McpKey } from '@/api/mcpKeys'
 import { ApiError } from '@/types/api'
 import { confirmAction } from '@/utils/confirm'
+import { copyToClipboard } from '@/utils/clipboard'
 import { toastError, toastSuccess } from '@/utils/feedback'
 import { formatAbsoluteTime } from '@/utils/formatTime'
 import { mcpClientConfig, mcpEndpoint, mcpKeyName } from '@/utils/mcpClientConfig'
@@ -101,14 +102,14 @@ async function revoke(key: McpKey) {
   }
 }
 
+/** 复制：内网 http 下没有 Clipboard API，统一走 copyToClipboard 的降级路径并按结果提示 */
 async function copy(text: string, label: string) {
   if (!text) return
-  try {
-    await navigator.clipboard.writeText(text)
+  if (await copyToClipboard(text)) {
     toastSuccess(`${label}已复制`)
-  } catch {
-    toastError('无法访问剪贴板，请手动选中文本复制。')
+    return
   }
+  toastError(`浏览器阻止了自动复制，请手动选中${label}后按 Ctrl+C 复制。`)
 }
 
 onMounted(load)
