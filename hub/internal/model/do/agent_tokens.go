@@ -14,5 +14,5 @@ type AgentTokens struct {
 	TokenHash   any //
 	AgentId     any //
 	CreatedAt   any //
-	TokenCipher any //
+	TokenPlain any //
 }

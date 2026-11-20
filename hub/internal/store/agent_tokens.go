@@ -1,18 +1,16 @@
 package store
 
-// agent_tokens.go 管理「服务器专属接入密钥」的摘要（以及未接入期间的密文）。
+// agent_tokens.go 管理「服务器专属接入密钥」的摘要与明文。
 //
-// 安全模型（这是本文件存在的全部理由）：
+// 认证只依赖 SHA256 摘要：Hub 用摘要反查身份，从不靠明文比对。
+// 另外存一份明文，用途只有一个——**记录还没接入时**让管理员能反复查看密钥和
+// 编排示例（用户常过几天才去目标机器部署，只给一次就得靠"重置"再看，
+// 而重置会把已经连上的 Agent 踢下线）。
 //
-//	认证只依赖 SHA256 摘要：Hub 用摘要反查身份，从不靠明文比对。
-//	明文另存一份**加密后**的副本，且只在记录仍处于 pending（从未接入）时存在；
-//	第一次握手成功立即抹掉。之后即使整库连同应用代码被拖走，
-//	攻击者也拿不到能直接用的密钥——解密还需要独立的主密钥文件。
-//
-// 为什么不always只存摘要：用户在「添加服务器」后往往过一阵才部署 Agent，
-// 期间需要反复查看那把密钥和编排示例。只给一次就得靠"重置"才能再看，
-// 而重置会让已经开始连接的 Agent 掉线，语义上是错的。
-// 代价被限制在"未接入"这段窗口内，且不是明文。
+// 边界（这次是有意取舍，不是遗漏）：
+//   - 明文只在 pending（从未接入）期间有意义；第一次握手成功即清空该列；
+//   - 明文与摘要同表同库，能读库的人就能拿到密钥——这是可接受的，
+//     因为密钥本身只用于"把一台机器注册进本 Hub"，且接入后即清除。
 //
 // 与旧的"全局共享 token"的关系：
 //   - 共享 token 明文在配置文件里（或环境变量 AGENT_TOKEN），所有机器共用一把；
@@ -35,10 +33,7 @@ import (
 // ErrAgentTokenNotFound 表示该摘要没有对应的凭据。
 var ErrAgentTokenNotFound = errors.New("接入凭据不存在")
 
-// AgentToken 是凭据的元信息。
-//
-// 注意：**没有任何表示明文的字段**。这不是遗漏——
-// 结构体里没有地方放明文，就不可能在代码里不小心把它传出去。
+// AgentToken 是凭据的元信息（明文只在 pending 期间单独存放，见 AgentTokenPlain）。
 type AgentToken struct {
 	// TokenHash 是 SHA256 的十六进制串。
 	TokenHash string
@@ -46,21 +41,21 @@ type AgentToken struct {
 	CreatedAt time.Time
 }
 
-// SetAgentTokenCipher 写入「尚未接入」期间的密钥密文。
+// SetAgentTokenPlain 保存密钥明文，供「尚未接入」期间再次展示。
 //
 // 只该在创建/重置密钥时调用：这些时刻明文刚生成，用户很可能稍后还要
-// 再抄一次编排示例。第一次握手成功后必须调用 ClearAgentTokenCipher 抹掉。
-func (d *DB) SetAgentTokenCipher(ctx context.Context, agentID, cipher string) error {
+// 再抄一次编排示例。第一次握手成功后必须调用 ClearAgentTokenPlain 抹掉。
+func (d *DB) SetAgentTokenPlain(ctx context.Context, agentID, plain string) error {
 	if agentID == "" {
 		return errors.New("agent_id 不能为空")
 	}
 	c := dao.AgentTokens.Columns()
 	res, err := d.gdb.Model(dao.AgentTokens.Table()).Ctx(ctx).
-		Data(do.AgentTokens{TokenCipher: cipher}).
+		Data(do.AgentTokens{TokenPlain: plain}).
 		Where(c.AgentId, agentID).
 		Update()
 	if err != nil {
-		return gerror.Wrap(err, "写入密钥密文失败")
+		return gerror.Wrap(err, "写入密钥明文失败")
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		// 凭据行不存在意味着这把密钥根本无法用于认证，
@@ -70,41 +65,41 @@ func (d *DB) SetAgentTokenCipher(ctx context.Context, agentID, cipher string) er
 	return nil
 }
 
-// AgentTokenCipher 读取密钥密文。空字符串表示已无可查看的明文。
+// AgentTokenPlain 读取密钥明文。空字符串表示已无可查看的明文。
 //
 // 查不到凭据行返回 ErrAgentTokenNotFound，让调用方能区分
 // "记录没有专属凭据"与"数据库出错"。
-func (d *DB) AgentTokenCipher(ctx context.Context, agentID string) (string, error) {
+func (d *DB) AgentTokenPlain(ctx context.Context, agentID string) (string, error) {
 	if agentID == "" {
 		return "", ErrAgentTokenNotFound
 	}
 	c := dao.AgentTokens.Columns()
 	one, err := d.gdb.Model(dao.AgentTokens.Table()).Ctx(ctx).
-		Fields(c.TokenCipher).
+		Fields(c.TokenPlain).
 		Where(c.AgentId, agentID).
 		One()
 	if err != nil {
-		return "", gerror.Wrap(err, "查询密钥密文失败")
+		return "", gerror.Wrap(err, "查询密钥明文失败")
 	}
 	if one.IsEmpty() {
 		return "", ErrAgentTokenNotFound
 	}
-	return one[c.TokenCipher].String(), nil
+	return one[c.TokenPlain].String(), nil
 }
 
-// ClearAgentTokenCipher 抹掉密钥密文。
+// ClearAgentTokenPlain 抹掉密钥明文。
 //
 // 调用时机是"这台服务器第一次成功握手"——从这一刻起身份已经绑定，
-// 再保留可解密的明文就只是纯粹的风险。没有密文时是空操作。
-func (d *DB) ClearAgentTokenCipher(ctx context.Context, agentID string) error {
+// 列表里不再提供查看入口，留着明文只是纯粹的风险。明文为空时是空操作。
+func (d *DB) ClearAgentTokenPlain(ctx context.Context, agentID string) error {
 	if agentID == "" {
 		return nil
 	}
 	if _, err := d.gdb.Model(dao.AgentTokens.Table()).Ctx(ctx).
-		Data(do.AgentTokens{TokenCipher: ""}).
+		Data(do.AgentTokens{TokenPlain: ""}).
 		Where(dao.AgentTokens.Columns().AgentId, agentID).
 		Update(); err != nil {
-		return gerror.Wrap(err, "清除密钥密文失败")
+		return gerror.Wrap(err, "清除密钥明文失败")
 	}
 	return nil
 }

@@ -48,7 +48,6 @@ import (
 	"arkade/hub/internal/controller"
 	"arkade/hub/internal/imagetask"
 	"arkade/hub/internal/monitor"
-	"arkade/hub/internal/secretbox"
 	"arkade/hub/internal/stackmigrate"
 	"arkade/hub/internal/store"
 )
@@ -88,11 +87,6 @@ type Deps struct {
 	// 否则会与在途握手产生竞态：那次握手的 Close 找不到连接，
 	// 而它会照常上线甚至复活已删记录（详见 agentlink/generation.go）。
 	Guard *agentlink.EnrollmentGuard
-	// Secrets 用于加密"需要服务端再次读出"的凭据（当前是未接入服务器的密钥）。
-	//
-	// 为 nil 时不保存密文：创建/重置照常返回一次性密钥，
-	// 只是列表页不再提供"查看接入信息"。
-	Secrets *secretbox.Box
 	// RegisterBackgroundClose attaches route-owned workers to the App lifecycle.
 	// Called during router construction, never concurrently with serving requests.
 	RegisterBackgroundClose func(func(context.Context) error)

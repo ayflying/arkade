@@ -9,7 +9,6 @@ import (
 
 	"arkade/hub/internal/agentlink"
 	"arkade/hub/internal/controller"
-	"arkade/hub/internal/secretbox"
 	"arkade/hub/internal/store"
 	"arkade/hub/internal/user"
 )
@@ -21,11 +20,6 @@ type Deps struct {
 	SharedToken string
 	Session     controller.SessionAccessor
 	Log         *slog.Logger
-	// Box 用于保存「尚未接入」服务器的密钥密文（可再读出）。
-	//
-	// 为 nil 时创建/重置仍然成功，只是无法再次查看密钥——
-	// 与没有这项能力之前的行为一致，因此不把它设成硬依赖。
-	Box *secretbox.Box
 }
 type Controller struct{ d Deps }
 

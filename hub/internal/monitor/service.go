@@ -2,54 +2,71 @@ package monitor
 
 import (
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"sync"
 
 	"arkade/hub/internal/notify"
-	"arkade/hub/internal/secretbox"
 	"arkade/hub/internal/store"
 	"github.com/gogf/gf/v2/errors/gerror"
 )
 
-// monitorCipherPurpose 是监控通知凭据的加密用途标签（参与 AEAD 认证）。
-// 与 Hub 内其它加密字段互不可解开。
-const monitorCipherPurpose = "arkade.monitor.channels.v1"
-
 type Service struct {
 	db     *store.DB
-	box    *secretbox.Box
+	aead   cipher.AEAD
 	sender notify.Sender
 	mu     sync.Mutex
 }
 
 func NewService(db *store.DB, key []byte, sender notify.Sender) (*Service, error) {
-	box, err := secretbox.New(key)
+	if len(key) != 32 {
+		return nil, gerror.New("监控配置加密主密钥必须为32字节")
+	}
+	block, err := aes.NewCipher(key)
 	if err != nil {
-		return nil, gerror.Wrap(err, "初始化监控配置加密器失败")
+		return nil, err
+	}
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
 	}
 	if sender == nil {
 		sender = notify.New()
 	}
-	return &Service{db: db, box: box, sender: sender}, nil
+	return &Service{db: db, aead: aead, sender: sender}, nil
 }
 func (s *Service) seal(value credentials) (string, error) {
 	raw, err := json.Marshal(value)
 	if err != nil {
 		return "", err
 	}
-	return s.box.Seal(monitorCipherPurpose, string(raw))
+	nonce := make([]byte, s.aead.NonceSize())
+	if _, err = rand.Read(nonce); err != nil {
+		return "", err
+	}
+	return "v1:" + base64.RawStdEncoding.EncodeToString(s.aead.Seal(nonce, nonce, raw, []byte("arkade.monitor.channels.v1"))), nil
 }
 func (s *Service) unseal(value string) (credentials, error) {
 	var out credentials
 	if value == "" {
 		return out, nil
 	}
-	plain, err := s.box.Open(monitorCipherPurpose, value)
+	if len(value) < 3 || value[:3] != "v1:" {
+		return out, gerror.New("监控通知凭据格式无效")
+	}
+	raw, err := base64.RawStdEncoding.DecodeString(value[3:])
+	if err != nil || len(raw) < s.aead.NonceSize() {
+		return out, gerror.New("监控通知凭据格式无效")
+	}
+	n := s.aead.NonceSize()
+	plain, err := s.aead.Open(nil, raw[:n], raw[n:], []byte("arkade.monitor.channels.v1"))
 	if err != nil {
-		// 保持原提示：最常见的原因是主密钥被换过，需要"恢复原主密钥"这种可操作指引。
 		return out, gerror.New("监控通知凭据无法解密，请恢复原主密钥")
 	}
-	if json.Unmarshal([]byte(plain), &out) != nil {
+	if json.Unmarshal(plain, &out) != nil {
 		return out, gerror.New("监控通知凭据内容无效")
 	}
 	return out, nil
