@@ -540,16 +540,36 @@ func TestChangedAfterPull(t *testing.T) {
 
 // deployScript 生成假 docker：按 argv 分派，并可控制每条命令的结果。
 //
-// 用 if/elif 而不是 case，因为要同时判断"是不是 docker 本体命令"和
-// "是不是 compose 的某个子命令"，写在 case 里会很难读。
-func deployScript(psJSON, manifestJSON string, pullExit int) string {
-	return `
+// ============================ 为什么要按"引用"给不同答案 ============================
+//
+// 真实环境里 `docker manifest inspect` 是**按引用**返回的，不可能所有引用都给同一个
+// digest；`docker images <ref>` 也是按引用查的。假 docker 若对所有引用都给同一个答案，
+// 就会造出一种现实中不存在的状态：多个服务"同时都过期"，
+// 于是"只更新真正变了的那个"这条断言永远测不出来（假阳性通过）。
+//
+// 因此远端摘要与本机镜像 ID 都支持按引用（仓库名）分别配置，用 marker 表实现：
+// 先在 JSON 里放一个标记串，再在脚本里按引用名做替换。
+// 这样既不用额外依赖（jq），也不用为每个用例写一份脚本。
+//
+// 参数约定：
+//   - remote  ：「能按平台匹配出 digest」时用，键是仓库名（repoOf 的结果）；
+//     没配的仓库返回查不到（模拟私有/离线）。
+//   - localIDs：「查本机某引用当前指向哪份内容」时用（docker images <ref>）。
+//   - pullExit：pull 的退出码。
+func deployScript(psJSON string, remote, localIDs map[string]string, pullExit int) string {
+	script := `
 if [ "$1" = "manifest" ]; then
-  printf '%s' '` + manifestJSON + `'
-  exit 0
+  ref="$3"
+  case "$ref" in
+` + manifestCases(remote, "sha256:__REMOTE_") + `
+  esac
+  exit 1
 fi
 if [ "$1" = "images" ]; then
-  printf 'sha256:afterpull'
+  ref="$4"
+  case "$ref" in
+` + manifestCases(localIDs, "__LOCAL_") + `
+  esac
   exit 0
 fi
 if [ "$1" = "compose" ]; then
@@ -572,6 +592,35 @@ if [ "$1" = "compose" ]; then
 fi
 exit 0
 `
+	// 最后把标记替换成真实内容：标记里带仓库名，替换后就是该引用自己的答案。
+	for repo, digest := range remote {
+		script = strings.ReplaceAll(script, "sha256:__REMOTE_"+repo, digest)
+	}
+	for repo, id := range localIDs {
+		script = strings.ReplaceAll(script, "__LOCAL_"+repo, id)
+	}
+	return script
+}
+
+// manifestCases 生成"按引用分派"的 shell case 分支。
+//
+// 单清单形态：config.digest 就是比对目标，因此直接把它设成该引用的远端摘要。
+// 两个分支（单清单 / 清单列表）都给，避免"只有一种形态被测到"。
+func manifestCases(table map[string]string, marker string) string {
+	var b strings.Builder
+	for repo := range table {
+		b.WriteString("    *")
+		b.WriteString(repo)
+		b.WriteString("*)\n")
+		if strings.HasPrefix(marker, "sha256:") {
+			// manifest：给单清单形态，digest 由最后一轮替换填真值。
+			b.WriteString(`      printf '{"config":{"digest":"` + marker + repo + `"}}'` + "\n")
+		} else {
+			b.WriteString(`      printf '%s' '` + marker + repo + `'` + "\n")
+		}
+		b.WriteString("      exit 0\n      ;;\n")
+	}
+	return b.String()
 }
 
 // itoa 避免为一行格式化引入 strconv 之外的东西（保持测试自解释）。
@@ -622,10 +671,9 @@ func TestDeployNoUpdateDoesNothing(t *testing.T) {
 	         "RepoDigests":["nginx@sha256:same"]},
 	        {"Service":"db","State":"running","Image":"postgres:16","ImageID":"sha256:d",
 	         "RepoDigests":["postgres@sha256:same"]}]`
-	// 单清单形态：config.digest 就是比对目标。
-	manifest := `{"config":{"digest":"sha256:same"}}`
+	remote := map[string]string{"nginx:1.25": "sha256:same", "postgres:16": "sha256:same"}
 
-	final := startDeploy(t, composeContent, deployScript(ps, manifest, 0), "deploy-noop-1")
+	final := startDeploy(t, composeContent, deployScript(ps, remote, nil, 0), "deploy-noop-1")
 
 	if final.Status != PullSucceeded {
 		t.Fatalf("应成功（无更新也是成功），实际 %s: %s", final.Status, final.Error)
@@ -652,14 +700,14 @@ func TestDeployPullsOnlyChangedService(t *testing.T) {
 		t.Skip("假 docker 是 shell 脚本，仅在 Linux 上运行")
 	}
 
-	// web 的摘要已过期，db 已是最新。
+	// web 的摘要已过期，db 已是最新（远端就给出本机已有的那个摘要）。
 	ps := `[{"Service":"web","State":"running","Image":"nginx:1.25","ImageID":"sha256:w",
 	         "RepoDigests":["nginx@sha256:old"]},
 	        {"Service":"db","State":"running","Image":"postgres:16","ImageID":"sha256:d",
 	         "RepoDigests":["postgres@sha256:same"]}]`
-	manifest := `{"config":{"digest":"sha256:new"}}`
+	remote := map[string]string{"nginx:1.25": "sha256:new", "postgres:16": "sha256:same"}
 
-	final := startDeploy(t, composeContent, deployScript(ps, manifest, 0), "deploy-up-1")
+	final := startDeploy(t, composeContent, deployScript(ps, remote, nil, 0), "deploy-up-1")
 
 	if final.Status != PullSucceeded {
 		t.Fatalf("应成功，实际 %s: %s", final.Status, final.Error)
@@ -706,9 +754,9 @@ func TestDeployPullFailureStopsBeforeUp(t *testing.T) {
 	         "RepoDigests":["nginx@sha256:old"]},
 	        {"Service":"db","State":"running","Image":"postgres:16","ImageID":"sha256:d",
 	         "RepoDigests":["postgres@sha256:same"]}]`
-	manifest := `{"config":{"digest":"sha256:new"}}`
+	remote := map[string]string{"nginx:1.25": "sha256:new", "postgres:16": "sha256:same"}
 
-	final := startDeploy(t, composeContent, deployScript(ps, manifest, 1), "deploy-pullfail-1")
+	final := startDeploy(t, composeContent, deployScript(ps, remote, nil, 1), "deploy-pullfail-1")
 
 	if final.Status != PullFailed {
 		t.Fatalf("拉取失败时任务应为 failed，实际 %s", final.Status)
@@ -740,12 +788,13 @@ func TestDeployUnknownManifestDegradesToPull(t *testing.T) {
 
 	ps := `[{"Service":"web","State":"running","Image":"nginx:1.25","ImageID":"sha256:w",
 	         "RepoDigests":["nginx@sha256:local"]}]`
-	// 非零退出：模拟查不到清单（未登录 / 离线 / 镜像已删除）。
-	// deployScript 里 manifest 分支固定 exit 0，因此这里给空 JSON 让它解析失败。
-	manifest := `{}`
+	// remote 传 nil：manifest inspect 一律非零退出，模拟"查不到清单"
+	// （私有仓库未登录 / 离线 / 镜像已删除）。
+	// images 给出"拉取后该引用已指向新内容"，退化路径据此判定需要重建。
+	localIDs := map[string]string{"nginx:1.25": "sha256:afterpull"}
 
 	final := startDeploy(t, "services:\n  web:\n    image: nginx:1.25\n",
-		deployScript(ps, manifest, 0), "deploy-unknown-1")
+		deployScript(ps, nil, localIDs, 0), "deploy-unknown-1")
 
 	if final.Status != PullSucceeded {
 		t.Fatalf("退化为拉取后应成功，实际 %s: %s", final.Status, final.Error)
@@ -780,7 +829,7 @@ func TestDeployRequiresServices(t *testing.T) {
 	}
 
 	final := startDeploy(t, "services:\n  web:\n    build: .\n",
-		deployScript("[]", `{}`, 0), "deploy-noimage-1")
+		deployScript("[]", nil, nil, 0), "deploy-noimage-1")
 
 	if final.Status != PullFailed {
 		t.Fatalf("没有镜像声明应失败，实际 %s", final.Status)

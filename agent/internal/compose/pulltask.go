@@ -33,6 +33,7 @@ package compose
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -454,8 +455,20 @@ func (p *PullManager) run(task *PullTask) {
 
 // genericErrorText 把领域错误转成**不含 secret** 的通用文案。
 //
-// precheck 失败、配置非法等错误里可能带原始配置片段，
-// 直接回显会把 .env 值送去浏览器，因此一律给固定文本。
+// ============================ 为什么要区分"能不能安全回显" ============================
+//
+// 早期的做法是一律给固定文本（"详细原因请查看命令输出"），理由是怕把 .env 值
+// 送去浏览器。但这条规则对**动作层已经写好的结论**是有害的：
+//
+//	"拉取镜像 X 失败，已停止后续重建；正在运行的容器没有改动"
+//	"编排里没有找到可更新的服务（缺少 image: 声明…）"
+//
+// 这两句是用户唯一能看懂的结论；换成"请查看命令输出"，而那个"输出"
+// 可能因为脱敏 fail-closed 而整段隐藏，用户就彻底不知道发生了什么——
+// 更糟的是他会以为容器已经被改动过。
+//
+// 因此改为白名单：只有**显式声明为可回显**的错误才回显原文。
+// 其余（precheck 失败、配置解析等可能夹带配置片段的）仍走固定文本。
 func genericErrorText(err error) string {
 	switch {
 	case errors.Is(err, ErrUnknownAction), errors.Is(err, ErrActionParams):
@@ -465,9 +478,39 @@ func genericErrorText(err error) string {
 		// 这种情况**不是失败**（见 operation 的调用方），
 		// 因此这里只作为兜底出现。
 		return err.Error()
-	default:
-		return "操作失败，详细原因请查看命令输出"
 	}
+	var safe *SafeError
+	if errors.As(err, &safe) {
+		return safe.Error()
+	}
+	return "操作失败，详细原因请查看命令输出"
+}
+
+// SafeError 标记一个"结论本身就是给人看的、且不含配置值"的错误。
+//
+// ============================ 为什么要单独一个类型 ============================
+//
+// 这里绕开的是整文件级脱敏器（redact.go）：构造脱敏器要读 .env 与 compose 正文，
+// 而且**读不到就 fail-closed 隐藏全部输出**。而本文件的错误文本是代码里写死的
+// 中文结论（点名镜像引用与服务名），既不含配置值，也不该因为 .env 格式略有问题
+// 就整段失声。用类型标记把"我保证安全"这件事显式写出来，
+// 比在 genericErrorText 里靠字符串匹配去猜要可靠得多。
+type SafeError struct {
+	// Text 是给用户看的结论（不含任何配置值）。
+	Text string
+	// cause 保留底层错误，便于 errors.Is / 日志排查。
+	cause error
+}
+
+// Error 实现 error。
+func (e *SafeError) Error() string { return e.Text }
+
+// Unwrap 保留错误链。
+func (e *SafeError) Unwrap() error { return e.cause }
+
+// safeErr 构造一个可回显的结论性错误。
+func safeErr(format string, args ...any) error {
+	return &SafeError{Text: fmt.Sprintf(format, args...)}
 }
 
 // taskSink 把观察者收到的输出写入任务缓冲（含脱敏）。

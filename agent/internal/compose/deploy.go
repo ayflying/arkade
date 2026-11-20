@@ -27,7 +27,6 @@ package compose
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -109,18 +108,18 @@ func (m *Manager) deployLocked(ctx context.Context, n string) (deployOutcome, er
 	// 而流式切分又会撞上单行上限（JSON 是单行），解析必然失败。
 	ps := m.probe(ctx, n, TimeoutShort, "ps", "--format", "json", "-a")
 	if ps.ExitCode != 0 {
-		return deployOutcome{}, fmt.Errorf("读取本机容器状态失败（退出码 %d），未做任何改动", ps.ExitCode)
+		return deployOutcome{}, safeErr("读取本机容器状态失败（退出码 %d），未做任何改动", ps.ExitCode)
 	}
 	running := runningLocalImages(parsePSJson(ps.Stdout))
 
 	// 配置里的引用：compose 正文是唯一权威。
 	cfg, cerr := m.readProjectConfig(n)
 	if cerr != nil {
-		return deployOutcome{}, errors.New("读取编排配置失败，未做任何改动")
+		return deployOutcome{}, safeErr("读取编排配置失败，未做任何改动")
 	}
 	images := serviceImages(cfg)
 	if len(images) == 0 {
-		return deployOutcome{}, errors.New("编排里没有找到可更新的服务（缺少 image: 声明或服务清单无法解析）")
+		return deployOutcome{}, safeErr("编排里没有找到可更新的服务（缺少 image: 声明或服务清单无法解析）")
 	}
 
 	// ============================ 第 2 步：对比远端 ============================
@@ -144,7 +143,7 @@ func (m *Manager) deployLocked(ctx context.Context, n string) (deployOutcome, er
 	//
 	// 失败立即停：拉取失败还继续重建，会让服务白停一次而用户以为已经更新。
 	if failed := m.deployPull(ctx, n, toPull); failed != "" {
-		return out, fmt.Errorf("拉取镜像 %s 失败，已停止后续重建；正在运行的容器没有改动", failed)
+		return out, safeErr("拉取镜像 %s 失败，已停止后续重建；正在运行的容器没有改动", failed)
 	}
 
 	// ============================ 第 4 步：只重建确实换了内容的 ============================
@@ -186,10 +185,10 @@ func (m *Manager) deployLocked(ctx context.Context, n string) (deployOutcome, er
 		m.deployNote(ctx, "启动新镜像失败，正在尝试用本机原有镜像回滚：")
 		rollback := m.runStream(ctx, n, TimeoutLong, quietSink(), upArgs...)
 		if rollback.ExitCode != 0 {
-			return out, fmt.Errorf("用新镜像重建 %s 失败，回滚也未成功；服务可能不可用，请立即查看容器日志",
+			return out, safeErr("用新镜像重建 %s 失败，回滚也未成功；服务可能不可用，请立即查看容器日志",
 				strings.Join(names, "、"))
 		}
-		return out, fmt.Errorf("用新镜像重建 %s 失败，已用本机原有镜像回滚；服务仍运行在旧镜像上",
+		return out, safeErr("用新镜像重建 %s 失败，已用本机原有镜像回滚；服务仍运行在旧镜像上",
 			strings.Join(names, "、"))
 	}
 
@@ -201,7 +200,7 @@ func (m *Manager) deployLocked(ctx context.Context, n string) (deployOutcome, er
 		force := append([]string{"up", "-d", "--force-recreate"}, names...)
 		res := m.runStream(ctx, n, TimeoutLong, quietSink(), force...)
 		if res.ExitCode != 0 {
-			return out, fmt.Errorf("镜像已更新，但重建 %s 失败；容器可能仍在运行旧版本",
+			return out, safeErr("镜像已更新，但重建 %s 失败；容器可能仍在运行旧版本",
 				strings.Join(names, "、"))
 		}
 	}
