@@ -57,7 +57,8 @@ func TestLocalAgentBootstrapNewApp(t *testing.T) {
 				t.Fatalf("expected exactly one bootstrapped agent: %+v, err=%v", agents, err)
 			}
 			rec := agents[0]
-			if rec.ID != "agent-local" || rec.Name != "本机" || rec.DisplayName != "本机" || !rec.Preprovisioned || rec.Disabled {
+			// 名字断言跟随常量，避免默认名调整后测试与实现脱钩
+			if rec.ID != store.LocalAgentID || rec.Name != store.LocalAgentName || rec.DisplayName != store.LocalAgentName || !rec.Preprovisioned || rec.Disabled {
 				t.Fatalf("unexpected local agent: %+v", rec)
 			}
 			if phase == "fresh" {
