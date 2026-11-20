@@ -39,6 +39,12 @@ const (
 	TimeoutLong = 10 * time.Minute
 	// TimeoutShort 用于轻量查询：ps / logs / version。
 	TimeoutShort = 30 * time.Second
+	// TimeoutManifest 用于「更新部署」的远端摘要查询（docker manifest inspect）。
+	//
+	// 比 TimeoutShort 宽：这一步是对外网 registry 的 HEAD/GET，
+	// 国内访问 Docker Hub 时单次几秒到几十秒都算正常，30 秒会被误杀成"查不到"。
+	// 又必须比 TimeoutLong 短：它只是"看一眼元数据"，真卡住要尽快让位给整次任务。
+	TimeoutManifest = 90 * time.Second
 )
 
 // maxOutputRunes 是回传命令输出的上限（字符数）。
@@ -167,13 +173,35 @@ func composeArgs(project, envFile string, args ...string) []string {
 // 因此 Run 保持 bytes.Buffer 直连 cmd.Stdout/Stderr 的原版形态，
 // 与 RunStream 只共享"参数/环境/超时"的构造逻辑（composeArgs / environ）。
 func (r *Runner) Run(ctx context.Context, project string, timeout time.Duration, args ...string) Result {
+	return r.runArgv(ctx, timeout, composeArgs(project, r.EnvFile, args...))
+}
+
+// RunDocker 执行 **docker 本体**的子命令（不经过 compose）。
+//
+// ============================ 为什么必须有它 ============================
+//
+// 「更新部署」需要两类 docker 本体的能力，它们都不在 compose 域里：
+//
+//	docker manifest inspect <ref>   查远端清单（有没有新版本）
+//	docker images --format ...      查本机某引用当前指向哪份内容
+//
+// 用 Run 会拼成 `docker compose manifest inspect`——那是个**不存在的子命令**，
+// 报错还会被当成"查不到远端摘要"，最终表现为"每次都判定有更新、每次都白拉一遍"。
+// 这类错误不会崩，只会让功能悄悄退化成最坏的行为，因此单列一个入口。
+func (r *Runner) RunDocker(ctx context.Context, timeout time.Duration, args ...string) Result {
+	argv := make([]string, len(args))
+	copy(argv, args)
+	return r.runArgv(ctx, timeout, argv)
+}
+
+// runArgv 是 Run / RunDocker 的共同实现：argv 已含完整子命令（不含可执行文件名）。
+func (r *Runner) runArgv(ctx context.Context, timeout time.Duration, argv []string) Result {
 	if timeout <= 0 {
 		timeout = TimeoutShort
 	}
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	argv := composeArgs(project, r.EnvFile, args...)
 	full := append([]string{r.binary()}, argv...)
 	cmd := exec.CommandContext(runCtx, full[0], argv...)
 	cmd.Dir = r.Dir

@@ -24,7 +24,7 @@ func operationPermission(action string, save bool) user.Permission {
 }
 func validOperation(s string) bool {
 	switch s {
-	case "up", "down", "stop", "restart", "pull", "rebuild", "remove", "backup":
+	case "up", "down", "stop", "restart", "pull", "rebuild", "remove", "backup", "deploy":
 		return true
 	}
 	return false
@@ -138,7 +138,11 @@ func (c *Controller) StartOperation(ctx context.Context, r *api.StartOperationRe
 			payload.ExpectHash = rec.ConfigHash
 		}
 		// 编排会重建多个容器，短暂抑制该服务器容器告警，不抑制服务器失联。
-		if c.d.SuppressMonitor != nil && (p.Action == "up" || p.Action == "down" || p.Action == "stop" || p.Action == "restart" || p.Action == "remove") {
+		//
+		// deploy 也必须在名单里：它在确实有新镜像时会重建容器，
+		// 漏掉它就会出现"用户点了一次更新，随即收到一堆容器重启告警"——
+		// 那是预期内的重建，不是故障。
+		if c.d.SuppressMonitor != nil && (p.Action == "up" || p.Action == "down" || p.Action == "stop" || p.Action == "restart" || p.Action == "remove" || p.Action == "deploy") {
 			c.d.SuppressMonitor(r.AgentID, "*", 5*time.Minute)
 		}
 		result, ce := c.d.Ops.ComposeOperationStart(ctx, r.AgentID, payload)

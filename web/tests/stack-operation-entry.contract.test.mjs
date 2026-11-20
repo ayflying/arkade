@@ -112,17 +112,26 @@ function check(name, ok, detail) {
   check('终态: 不定格', shouldSnapshot(action) === false)
 }
 
-/* ───────── 更新镜像：主按钮直接开始，重开运行中任务只继续读取 ───────── */
+/* ───────── 更新部署：主按钮直接开始，重开运行中任务只继续读取 ───────── */
 
 {
-  const pull = { autoStart: true, autoStarted: true, startAttempted: true, restartFinished: true }
-  const finished = decideEntry({ ...pull, hasTask: true, taskFinished: true })
-  check('更新镜像: 上次已结束，再点主按钮直接开始新任务', finished === 'start-new' && shouldSnapshot(finished))
-  check('更新镜像: 上次未结束，打开只恢复读取', decideEntry({ ...pull, hasTask: true, taskFinished: false }) === 'resume')
-  check('更新镜像: 没拿到上次结果，不自动发新请求', decideEntry({ ...pull, hasTask: false, taskFinished: false }) === 'retry-same-key')
+  const deploy = { autoStart: true, autoStarted: true, startAttempted: true, restartFinished: true }
+  const finished = decideEntry({ ...deploy, hasTask: true, taskFinished: true })
+  check('更新部署: 上次已结束，再点主按钮直接开始新任务', finished === 'start-new' && shouldSnapshot(finished))
+  check('更新部署: 上次未结束，打开只恢复读取', decideEntry({ ...deploy, hasTask: true, taskFinished: false }) === 'resume')
+  check('更新部署: 没拿到上次结果，不自动发新请求', decideEntry({ ...deploy, hasTask: false, taskFinished: false }) === 'retry-same-key')
   const actions = readFileSync(join(here, '..', 'src/components/stack/ManagedStackActions.vue'), 'utf8')
   const modal = readFileSync(join(here, '..', 'src/components/stack/StackOperationModal.vue'), 'utf8')
-  check('更新镜像: 详情按钮直接开启自动执行，仅对拉取生效', /openModal\(action, action === 'pull'\)/.test(actions))
+  check('更新部署: 详情按钮直接开启自动执行，仅对 deploy 生效', /openModal\(action, action === 'deploy'\)/.test(actions))
+  check(
+    '更新部署: 按钮组里是 deploy 而不是 pull',
+    /\['up', 'stop', 'restart', 'deploy', 'rebuild', 'backup'\]/.test(actions),
+    '「更新镜像」只拉不放，用户点完还得再点重建，已被「更新部署」取代'
+  )
+  check(
+    '更新部署: 弹窗重开也允许换新任务（旧结论会过期）',
+    /restartFinished: props\.action === 'deploy' \|\| props\.action === 'pull'/.test(modal)
+  )
   check('操作弹窗: 桌面限宽，手机保留两侧留白', /width: min\(860px, calc\(100% - 24px\)\)/.test(modal))
 }
 

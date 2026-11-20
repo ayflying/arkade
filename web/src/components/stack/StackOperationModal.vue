@@ -219,6 +219,45 @@ const backupPath = computed(() =>
   task.value !== null && task.value.action === 'backup' ? task.value.backup_path : ''
 )
 
+/**
+ * 本次更新了哪些服务（仅 deploy 有意义）。
+ *
+ * 三态必须分开，否则会把"没更新"说成"更新成功"或反过来：
+ *   - `null`：任务还没到终态 / 不是 deploy，不显示；
+ *   - `[]`：明确没有更新任何服务（镜像已是最新）；
+ *   - 非空：确实重建了这些服务。
+ */
+const updatedServices = computed<string[] | null>(() => {
+  const t = task.value
+  if (t === null || t.action !== 'deploy') return null
+  if (phase.value !== 'done') return null
+  return t.updated_services
+})
+
+const updatedText = computed(() => {
+  const list = updatedServices.value
+  if (list === null) return ''
+  if (list.length === 0) return '本次没有更新任何服务：镜像已是最新，容器没有被重建。'
+  return `本次已更新 ${String(list.length)} 个服务：${list.join('、')}`
+})
+
+/**
+ * 日志窗口底部的结束横幅。
+ *
+ * 只在**真实终态**出现：执行中、连接中断、状态未知都不显示——
+ * 那些时候说"完成"就是误报，而用户会直接关窗口，问题就被掩盖了。
+ */
+const completion = computed<{ text: string; ok: boolean } | null>(() => {
+  if (phase.value === 'done') {
+    const done = props.action === 'deploy' ? '更新完成' : '执行完成'
+    return { text: `${done}，如日志无异常再关闭此窗口！`, ok: true }
+  }
+  if (phase.value === 'failed') {
+    return { text: '执行失败，请先按上面的日志排查后再关闭此窗口。', ok: false }
+  }
+  return null
+})
+
 const emptyHint = computed(() => {
   if (task.value === null) {
     return awaitingStart.value ? `点击「${meta.value.label}」开始执行。` : '任务尚未开始。'
@@ -257,7 +296,12 @@ function onShow(): void {
     startAttempted: runner.hasStartAttempted(),
     autoStart: props.autoStart && props.online,
     autoStarted,
-    restartFinished: props.action === 'pull'
+    /*
+     * 「更新部署」再点一次要重新检查一次：上一次的结论（有没有新版本）
+     * 过几分钟就可能变了，让用户点开只看到一条旧结论等于这个按钮点不动。
+     * 这正是当初 pull 的语义，换成 deploy 后动机完全一样。
+     */
+    restartFinished: props.action === 'deploy' || props.action === 'pull'
   })
 
   /*
@@ -451,6 +495,11 @@ const logLabel = computed(() => `「${props.stackName}」${meta.value.label}的�
       备份已保存至 <code>{{ backupPath }}</code>
     </div>
 
+    <!-- 更新部署的结论：有更新 / 无更新是两种都算成功的结局，必须说清是哪一种 -->
+    <div v-if="updatedText !== ''" class="op-modal__updated">
+      {{ updatedText }}
+    </div>
+
     <!--
       错误分档，三档互斥：
       1. uncertain / interrupted：读取或启动结果不确定，给重试入口；
@@ -516,6 +565,7 @@ const logLabel = computed(() => `「${props.stackName}」${meta.value.label}的�
       :empty-hint="emptyHint"
       :active="props.show"
       :label="logLabel"
+      :completion="completion"
     />
 
     <div class="op-modal__footer">
@@ -592,6 +642,14 @@ const logLabel = computed(() => `「${props.stackName}」${meta.value.label}的�
   font-size: 12px;
   color: var(--arkade-text-secondary);
   word-break: break-all;
+}
+
+/* 更新结论：比普通说明更显眼一点——它回答的正是"这次到底动了什么" */
+.op-modal__updated {
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--arkade-text-primary);
+  word-break: break-word;
 }
 
 .op-modal__truncated {

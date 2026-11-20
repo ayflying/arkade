@@ -9,6 +9,15 @@ const props = defineProps<{
   emptyHint: string
   label: string
   active: boolean
+  /**
+   * 执行结束横幅（在日志窗口底部）。
+   *
+   * 传 null 表示"还没有结论"（排队中/执行中/状态未知），此时**什么都不显示**：
+   * 提前显示"完成"是最容易误导人的一种"进度提示"。
+   *
+   * 由调用方根据真实终态计算，本组件不从输出文本里猜。
+   */
+  completion?: { text: string; ok: boolean } | null
 }>()
 
 const viewport = shallowRef<HTMLElement | null>(null)
@@ -85,6 +94,19 @@ function outputTone(stream: string, text: string): string {
         <code class="terminal__command"><span v-for="(token, i) in pendingCommand" :key="i" :class="`terminal__token--${token.kind}`">{{ token.text }}</span></code>
       </div>
     </div>
+    <!--
+      结束横幅：告诉用户"命令都跑完了，可以关了"。
+      放在日志窗口底部而不是弹窗里，是因为用户的目光就停在日志末尾——
+      目标参照的产品也是这么做的。role=status 让读屏软件也能读出结论。
+    -->
+    <p
+      v-if="completion"
+      class="terminal__completion"
+      :class="completion.ok ? 'terminal__completion--ok' : 'terminal__completion--failed'"
+      role="status"
+    >
+      {{ completion.text }}
+    </p>
   </div>
 </template>
 
@@ -189,5 +211,26 @@ function outputTone(stream: string, text: string): string {
 .terminal__empty {
   margin: 0 0 5px;
   color: var(--terminal-muted);
+}
+
+/* 结束横幅：与目标参照产品一致的"绿条成功 / 红条失败"观感。
+   不用 n-alert：它属于浅色主题，放在深色终端里会像两个不同产品拼在一起。 */
+.terminal__completion {
+  margin: 0;
+  padding: 8px 12px;
+  border-top: 1px solid var(--terminal-frame);
+  font-size: 12px;
+  line-height: 1.6;
+  font-weight: 600;
+}
+
+.terminal__completion--ok {
+  color: #0a2a1d;
+  background: var(--terminal-mint);
+}
+
+.terminal__completion--failed {
+  color: #2c0b0b;
+  background: #ffaaa8;
 }
 </style>

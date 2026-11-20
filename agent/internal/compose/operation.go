@@ -4,9 +4,13 @@ package compose
 //
 // ============================ 设计要点 ============================
 //
-// 八个动作全部通过**原 Manager 方法**执行，绝不裸调 run("up")：
+// 九个动作全部通过**原 Manager 方法或 Manager 内部流程**执行，绝不裸调 run("up")：
 //   - ApplyProject 内部有哈希校验、原子 commit、env 排除、外部项目探测；
 //   - 裸跑会把这些保护全丢掉，是最危险的"为了日志而降低安全性"。
+//
+// 唯一的例外是 deploy（更新部署）：它本身是一段多步流程，
+// 但每一步都走 Manager 的 runStream，且复用同一套脱敏与锁，
+// 见 deploy.go 顶部的安全边界说明。
 //
 // 观察者通过 ctx 传入（见 observer.go），因此这些方法一行都不用改。
 
@@ -31,6 +35,11 @@ const (
 	ActionRebuild = "rebuild"
 	ActionRemove  = "remove"
 	ActionBackup  = "backup"
+	// ActionDeploy 是「更新部署」（deploy.go）：检查 → 仅在有新镜像时拉取并重建。
+	//
+	// 它不属于"一条命令一个动作"的那组，因此 normalizeSpec 走 default 分支
+	// （其余参数一律清空），execute 里单独分发。
+	ActionDeploy = "deploy"
 )
 
 // 领域错误。
@@ -66,6 +75,7 @@ type OperationSpec struct {
 var validActions = map[string]struct{}{
 	ActionUp: {}, ActionDown: {}, ActionStop: {}, ActionRestart: {},
 	ActionPull: {}, ActionRebuild: {}, ActionRemove: {}, ActionBackup: {},
+	ActionDeploy: {},
 }
 
 // normalizeSpec 校验并规范化参数。
@@ -189,11 +199,24 @@ func (m *Manager) relativeBackupPath(abs string) string {
 	return filepath.ToSlash(filepath.Base(abs))
 }
 
-// execute 执行动作，返回退出码、备份相对路径与错误。
+// execResult 是一次动作执行的产物。
+//
+// 用结构体而不是多返回值：动作在增加（backup 要路径、deploy 要服务清单），
+// 每加一个结论就改一次签名会让 9 个分支都要跟着改，容易漏。
+type execResult struct {
+	// ExitCode 是子进程退出码；0 表示这组命令都成功。
+	ExitCode int
+	// BackupPath 是 backup 成功后的相对备份路径。
+	BackupPath string
+	// UpdatedServices 是 deploy 真正重建过的服务（去重排序）。
+	UpdatedServices []string
+}
+
+// execute 执行动作，返回执行产物与错误。
 //
 // 全程通过 ctx 里的 observer 广播真实命令与输出；
 // 每个动作都调用**原 Manager 方法**，语义与同步接口完全一致。
-func (m *Manager) execute(ctx context.Context, name string, spec OperationSpec) (int, string, error) {
+func (m *Manager) execute(ctx context.Context, name string, spec OperationSpec) (execResult, error) {
 	switch spec.Action {
 	case ActionUp:
 		res, err := m.ApplyProject(ctx, ProjectSpec{
@@ -202,33 +225,43 @@ func (m *Manager) execute(ctx context.Context, name string, spec OperationSpec) 
 			EnvContent: spec.Env,
 			ExpectHash: spec.ExpectHash,
 		})
-		return res.ExitCode, "", err
+		return execResult{ExitCode: res.ExitCode}, err
 
 	case ActionDown:
 		res, err := m.Down(ctx, name, spec.RemoveVolumes)
-		return res.ExitCode, "", err
+		return execResult{ExitCode: res.ExitCode}, err
 
 	case ActionStop:
 		res, err := m.Stop(ctx, name, spec.Services)
-		return res.ExitCode, "", err
+		return execResult{ExitCode: res.ExitCode}, err
 
 	case ActionRestart:
 		res, err := m.Restart(ctx, name, spec.Services)
-		return res.ExitCode, "", err
+		return execResult{ExitCode: res.ExitCode}, err
 
 	case ActionPull:
 		res, err := m.Pull(ctx, name)
-		return res.ExitCode, "", err
+		return execResult{ExitCode: res.ExitCode}, err
 
 	case ActionRebuild:
 		res, err := m.Rebuild(ctx, name)
-		return res.ExitCode, "", err
+		return execResult{ExitCode: res.ExitCode}, err
+
+	case ActionDeploy:
+		// 「更新部署」：没有新镜像时**不拉取也不重建**，因此没有单一退出码；
+		// 走到这里说明整段流程都成功了，一律记 0。
+		// 失败时由 err 说明停在哪一步，退出码归 -1（见 pulltask.go 的说明）。
+		out, err := m.Deploy(ctx, name)
+		if err != nil {
+			return execResult{ExitCode: -1}, err
+		}
+		return execResult{ExitCode: 0, UpdatedServices: out.UpdatedServices}, nil
 
 	case ActionRemove:
 		// 是否删卷由请求显式决定（RemoveWithVolumes），**不默认删卷**：
 		// 删卷不可逆，绝不能因为用户点了"删除编排"就永久丢数据。
 		res, err := m.RemoveWithVolumes(ctx, name, spec.RemoveVolumes)
-		return res.ExitCode, "", err
+		return execResult{ExitCode: res.ExitCode}, err
 
 	case ActionBackup:
 		// backup 内部是文件复制 + 裸 exec（tar / volume ls），
@@ -236,7 +269,7 @@ func (m *Manager) execute(ctx context.Context, name string, spec OperationSpec) 
 		// 通过 observer 上报（见 backup.go 的注入点）。
 		br, err := m.Backup(ctx, name, spec.IncludeVolumes)
 		if err != nil {
-			return -1, "", err
+			return execResult{ExitCode: -1}, err
 		}
 		// 只回**相对**工作区路径：绝对路径暴露 Agent 磁盘布局，
 		// 而用户需要的信息只是"备份放在哪儿"。
@@ -244,9 +277,9 @@ func (m *Manager) execute(ctx context.Context, name string, spec OperationSpec) 
 		if br.VolumeFailed {
 			// 卷备份失败必须让任务 failed：编排文件虽然备份成功，
 			// 但用户点的是"备份（含数据卷）"，置 succeeded 就是误报。
-			return -1, rel, errors.New(br.VolumeError)
+			return execResult{ExitCode: -1, BackupPath: rel}, errors.New(br.VolumeError)
 		}
-		return 0, rel, nil
+		return execResult{BackupPath: rel}, nil
 	}
-	return -1, "", ErrUnknownAction
+	return execResult{ExitCode: -1}, ErrUnknownAction
 }

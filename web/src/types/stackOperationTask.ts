@@ -14,11 +14,28 @@
 /**
  * 编辑动作。
  *
- * 与后端 switch 的取值一致（`up/stop/restart/pull/rebuild/remove/backup`）。
+ * 与后端 switch 的取值一致（`up/stop/restart/pull/rebuild/deploy/remove/backup`）。
  * 注意 `start` 在前端叫「启动」但发的是 `up`，`recreate` 叫「重建」但发 `rebuild`——
  * 翻译只在这一处，写错就是运行时「不支持的动作」。
+ *
+ * ## `deploy` 与 `pull` 的区别（不要合并）
+ *
+ * - `pull` 只拉镜像，容器仍跑旧版本，用户还得再点一次「重建」；
+ * - `deploy` 先检查有没有新镜像，**只有确实有更新才拉取并重建**，
+ *   没有可更新的镜像时一个容器都不动。
+ *
+ * 界面上的「更新部署」用的是 `deploy`；`pull` 保留为纯拉取动作，
+ * 供"先把镜像备好、稍后再切"的场景与既有接口调用方使用。
  */
-export type StackOperationAction = 'up' | 'stop' | 'restart' | 'pull' | 'rebuild' | 'remove' | 'backup'
+export type StackOperationAction =
+  | 'up'
+  | 'stop'
+  | 'restart'
+  | 'pull'
+  | 'rebuild'
+  | 'deploy'
+  | 'remove'
+  | 'backup'
 
 /**
  * 所有动作的固定顺序，用于按钮渲染与测试断言
@@ -32,7 +49,7 @@ export const STACK_OPERATION_ACTIONS: readonly StackOperationAction[] = [
   'up',
   'stop',
   'restart',
-  'pull',
+  'deploy',
   'rebuild',
   'backup',
   'remove'
@@ -138,6 +155,14 @@ export interface StackOperationTask {
    * 界面上展示给用户，让他知道文件落在哪里。
    */
   backup_path: string
+  /**
+   * deploy 真正重建过的服务名（去重排序）。
+   *
+   * **空数组是明确结论，不是缺字段**：它表示"没有可更新的镜像，一个容器都没动"。
+   * 因此成功状态 + 空列表 = 不需要更新，这与失败是两件事。
+   * 其它动作恒为空。
+   */
+  updated_services: string[]
   /**
    * 删除动作：Hub 是否真的删掉了编排记录。
    *
@@ -309,6 +334,9 @@ export function normalizeOperationTask(raw: unknown): StackOperationTask | null 
     exit_code: typeof r.exit_code === 'number' && Number.isFinite(r.exit_code) ? r.exit_code : null,
     error: typeof r.error === 'string' ? r.error : '',
     backup_path: typeof r.backup_path === 'string' ? r.backup_path : '',
+    updated_services: Array.isArray(r.updated_services)
+      ? r.updated_services.filter((s): s is string => typeof s === 'string' && s.trim() !== '')
+      : [],
     record_removed: r.record_removed === true,
     stack_version:
       typeof r.stack_version === 'number' && Number.isFinite(r.stack_version)
@@ -387,6 +415,14 @@ export const STACK_OPERATION_META: Record<StackOperationAction, StackOperationMe
     label: '更新镜像',
     dangerous: false,
     description: '只拉取 compose 中声明的镜像，不会自动重建或重启容器。需要生效请另行执行「重建」。'
+  },
+  deploy: {
+    label: '更新部署',
+    dangerous: false,
+    description:
+      '先检查镜像有没有新版本：只有确实有更新才拉取并重建对应服务；' +
+      '没有可更新的镜像时不拉取、也不重建任何容器。' +
+      '拉取失败会立即停止，不会用旧镜像强行重建。'
   },
   rebuild: {
     label: '重建',

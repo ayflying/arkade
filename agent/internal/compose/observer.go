@@ -4,11 +4,12 @@ package compose
 //
 // ============================ 为什么挂在 ctx 上 ============================
 //
-// 编排操作的实际执行路径是 Manager 的八个方法（ApplyProject/Down/Stop/
-// Restart/Pull/Rebuild/Remove/Backup），它们内部各自加项目锁、各自校验，
+// 编排操作的实际执行路径是 Manager 的方法（ApplyProject/Down/Stop/
+// Restart/Pull/Rebuild/Remove/Backup，以及 Deploy 的内部流程），
+// 它们内部各自加项目锁、各自校验，
 // 而且**在外层再套锁就会死锁**（它们自己调 withProject）。
 //
-// 若把观察者做成参数，就要逐个改这八个方法的签名，还会传染到所有调用点；
+// 若把观察者做成参数，就要逐个改这些方法的签名，还会传染到所有调用点；
 // 挂在 ctx 上则完全无侵入：任务层只需 withObserver(ctx, ob)，
 // 底层 Runner 与 backup 的裸 exec 都能从 ctx 取到同一个 sink。
 //
@@ -25,6 +26,7 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"time"
 )
 
 // observerKey 是 ctx 里存放观察者的键（未导出的空结构体，外部无法伪造）。
@@ -123,6 +125,9 @@ func splitLines(s string) []string {
 // backup 的某些步骤（复制编排文件、统计卷列表）没有一条"真实命令"可展示。
 // 编造一条假命令会误导用户去复制执行，因此只报阶段名，
 // 由前端显示为进度标记而不是可执行命令。
+//
+// r 可以为 nil：这类说明本身就是结论（"没有可更新的镜像"），
+// 没有"用哪份配置遮"的问题。
 func (o *executionObserver) stage(name string, r *Runner) {
 	if o == nil || o.onStage == nil {
 		return
@@ -130,4 +135,66 @@ func (o *executionObserver) stage(name string, r *Runner) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.onStage(name, r)
+}
+
+// silentSink 是一个吞掉一切输出的 StreamSink。
+//
+// 用于「更新部署」里那些**输出是结构化 JSON** 的步骤（ps / manifest / images）：
+// 它们的输出要解析，展示出来既没意义（几百行 JSON）、还会把真正的进度消息淹没。
+// 命令本身仍然会作为 command 事件出现，用户照样知道"跑了什么"。
+//
+// 为什么不直接传 nil：RunStream 的实现要求 sink 非 nil，
+// 传 nil 会在第一行输出时 panic——那正是"只在有输出时才炸"的隐蔽 bug。
+type silentSink struct{}
+
+func (silentSink) Stdout(string) {}
+func (silentSink) Stderr(string) {}
+
+// quiet 返回本次任务可用的静默 sink（任务外执行时也安全）。
+func quietSink() StreamSink { return silentSink{} }
+
+// suppressedMarker 是与 *executionObserver **不同类型**的标记值。
+//
+// 它的唯一作用：塞进 observerKey 之后，observerFrom 的类型断言会失败并返回 nil，
+// 于是那段命令既不上报 command 事件、也不上报输出。
+//
+// 为什么需要它：「更新部署」的第 1/2 步要解析 docker 的结构化输出
+// （ps 的 JSON、manifest 的 JSON）。那些输出对用户毫无意义，
+// 却会把任务日志的 2000 行 / 256 KB 配额吃光——真正的拉取失败信息就被挤掉了。
+// 命令仍会通过 stage 说明告知用户"在检查什么"。
+type suppressedMarker struct{}
+
+// withoutObserver 让 ctx 上的观察者失效（仅用于"输出要解析、不该展示"的探测命令）。
+//
+// 安全性由类型断言保证：即便将来有人把 marker 换成别的类型，
+// observerFrom 也只认 *executionObserver，绝不会把标记值当观察者用。
+func withoutObserver(ctx context.Context) context.Context {
+	if ctx == nil {
+		return nil
+	}
+	return context.WithValue(ctx, observerKey{}, suppressedMarker{})
+}
+
+// probe 执行一条**只解析、不展示**的 compose 查询命令。
+//
+// 两条约束一起用才有意义：
+//   - withoutObserver：输出不进任务日志（不占用配额、不淹没进度）；
+//   - m.run 而不是 m.runStream：需要**逐字节精确**的 stdout
+//     （ps --format json 是单行 JSON，逐行切分会被 64KB 行上限截断）。
+func (m *Manager) probe(ctx context.Context, name string, timeout time.Duration, args ...string) Result {
+	return m.run(withoutObserver(ctx), name, timeout, args...)
+}
+
+// probeDocker 与 probe 相同，但执行的是 **docker 本体**的子命令。
+//
+// 用于 docker manifest inspect / docker images：写成 compose 子命令会变成
+// 一个不存在的命令，错误还会被吞成"查不到"，导致每次都白拉一遍。
+func (m *Manager) probeDocker(ctx context.Context, name string, timeout time.Duration, args ...string) Result {
+	dir, err := m.ws.ProjectDir(name)
+	if err != nil {
+		return Result{Output: err.Error(), ExitCode: -1}
+	}
+	r := m.runnerFor(name)
+	r.Dir = dir
+	return r.RunDocker(withoutObserver(ctx), timeout, args...)
 }

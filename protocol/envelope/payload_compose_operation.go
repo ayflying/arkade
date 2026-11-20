@@ -31,6 +31,13 @@ const (
 	ActionRebuild = "rebuild"
 	ActionRemove  = "remove"
 	ActionBackup  = "backup"
+	// ActionDeploy 是「更新部署」：先检测有没有新镜像，只有确实有更新
+	// 才拉取并重建（没有更新时既不拉取也不重启）。流程见 Agent 的 deploy.go。
+	//
+	// 与 ActionPull 的区别是刻意保留的：
+	//   - pull 只拉镜像，容器仍跑旧版本，适合"先拉好、稍后再切"；
+	//   - deploy 是"检查 + 按需更新"，也就是用户点一次就想要的结果。
+	ActionDeploy = "deploy"
 )
 
 // 任务状态取值。
@@ -76,7 +83,7 @@ type ComposeOperationStartPayload struct {
 	// 长度限制 8..128 字节（Agent 侧校验）。
 	RequestID string `json:"request_id"`
 
-	// Action 是动作名：up/down/stop/restart/pull/rebuild/remove/backup。
+	// Action 是动作名：up/down/stop/restart/pull/rebuild/remove/backup/deploy。
 	Action string `json:"action"`
 
 	// Config 与 Env 仅 up 使用。
@@ -175,4 +182,19 @@ type ComposeOperationResult struct {
 	// 只回相对路径：绝对路径会暴露 Agent 的磁盘布局，
 	// 而用户在这个界面里需要的是"备份放在哪儿"这一信息本身。
 	BackupPath string `json:"backup_path,omitempty"`
+
+	// UpdatedServices 是 deploy 动作真正重建过的服务名（已去重排序）。
+	//
+	// ============================ 为什么必须有这个字段 ============================
+	//
+	// deploy 的结论有两种完全不同的成功：
+	//   - 确实有新镜像，拉取并重建了 N 个服务；
+	//   - 没有可更新的镜像，一个容器都没动。
+	//
+	// 两者 status 都是 succeeded、退出码都是 0。若不给这个字段，
+	// 前端只能去解析日志文本猜结论——那是把判断建立在不稳定的字符串上，
+	// 日志一改文案就误报。空列表即"没有更新任何服务"，是明确结论而非缺失。
+	//
+	// 其它动作不填（它们没有"更新了哪些服务"这个概念）。
+	UpdatedServices []string `json:"updated_services,omitempty"`
 }

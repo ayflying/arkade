@@ -598,6 +598,10 @@ func (m *Manager) run(ctx context.Context, name string, timeout time.Duration, a
 }
 
 // runStream 与 run 完全一样，只是把输出逐行推给 sink（用于异步任务的流式输出）。
+//
+// 任务观察者（observer.go）由 RunStream 自己从 ctx 取出并广播，
+// 因此这里不需要（也不应该）把 observer 混进 sink：
+// 混进去会让同一条输出被上报两次，日志里出现成对重复行。
 func (m *Manager) runStream(ctx context.Context, name string, timeout time.Duration, sink StreamSink, args ...string) Result {
 	dir, err := m.ws.ProjectDir(name)
 	if err != nil {

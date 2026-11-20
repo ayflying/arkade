@@ -403,22 +403,34 @@ const { mergeOutput, stripAnsi, byteLength, MAX_OUTPUT_BYTES, MAX_OUTPUT_EVENTS 
   /*
    * 文案统一由 STACK_OPERATION_META 提供（按钮与弹窗共用，避免两处不一致），
    * 组件里只渲染 meta.label，所以直接查 meta 源。
+   *
+   * 主按钮已从「更新镜像」(pull) 换成「更新部署」(deploy)：
+   * pull 只把镜像拉下来、容器仍跑旧版本，用户点完还得再点一次重建。
    */
   check(
-    '按钮: 仍叫「更新镜像」',
-    /label: '更新镜像'/.test(typesSrc) && /STACK_OPERATION_META\[action\]\.label/.test(actions)
+    '按钮: 主按钮是「更新部署」',
+    /label: '更新部署'/.test(typesSrc) && /STACK_OPERATION_META\[action\]\.label/.test(actions)
   )
   check(
-    '按钮: 已不再用 runStackAction 执行 pull',
-    !/action:\s*'pull'/.test(actions),
+    '按钮: 更新部署的说明写明按需更新',
+    /只有确实有更新才拉取并重建/.test(typesSrc) &&
+      /meta\.description/.test(
+        readFileSync(join(here, '..', 'src', 'components', 'stack', 'StackOperationModal.vue'), 'utf8')
+      ),
+    '说明放在弹窗内固定展示'
+  )
+  check(
+    '按钮: 已不再用 runStackAction 执行',
+    !/action:\s*'pull'/.test(actions) && !/action:\s*'deploy'/.test(actions),
     '旧路径会跳过实时输出'
   )
+  /*
+   * pull 动作本身（纯拉取）仍然保留在协议与 meta 里，
+   * 只是不再占按钮位——删掉它等于删掉一条已发布的接口语义。
+   */
   check(
-    '按钮: 只拉不重建的提示在弹窗里',
-    /不会自动重建/.test(typesSrc) && /meta\.description/.test(
-      readFileSync(join(here, '..', 'src', 'components', 'stack', 'StackOperationModal.vue'), 'utf8')
-    ),
-    '一步到位方案下，说明放在弹窗内固定展示'
+    '按钮: pull 动作仍保留为纯拉取（不占按钮位）',
+    /label: '更新镜像'/.test(typesSrc) && !/'pull',\s*'rebuild'/.test(actions)
   )
   /*
    * 弹窗已从 pull 专用的 StackPullModal 泛化为 StackOperationModal，

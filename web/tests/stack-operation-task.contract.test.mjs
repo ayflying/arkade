@@ -65,7 +65,7 @@ function read(rel) {
 /* ───────── 1. 动作枚举与元数据 ───────── */
 
 {
-  const EXPECTED = ['up', 'stop', 'restart', 'pull', 'rebuild', 'backup', 'remove']
+  const EXPECTED = ['up', 'stop', 'restart', 'deploy', 'rebuild', 'backup', 'remove']
   check(
     '动作: 枚举完整',
     types.STACK_OPERATION_ACTIONS.join(',') === EXPECTED.join(','),
@@ -82,13 +82,24 @@ function read(rel) {
   for (const action of ['restart', 'rebuild', 'remove']) {
     check(`动作${action}: 标记为危险`, types.STACK_OPERATION_META[action].dangerous === true)
   }
-  for (const action of ['up', 'pull', 'backup']) {
+  for (const action of ['up', 'deploy', 'backup']) {
     check(`动作${action}: 非危险`, types.STACK_OPERATION_META[action].dangerous === false)
   }
 
-  // 更新镜像必须说清不重建
+  /*
+   * 「更新部署」的核心承诺必须写在说明里，三条缺一条都会被误解：
+   *   1. 只在有更新时才动容器（否则用户以为点了必重启）；
+   *   2. 没有可更新镜像时什么都不做；
+   *   3. 失败时不拿旧镜像硬重建。
+   */
+  const deployDesc = types.STACK_OPERATION_META.deploy.description
+  check('动作deploy: 说明写明只在有更新时才重建', /只有确实有更新才拉取并重建/.test(deployDesc), deployDesc)
+  check('动作deploy: 说明写明没有更新时不重建', /没有可更新的镜像时不拉取、也不重建/.test(deployDesc), deployDesc)
+  check('动作deploy: 说明写明拉取失败即停止', /拉取失败会立即停止/.test(deployDesc), deployDesc)
+
+  // pull 仍保留为纯拉取动作：它的说明不能跟着改成"会自动重建"
   check(
-    '动作pull: 说明写明不自动重建',
+    '动作pull: 说明仍写明不自动重建',
     /不会自动重建/.test(types.STACK_OPERATION_META.pull.description),
     types.STACK_OPERATION_META.pull.description
   )
@@ -157,6 +168,59 @@ function read(rel) {
 
   const unknownAction = types.normalizeOperationTask({ task_id: 'T3', action: 'explode' })
   check('归一化: 未知动作归 unknown', unknownAction.action === 'unknown')
+}
+
+/* ───────── 3b. deploy 的结论字段 updated_services ───────── */
+
+{
+  const deploy = types.normalizeOperationTask({
+    task_id: 'D1',
+    name: 'app',
+    action: 'deploy',
+    status: 'succeeded',
+    exit_code: 0,
+    updated_services: ['web', 'db']
+  })
+  check('deploy: action 归一化', deploy.action === 'deploy', String(deploy.action))
+  check(
+    'deploy: updated_services 原样保留',
+    deploy.updated_services.join(',') === 'web,db',
+    deploy.updated_services.join(',')
+  )
+
+  /*
+   * 空数组是**明确结论**（没有可更新的镜像），必须与"字段缺失"区分开：
+   * 若把缺失也当成空数组，界面会对着一个旧 Agent 说"没有可更新的镜像"，
+   * 而实际只是它没上报。
+   */
+  const none = types.normalizeOperationTask({
+    task_id: 'D2',
+    action: 'deploy',
+    status: 'succeeded',
+    exit_code: 0,
+    updated_services: []
+  })
+  check('deploy: 空数组代表没有更新任何服务', Array.isArray(none.updated_services) && none.updated_services.length === 0)
+
+  const missing = types.normalizeOperationTask({ task_id: 'D3', action: 'deploy', status: 'succeeded' })
+  check('deploy: 缺字段退化为空数组（不崩）', Array.isArray(missing.updated_services) && missing.updated_services.length === 0)
+
+  // 脏数据（null / 数字 / 空串）不能污染成 "undefined 个服务"
+  const dirty = types.normalizeOperationTask({
+    task_id: 'D4',
+    action: 'deploy',
+    status: 'succeeded',
+    updated_services: ['web', '', null, 42, 'db']
+  })
+  check(
+    'deploy: 过滤非字符串与空串',
+    dirty.updated_services.join(',') === 'web,db',
+    dirty.updated_services.join(',')
+  )
+
+  // 非 deploy 动作恒为空：不能从别的动作里读出"更新了哪些服务"
+  const other = types.normalizeOperationTask({ task_id: 'D5', action: 'backup', status: 'succeeded' })
+  check('deploy: 其它动作 updated_services 为空', other.updated_services.length === 0)
 }
 
 /* ───────── 4. 成功判定 / 删除判定 ───────── */

@@ -37,14 +37,17 @@ func (t *PullTask) snapshot(after int64) PullSnapshot {
 		// BackupPath 必须在这里取：task.backupPath 在 run 里赋值，
 		// 若快照漏映射，协议层永远收到空串，前端就看不到备份位置。
 		BackupPath: t.backupPath,
-		Command:    t.command,
-		WorkingDir: t.workingDir,
-		Status:     t.status,
-		NextCursor: t.nextSeq,
-		Truncated:  t.truncated,
-		Error:      t.errText,
-		StartedAt:  t.startedAt,
-		FinishedAt: t.finishedAt,
+		// UpdatedServices 同理：它不是从输出文本里解析出来的，
+		// 漏映射就等于让前端丢掉了 deploy 的唯一结论。
+		UpdatedServices: append([]string(nil), t.updatedServices...),
+		Command:         t.command,
+		WorkingDir:      t.workingDir,
+		Status:          t.status,
+		NextCursor:      t.nextSeq,
+		Truncated:       t.truncated,
+		Error:           t.errText,
+		StartedAt:       t.startedAt,
+		FinishedAt:      t.finishedAt,
 	}
 	if t.exitCode != nil {
 		ec := *t.exitCode

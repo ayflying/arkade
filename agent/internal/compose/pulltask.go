@@ -1,11 +1,15 @@
 package compose
 
-// pulltask.go：编排「更新镜像」的异步任务（compose pull 的流式执行）。
+// pulltask.go：编排动作的异步任务（操作窗口背后真正在跑东西的地方）。
+//
+// 名字保留 pull 是因为历史原因（它最早只服务「更新镜像」），
+// 现在 **所有** 编排动作（up/down/stop/restart/deploy/rebuild/remove/backup/
+// pull）都走同一套任务：start 立即返回 task_id，get 增量轮询。
 //
 // ============================ 为什么要有它 ============================
 //
-// compose pull 要几十秒到几分钟。若让一次 RPC 等到底：
-//   - 会撞上 Hub 请求超时，用户看到"失败"，实际镜像已被更新；
+// 一次拉取要几十秒到几分钟，rebuild 更久。若让一次 RPC 等到底：
+//   - 会撞上 Hub 请求超时，用户看到"失败"，实际命令已经跑完了；
 //   - 用户看不到任何输出，无法判断是卡住还是在拉大层。
 //
 // 因此：start 立即返回 task_id，get 增量轮询。
@@ -14,15 +18,17 @@ package compose
 //
 // 借鉴了它的核心设计：任务只绑定本进程、limit 是硬约束、ctx 不用请求 ctx。
 // 但**不复用**它的实现：那边的任务围绕"归档文件与大字节流"，
-// 这里的任务是"跑一条命令并推流"，两者的 ioMu/writers/quota 全都不适用。
+// 这里的任务是"跑命令并推流"，两者的 ioMu/writers/quota 全都不适用。
 // 强行复用会让两边都变复杂。
 //
 // ============================ 安全边界 ============================
 //
-//  1. 只执行**固定的 compose pull**，参数由 Agent 拼死，不接受任何用户参数；
+//  1. 动作与参数由 Agent 拼死：用户只提供项目名与动作名，镜像引用取自 compose 正文；
 //  2. 不经过 shell（exec(argv)），因此不存在注入面；
 //  3. 输出**必须**脱敏；脱敏信息读不到时 fail-closed（隐藏全部输出）；
-//  4. 不重启业务：只 pull，绝不 up。
+//  4. 「是否重建容器」由动作语义决定，不靠命令失败去兜：
+//     pull 绝不 up；deploy 只重建**确实拉到新内容**的那几个服务
+//     （判定逻辑见 deploy.go，无更新时连 pull 都不跑）。
 
 import (
 	"context"
@@ -96,6 +102,11 @@ type PullTask struct {
 	spec OperationSpec
 	// backupPath 是 backup 成功后的相对备份路径（白名单字段）。
 	backupPath string
+	// updatedServices 是 deploy 真正重建过的服务（去重排序）。
+	//
+	// 与 backupPath 同属"白名单结论字段"：只有 Agent 自己算出来的值，
+	// 绝不由用户输入拼接，因此可以安全回给前端。
+	updatedServices []string
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -125,14 +136,19 @@ type PullSnapshot struct {
 	WorkingDir string
 	// BackupPath 是 backup 动作成功后的备份路径（相对工作区，非绝对路径）。
 	BackupPath string
-	Status     string
-	Output     []PullEvent
-	NextCursor int64
-	Truncated  bool
-	ExitCode   *int
-	Error      string
-	StartedAt  time.Time
-	FinishedAt time.Time
+	// UpdatedServices 是 deploy 动作真正重建过的服务（去重排序）。
+	//
+	// 空切片表示**明确没有更新任何服务**（而不是"字段缺失"）：
+	// 这正是"没有可更新的镜像，容器一个都没动"的情形。
+	UpdatedServices []string
+	Status          string
+	Output          []PullEvent
+	NextCursor      int64
+	Truncated       bool
+	ExitCode        *int
+	Error           string
+	StartedAt       time.Time
+	FinishedAt      time.Time
 }
 
 // PullManager 管理全部镜像更新任务。
@@ -379,7 +395,8 @@ func (p *PullManager) run(task *PullTask) {
 	// 在等锁期间就置 running 会让用户以为命令已经在跑，而实际还在排队。
 
 	execCtx := withObserver(runCtx, ob)
-	exitCode, backupPath, err := p.mgr.execute(execCtx, task.name, task.spec)
+	res, err := p.mgr.execute(execCtx, task.name, task.spec)
+	exitCode, backupPath := res.ExitCode, res.BackupPath
 
 	// 若整个动作没有产生任何 command/stage（极少数实现路径），
 	// 仍需把状态推向终态；先把 running 补上以免快照出现 queued→failed 的怪状态。
@@ -389,6 +406,7 @@ func (p *PullManager) run(task *PullTask) {
 	defer task.mu.Unlock()
 	task.finishedAt = time.Now()
 	task.backupPath = backupPath
+	task.updatedServices = res.UpdatedServices
 
 	// 超时与取消要能被区分：前者文案说"超时"，后者说"已停止"。
 	if errors.Is(runCtx.Err(), context.DeadlineExceeded) {

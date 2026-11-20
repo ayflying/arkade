@@ -179,6 +179,18 @@ const emptyHint = computed(() => {
   return '正在等待服务器输出…'
 })
 
+/**
+ * 日志底部结束横幅。
+ *
+ * 迁移的失败还可能伴随不确定性（目标端可能已有残留改动），
+ * 因此失败文案不写"已回滚"之类它并不保证的事，只要求用户先看日志。
+ */
+const completion = computed<{ text: string; ok: boolean } | null>(() => {
+  if (phase.value === 'done') return { text: '迁移完成，如日志无异常再关闭此窗口！', ok: true }
+  if (phase.value === 'failed') return { text: '迁移失败，请先按上面的日志排查后再关闭此窗口。', ok: false }
+  return null
+})
+
 /* ───────── 生命周期 ───────── */
 
 /**
@@ -433,6 +445,7 @@ function close(): void {
       :empty-hint="emptyHint"
       :active="props.show"
       label="迁移执行日志"
+      :completion="completion"
     />
 
     <div class="migrate-modal__footer">

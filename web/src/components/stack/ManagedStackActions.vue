@@ -52,8 +52,12 @@ onUnmounted(() => { alive = false })
 /**
  * 按钮展示顺序：删除单独放最后（红色、危险）。
  * 其余按「常用 → 破坏性递增」排。
+ *
+ * 「更新部署」(deploy) 取代了原来的「更新镜像」(pull)：
+ * 用户看到"更新"按钮，期望的是"帮我更新到最新"，而不是"只把镜像拉下来，
+ * 容器还跑着旧版本、还得再点一次重建"。pull 动作本身仍保留在协议里。
  */
-const BUTTONS: StackOperationAction[] = ['up', 'stop', 'restart', 'pull', 'rebuild', 'backup']
+const BUTTONS: StackOperationAction[] = ['up', 'stop', 'restart', 'deploy', 'rebuild', 'backup']
 
 /** 未同步时不能启动/重建：会把未登记的内容当成已登记来执行 */
 const UNSYNCED_BLOCKED: StackOperationAction[] = ['up', 'rebuild']
@@ -111,8 +115,12 @@ async function handleAction(action: StackOperationAction): Promise<void> {
   const meta = STACK_OPERATION_META[action]
 
   if (!meta.dangerous) {
-    // 点击「更新镜像」就是启动意图：仅拉取，不重建或重启容器。
-    openModal(action, action === 'pull')
+    /*
+     * 点击「更新部署」就是启动意图：检查有没有新镜像，有事才更新。
+     * 不需要二次确认——它在没有可更新镜像时什么都不做，
+     * 而"先弹个框问一遍、确认完发现没更新"正是旧的别扭体验。
+     */
+    openModal(action, action === 'deploy')
     return
   }
 

@@ -77,7 +77,10 @@ func toOperationResult(s compose.PullSnapshot) envelope.ComposeOperationResult {
 		ExitCode:   s.ExitCode,
 		Error:      s.Error,
 		BackupPath: s.BackupPath,
-		Output:     make([]envelope.ComposeOperationEvent, 0, len(s.Output)),
+		// UpdatedServices 是 deploy 的唯一结论字段：有值=真的重建了这些服务，
+		// 空=明确没有更新任何容器。前端据此显示"已更新/无需更新"，不去解析日志。
+		UpdatedServices: append([]string(nil), s.UpdatedServices...),
+		Output:          make([]envelope.ComposeOperationEvent, 0, len(s.Output)),
 	}
 	for _, ev := range s.Output {
 		out.Output = append(out.Output, envelope.ComposeOperationEvent{
