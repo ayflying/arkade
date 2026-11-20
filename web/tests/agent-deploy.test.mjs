@@ -15,12 +15,20 @@ test('部署只需要 Compose，默认使用 Docker Hub 的 latest、无前缀�
   assert.match(compose, /^      HUB_URL: "https:\/\/hub\.example\.com:8443"$/m)
   assert.match(compose, /^      AGENT_TOKEN: "test-token"$/m)
   assert.match(compose, /^      AGENT_NAME: "测试服务器"$/m)
-  assert.match(compose, /^      DATA_DIR: \/opt\/arkade\/agent$/m)
-  assert.match(compose, /^      RUNTIME_KIND: auto$/m)
-  assert.match(compose, /^      LOG_LEVEL: info$/m)
   assert.match(compose, /^      - agent-data:\/opt\/arkade\/agent$/m)
+  /*
+   * 只保留必填项：数据目录、运行时类型、日志级别等都由镜像默认值决定，
+   * 写进编排只会让运维以为必须改，且容易和卷挂载点写岔。
+   */
+  assert.deepEqual(
+    [...compose.matchAll(/^      ([A-Z_]+):/gm)].map((m) => m[1]),
+    ['AGENT_TOKEN', 'HUB_URL', 'AGENT_NAME']
+  )
   assert.match(compose, /^      - \/var\/run\/docker\.sock:\/var\/run\/docker\.sock$/m)
-  assert.doesNotMatch(compose, /\.env\b|env_file|\.toml\b|ARKADE_|\/agent\/connect/)
+  assert.doesNotMatch(
+    compose,
+    /\.env\b|env_file|\.toml\b|ARKADE_|\/agent\/connect|DATA_DIR|RUNTIME_KIND|LOG_LEVEL|LOG_FORMAT|SOCKET|HEARTBEAT_SEC/
+  )
   assert.match(buildComposeSnippet({ ...input, agentName: '' }), /^      AGENT_NAME: "arkade-agent"$/m)
 })
 

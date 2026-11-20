@@ -66,11 +66,8 @@ services:
       AGENT_TOKEN: ${quoteComposeValue(input.token)}
       HUB_URL: ${quoteComposeValue(hubUrl.origin)}
       AGENT_NAME: ${quoteComposeValue(input.agentName || 'arkade-agent')}
-      DATA_DIR: ${AGENT_DATA_DIR}
-      RUNTIME_KIND: auto
-      LOG_LEVEL: info
     volumes:
-      # 保留 Agent 身份和数据，避免重建容器后丢失。
+      # 镜像内数据目录固定为 /opt/arkade/agent，挂载它即可保留身份与数据。
       - agent-data:${AGENT_DATA_DIR}
       - /var/run/docker.sock:/var/run/docker.sock
 
