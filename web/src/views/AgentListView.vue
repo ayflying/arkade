@@ -103,21 +103,24 @@ const summary = computed(() => {
 })
 
 /**
- * 进入某台服务器的容器列表。
+ * 进入某台服务器：默认落在「容器编排」。
  *
- * pending 服务器直接拦住：它从未连过，容器列表必然是空的。
+ * 为什么不是容器列表：进服务器通常先看它是怎么部署的（编排定义了所有服务），
+ * 再决定要不要进某个容器里翻进程。编排页也顺带是改配置、做自更新的入口。
+ *
+ * pending 服务器直接拦住：它从未连过，容器与编排都是空的。
  * 光把行内按钮禁用不够——整行可点，用户点名称或空白处照样会进去，
- * 然后看着空列表以为这台机器上没有容器，其实只是还没接入。
+ * 然后看着空列表以为这台机器上什么都没有，其实只是还没接入。
  * 因此这里做最后一道拦截，并给出原因而不是静默无响应。
  */
 function enterAgent(agent: Agent): void {
   if (enteringId.value !== '') return
   if (agent.status === 'pending') {
-    toastWarning('这台服务器还没有接入过，暂时没有容器信息。请先在服务器上启动 Agent。')
+    toastWarning('这台服务器还没有接入过，暂时没有编排信息。请先在服务器上启动 Agent。')
     return
   }
   enteringId.value = agent.id
-  void router.push({ name: 'agent-containers', params: { id: agent.id } }).finally(() => {
+  void router.push({ name: 'agent-stacks', params: { id: agent.id } }).finally(() => {
     enteringId.value = ''
   })
 }

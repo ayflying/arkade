@@ -60,11 +60,11 @@ const toggleHint = computed(() =>
     : '禁用后该服务器的操作入口不可用，不会删除任何容器'
 )
 
-/** 「容器」按钮的说明文案 */
+/** 「进入」按钮的说明文案 */
 const enterHint = computed(() =>
   isPending.value
-    ? '这台服务器还没有接入过，暂时没有容器信息。请先在服务器上启动 Agent'
-    : '查看该服务器上的容器'
+    ? '这台服务器还没有接入过，暂时没有编排信息。请先在服务器上启动 Agent'
+    : '进入该服务器：默认打开容器编排'
 )
 
 /** 是否在线：更新需要 Agent 真的连着才能下发 */
@@ -106,9 +106,9 @@ const updateDisabled = computed(() => props.busy || disabled.value || !isOnline.
         >
           接入信息
         </n-button>
-        <!-- pending 时禁用：进去必然是空列表，会让人误以为机器上真的没有容器 -->
+        <!-- pending 时禁用：进去必然是空列表，会让人误以为机器上真的没有编排 -->
         <n-button v-else size="tiny" tertiary :disabled="busy || isPending" @click="emit('enter')">
-          容器
+          进入
         </n-button>
       </template>
       {{ isPending && !isLocal ? '重新生成接入密钥并查看容器编排示例（旧密钥立即失效）' : enterHint }}

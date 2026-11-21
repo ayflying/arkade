@@ -105,39 +105,53 @@ async function handleDelete(item: VolumeInfo): Promise<void> {
   await runDelete(item, item.name)
 }
 
+/**
+ * 列定义。
+ *
+ * ⚠️ 这里的 render 里**只能用全局 arkade-* 类**，不能依赖本文件的 scoped 样式：
+ * columns 传给 ResourcePage 后由它内部的 n-data-table 调用 render，
+ * 执行上下文不是本组件，scoped 的 data-v 属性选择器匹配不到运行时节点，
+ * 样式会静默失效。曾经卷名用的是 scoped 的 .volume-name-btn，结果
+ * <button> 退回原生样式：灰底、边框、居中、自动换行，一排名字被折成三四行，
+ * 整张表又高又乱。现在统一走 global.css 里的 .arkade-cell-button。
+ *
+ * 所有单元格都保持**单行**：这一页的卷名普遍很长（CI 留下的
+ * GITEA-ACTIONS-TASK-… 动辄上百字符），一旦允许换行，行高就完全不可控，
+ * 一屏看不掉几条。完整值一律放 title，悬停可见。
+ */
 const columns = computed<DataTableColumns<VolumeInfo>>(() => [
   {
     title: '名称',
     key: 'name',
-    minWidth: 180,
+    minWidth: 320,
     /*
      * 卷名可点击进入文件管理器。
      *
-     * 为什么用按钮而不是整行点击：整行点击会和「选中/展开」类交互冲突，
-     * 而且这一行还有删除按钮，误点风险大。只让名称可点，目标明确。
-     * 用真正的 button 承载，键盘也能用。
+     * 用真正的 <button> 承载而不是整行点击：整行点击会和「选中/展开」类交互冲突，
+     * 而且这一行还有删除按钮，误点风险大。只让名称可点，目标明确，键盘也能用。
      */
     render: (row) =>
       h(
         'button',
         {
           type: 'button',
-          class: 'volume-name-btn',
-          title: `浏览「${row.name}」中的文件`,
+          class: 'arkade-cell-button arkade-cell-name arkade-link',
+          title: `${row.name}\n点击浏览卷内文件`,
           onClick: () => void openFiles(row)
         },
-        [h('span', { class: 'arkade-cell-strong' }, row.name)]
+        row.name
       )
   },
   {
     title: '驱动',
     key: 'driver',
-    minWidth: 100
+    // 主流就是 local，窄列即可；留宽了会挤掉真正需要空间的卷名
+    width: 90
   },
   {
     title: '挂载点',
     key: 'mountpoint',
-    minWidth: 260,
+    minWidth: 320,
     // 宿主机路径很长：等宽字体 + 省略号，完整路径放 title 提示
     render: (row) =>
       h('span', { class: 'arkade-cell-mono', title: row.mountpoint }, row.mountpoint)
@@ -145,7 +159,7 @@ const columns = computed<DataTableColumns<VolumeInfo>>(() => [
   {
     title: '使用状态',
     key: 'in_use',
-    minWidth: 100,
+    width: 110,
     render: (row) =>
       h(
         NTag,
@@ -156,13 +170,20 @@ const columns = computed<DataTableColumns<VolumeInfo>>(() => [
   {
     title: '标签',
     key: 'labels',
-    minWidth: 180,
-    render: (row) => h(AgentLabelList, { labels: row.labels })
+    minWidth: 240,
+    /*
+     * 只展示 2 个标签，其余折成「+N」。
+     *
+     * 之前用默认的 4 个：rustfs_data 这类编排卷带 4 个 compose 标签，
+     * 在窄列里一个一行，直接把那一行撑成四行高，和相邻行完全不在一个节奏上。
+     * 标签是次要信息，不该决定行高；完整内容在「+N」的悬停提示里。
+     */
+    render: (row) => h(AgentLabelList, { labels: row.labels, max: 2 })
   },
   {
     title: '操作',
     key: 'actions',
-    width: 100,
+    width: 90,
     fixed: 'right',
     render: (row) =>
       h(
@@ -201,39 +222,16 @@ onMounted(() => {
     :item-count="items.length"
     unit="个"
     empty-description="这台服务器上还没有任何存储卷。容器启动后声明的数据卷会出现在这里。"
-    :scroll-x="1000"
+    :scroll-x="1220"
     :row-key="(row: VolumeInfo) => row.name"
     @update:page="(value: number) => (page = value)"
     @refresh="refresh"
   />
 </template>
 
-<style scoped>
-/*
-  卷名用按钮承载：可键盘聚焦、有 hover 提示。
-  样式去掉了按钮默认外观，视觉上与普通单元格文字一致，
-  但有焦点轮廓（无障碍必需）。
-*/
-.volume-name-btn {
-  padding: 0;
-  border: none;
-  background: none;
-  cursor: pointer;
-  font: inherit;
-  text-align: left;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.volume-name-btn:hover span {
-  text-decoration: underline;
-}
-
-.volume-name-btn:focus-visible {
-  outline: 2px solid var(--arkade-link-color, var(--arkade-primary));
-  outline-offset: 2px;
-  border-radius: 2px;
-}
-</style>
+<!--
+  这里刻意没有 <style scoped>。
+  本页所有单元格都在传给 ResourcePage 的 render 函数里创建，
+  scoped 样式匹配不到那些节点（详见 global.css 里 .arkade-cell-button 的说明），
+  写了也只是看着像在工作、实际完全不生效。单元格样式一律走全局 arkade-* 类。
+-->

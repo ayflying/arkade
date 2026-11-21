@@ -159,8 +159,11 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '服务器' }
       },
       {
-        // 空路径父级：只为承载 :id 参数与子路由，自身不渲染内容
+        // 空路径父级：只为承载 :id 参数与子路由，自身不渲染内容。
+        // 只写了 /agents/<id> 而没带子页面时（比如手动改地址、旧书签），
+        // 默认落到「容器编排」——与从列表点进服务器的落地页保持一致。
         path: ':id',
+        redirect: (to) => ({ name: 'agent-stacks', params: { id: to.params.id } }),
         children: [
           ...agentChildRoutes
         ]

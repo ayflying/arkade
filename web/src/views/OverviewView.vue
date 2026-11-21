@@ -147,9 +147,14 @@ const hasAgents = computed(() => (totals.value?.agents ?? 0) > 0)
  */
 const allAgents = ref<Agent[]>([])
 
-/** 进入某台服务器的容器页 */
+/**
+ * 进入某台服务器：与服务器列表保持一致，默认落在容器编排。
+ *
+ * 「随便点一台服务器」在哪里都是同一个动作，落地页也应该一样；
+ * 否则从概览点进去看到的是容器列表，从列表点进去看到的是编排，会让人以为点错了。
+ */
 function enterAgent(agentId: string): void {
-  void router.push({ name: 'agent-containers', params: { id: agentId } })
+  void router.push({ name: 'agent-stacks', params: { id: agentId } })
 }
 
 /** 进入某台服务器的编排页（漂移/未纳管项要跳到能处理它的地方） */

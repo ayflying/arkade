@@ -211,6 +211,56 @@ body {
  * 运行时创建的节点，会静默失效。若每个页面都写 :deep 包裹又太啰嗦，
  * 因此统一提到全局。类名带 arkade- 前缀避免与 Naive 内部类冲突。
  */
+/*
+ * 表格单元格里用 <button> 承载的可点击文本（例如存储卷名）。
+ *
+ * 为什么必须显式重置：<button> 自带 UA 样式——边框、灰底、居中、允许换行。
+ * 放进表格就是一个个灰色方框，长名字还会折成三四行、把整行撑得奇高。
+ * 这里压成纯文字外观，只保留「可点击」的语义（键盘可聚焦、回车可触发）。
+ *
+ * 为什么不能写在页面的 scoped 样式里：这些单元格是页面把 columns 传给
+ * ResourcePage 后、由它内部那个 n-data-table 调 render 渲染的，
+ * 执行上下文不是定义列的那个组件，scoped 的 data-v 属性选择器匹配不上
+ * 运行时创建的节点——样式会**静默失效**，页面上看到的就是原生按钮。
+ * 存储卷页曾因此长出一排灰框，排查时很容易误以为是主题问题。
+ *
+ * ⚠️ 必须排在 .arkade-cell-* 这一组的最前面：本条里的 `font: inherit`
+ * 是简写属性，会连同 font-family / font-size / font-weight 一起重置。
+ * 两者权重相同（都是 0,1,0），写在后面就会把 .arkade-cell-name 的
+ * 等宽 14px 中粗覆盖成表格默认正文——名称看起来比容器页小一号，
+ * 而这正是本文件顶部那段「主名称只有一档字号」的注释要防的事。
+ */
+.arkade-cell-button {
+  display: inline-block;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.arkade-cell-button:focus-visible {
+  outline: 2px solid var(--arkade-primary);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+/*
+ * 既是「名称」又是按钮时：宽度跟着列宽走，而不是沿用 .arkade-cell-name
+ * 那条 340px 上限——列窄时必须收窄到列宽，否则又会溢出成横向滚动。
+ *
+ * 倒着写类名（名称类在前）不是随手排的：table-typography 契约测试用
+ * 字符串查找定位上面那条主名称规则，这里若把它写在前面，测试会先命中本段、
+ * 拿不到字号声明而误报失败。倒序既保留同样的权重（0,2,0），也保持测试可读。
+ */
+.arkade-cell-name.arkade-cell-button {
+  max-width: 100%;
+}
+
 .arkade-cell-strong {
   font-weight: 500;
   color: var(--arkade-text-primary);

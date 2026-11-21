@@ -37,10 +37,14 @@ export interface MenuItemDef {
  *
  * 注意：这些路由都带 `:id` 参数，跳转时必须把当前服务器 id 一起传进去，
  * 因此这里只存「路由名 + 文案 + 图标」，路径拼接交给 buildMenuOptions。
+ *
+ * 顺序即使用频率：进入某台服务器后，第一件事通常是看它的编排（部署形态），
+ * 再决定要不要进容器里翻单个进程。所以「容器编排」排在「容器」之前，
+ * 它同时也是进入服务器后的默认落地页（见 router 里的跳转）。
  */
 export const AGENT_OPERATION_ITEMS: MenuItemDef[] = [
-  { routeName: 'agent-containers', label: '容器', icon: 'container' },
   { routeName: 'agent-stacks', label: '容器编排', icon: 'stack' },
+  { routeName: 'agent-containers', label: '容器', icon: 'container' },
   { routeName: 'agent-images', label: '本地镜像', icon: 'image' },
   { routeName: 'agent-networks', label: '网络', icon: 'network' },
   { routeName: 'agent-volumes', label: '存储卷', icon: 'volume' }
