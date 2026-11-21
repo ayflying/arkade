@@ -3,6 +3,7 @@ package external
 import (
 	"context"
 	"errors"
+	"strings"
 
 	api "arkade/hub/api/external/v1"
 	stacks "arkade/hub/api/stacks/v1"
@@ -49,7 +50,13 @@ func (c *Controller) Config(ctx context.Context, req *api.ConfigReq) (*api.Confi
 			out.Reason = compose.SafeAutoReason(source.Blockers)
 		}
 	} else {
-		out.Reason = "读取配置失败，请检查项目来源、文件权限及Agent状态"
+		// Agent 给的原因是**可执行**的（缺哪个镜像、是否并发繁忙、是否超时），
+		// 一律换成"请检查项目来源、文件权限及Agent状态"等于让用户挨个猜。
+		// 这里保留它；Message 是我们 Agent 侧的固定中文文案，不含宿主路径。
+		out.Reason = "读取配置失败"
+		if msg := strings.TrimSpace(cerr.Message); msg != "" {
+			out.Reason = "读取配置失败：" + msg
+		}
 	}
 	if draft, err := c.deps.DB.GetExternalComposeDraft(ctx, req.AgentID, req.Name); err == nil {
 		out.Draft = &draft

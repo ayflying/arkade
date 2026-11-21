@@ -19,13 +19,25 @@ package httpx
 //	  结果相同，唯一的代价是每次多建一个容器。→ **不再自动重扫**
 //	  （只能靠用户手动重试，或外部项目被删除后重新出现）。
 //
-//	环境性失败（retry）：引擎连不上、helper 镜像缺失、并发繁忙、超时……
-//	  这类会自愈，值得重试，但要用指数退避，且必须有次数上限。
+//	环境性失败（retry）：引擎连不上、helper 基础镜像缺失（dependency_missing）、
+//	  并发繁忙、超时…… 这类会自愈，值得重试，但要用指数退避，且必须有次数上限。
+//
+// ============================ 两类结论的边界（界面依赖它） ============================
+//
+// 同一份结论既用于"要不要再扫"，也用于"界面上怎么解释"。因此必须保持：
+//
+//	skipped ⟺ 这个**项目自身**的确定性结论（用户可能想去改配置）；
+//	failed  ⟺ **整台服务器**的环境问题（用户在这一行里做不了任何事）。
+//
+// 界面据此只在 skipped 时展示原因。把环境问题落成 skipped，会让列表每一行
+// 都挂一条用户无法处理的告警——曾经就把"服务器没拉 alpine:3.20"显示成
+// 每个未登记项目的故障，而用户根本没打算接管这些项目。
 //
 // 两者都不能"30 秒硬刷"。成功接管的项目不在这里判断——那由
 // compose_stacks.synced_at 表达，扫到就跳过。
 
 import (
+	"strings"
 	"time"
 
 	"arkade/hub/internal/agentlink"
@@ -118,11 +130,15 @@ func autoAdoptRetryable(cerr *agentlink.ConnError) bool {
 	}
 	switch cerr.Code {
 	case envelope.CodeAgentBusy, envelope.CodeTimeout, envelope.CodeAgentOffline,
-		envelope.CodeRuntimeFailed, envelope.CodeInternal:
-		// 忙、超时、Agent 掉线、运行时/内部故障：都可能自愈。
+		envelope.CodeRuntimeFailed, envelope.CodeInternal,
+		// dependency_missing：本机缺 helper 基础镜像。这是**用户拉一下就能好**的
+		// 环境问题，不属于"重试不会变好"——以前它被归进 unsupported，
+		// 结果用户按提示拉完镜像，后台却已经永久停扫，只能再去详情页手动重试。
+		envelope.CodeDependencyMissing:
+		// 忙、超时、Agent 掉线、运行时/内部故障、缺本地依赖：都可能自愈。
 		return true
 	default:
-		// unsupported（缺镜像、引擎不支持）、not_found（项目已消失）、
+		// unsupported（引擎/版本做不到）、not_found（项目已消失）、
 		// forbidden/unauthorized（没权限）、bad_request：重试不会变好。
 		return false
 	}
@@ -157,6 +173,28 @@ func autoAdoptFailureState(prev store.AutoAdoptState, has bool, isRetryable bool
 		out.Reason = reason + "（已重试 " + itoa(attempts) + " 次，暂停自动重试；可在界面手动重试）"
 	}
 	return out
+}
+
+// readFailureReason 生成"读不到编排配置"的用户可读结论。
+//
+// 环境性失败与确定性失败必须给出**不同的下一步**：
+//   - 环境性（可重试）：告诉用户会自动再试，不必马上动手；
+//   - 确定性（已停扫）：告诉用户自动扫描已暂停，需要进详情页手动重新扫描。
+//
+// 两者都要带上 Agent 给出的具体原因。以前可重试分支只写一句
+// "请检查Agent版本、本地助手镜像及项目文件权限"，把最有用的信息
+// （缺的是哪个镜像、是超时还是并发繁忙）丢掉了，用户只能挨个猜。
+func readFailureReason(cerr *agentlink.ConnError, retryable bool) string {
+	reason := "无法读取项目配置"
+	if cerr != nil {
+		if detail := strings.TrimSpace(cerr.Message); detail != "" {
+			reason += "（" + detail + "）"
+		}
+	}
+	if retryable {
+		return reason + "，将按退避自动重试"
+	}
+	return reason + "，重试不会自动恢复，已暂停自动扫描"
 }
 
 // 注意：不要再手写一个 int64 转字符串的辅助函数——httpx 包里已有 itoa，

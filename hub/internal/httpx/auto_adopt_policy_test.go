@@ -126,13 +126,17 @@ func TestAutoAdoptRetryable(t *testing.T) {
 		envelope.CodeAgentOffline,
 		envelope.CodeRuntimeFailed,
 		envelope.CodeInternal,
+		// 缺 helper 基础镜像是**用户拉一下就能好**的环境问题，
+		// 不是"运行时做不到"，所以必须可重试；
+		// 否则用户按提示拉完镜像，后台已经永久停扫。
+		envelope.CodeDependencyMissing,
 	}
 	for _, code := range retry {
 		if !autoAdoptRetryable(&agentlink.ConnError{Code: code}) {
 			t.Fatalf("%s 属于环境性失败，应可重试", code)
 		}
 	}
-	// 缺镜像/引擎不支持/项目不存在/无权限：重试多少次都同样失败，
+	// 引擎不支持/项目不存在/无权限：重试多少次都同样失败，
 	// 必须当作确定性阻塞，否则就是持续创建无用容器的元凶。
 	giveUp := []string{
 		envelope.CodeUnsupported,

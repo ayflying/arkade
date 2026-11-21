@@ -203,9 +203,11 @@ func wireToError(code, msg string) error {
 func translateVolumeError(err error) error {
 	switch {
 	case errors.Is(err, runtime.ErrHelperImageMissing):
-		// 明确指出该做什么，而不是让用户猜原因。
-		return envelope.NewError(envelope.CodeUnsupported,
-			"文件助手镜像未安装，请先在本机拉取 "+runtime.DefaultHelperImage)
+		// 明确指出该做什么，而不是让用户猜原因；码用 dependency_missing
+		// （可自愈的本机依赖缺失），与"引擎不支持"区分开。
+		img := runtime.DefaultHelperImage
+		return envelope.NewError(envelope.CodeDependencyMissing,
+			"服务器上缺少文件助手镜像 "+img+"，可在「镜像」页拉取，或在该服务器执行 docker pull "+img)
 	case errors.Is(err, runtime.ErrVolumeNotFound):
 		return envelope.NewError(envelope.CodeNotFound, "存储卷不存在（不会自动创建）")
 	case errors.Is(err, runtime.ErrHelperBusy):

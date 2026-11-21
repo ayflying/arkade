@@ -251,7 +251,9 @@ func TestComposeSourceRealFaultStillErrors(t *testing.T) {
 		code string
 	}{
 		{runtime.ErrHelperBusy, envelope.CodeAgentBusy},
-		{runtime.ErrHelperImageMissing, envelope.CodeUnsupported},
+		// 缺 helper 镜像用 dependency_missing 而不是 unsupported：
+		// 补上镜像就能成功，Hub 那边据此按可自愈故障退避重试。
+		{runtime.ErrHelperImageMissing, envelope.CodeDependencyMissing},
 		{context.DeadlineExceeded, envelope.CodeTimeout},
 	} {
 		resp := runSource(t, &composeSourceFake{err: tc.err}, "demo")

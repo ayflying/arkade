@@ -92,6 +92,15 @@ const (
 	CodeUnsupported   = "unsupported"    // 目标运行时或版本不支持该操作
 	CodeTimeout       = "timeout"        // 超时（等待 Agent 响应超时）
 	CodeRuntimeFailed = "runtime_failed" // 运行时执行失败，Message 带原因
+	// CodeDependencyMissing 表示目标机器缺少完成该操作所需的本地依赖，
+	// 典型场景是读取编排配置前要先有一次性 helper 的基础镜像（alpine）。
+	//
+	// 必须与 CodeUnsupported 分开，两者对调用方的含义相反：
+	//   unsupported        目标运行时/版本**根本做不到**，原样重试永远失败；
+	//   dependency_missing 只是**本机还没准备好**（镜像没拉、组件没装），
+	//                      补上就能成功，属于会自愈的环境性失败。
+	// 合并成一个码会让"去拉个镜像就好"的情况被当成永久失败而放弃重试。
+	CodeDependencyMissing = "dependency_missing"
 	// CodeConflict 表示目标当前状态不允许该操作，例如删除运行中的容器、
 	// 用户名重复、编排版本不匹配。
 	//

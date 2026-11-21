@@ -317,28 +317,61 @@ func (e *engine) RunVolumeFileHelper(ctx context.Context, volume string, request
 }
 
 // HelperAvailable 检查基础镜像是否在本地。
+//
+// 只有"引擎明确回答镜像不存在"才报缺镜像；连接失败、超时、daemon 5xx
+// 原样上抛——把它们统一报成"请先拉取镜像"，会让用户去拉一个本来就在的镜像。
 func (e *engine) HelperAvailable(ctx context.Context) error {
 	_, err := e.InspectImage(ctx, DefaultHelperImage)
 	if err == nil {
 		return nil
 	}
-	// 统一报"缺镜像"，让用户知道该 docker pull 而不是猜别的原因。
-	return fmt.Errorf("%w: %s（请先在本机拉取该镜像）", ErrHelperImageMissing, DefaultHelperImage)
+	if errors.Is(err, ErrNotFound) {
+		return helperImageMissing()
+	}
+	return err
 }
 
 // helperImageID 返回 helper 基础镜像的内容 ID。
 //
 // 缺镜像时报 ErrHelperImageMissing，**绝不自动 pull**：
 // 拉取是有网络副作用且可能拉错版本的操作，不应该由"打开一个卷"触发。
+//
+// ============================ 只认 404 ============================
+// inspect 请求失败的形态不止一种：daemon 没起来、套接字权限不对、
+// 引擎内部 5xx、上下文超时……以前一律翻译成"镜像未安装"，
+// 于是真正的故障被包装成一句可执行的错误动作（去拉镜像），
+// 用户照着做完发现还是老样子，反而更难定位。这里只在 404 时下这个结论。
 func (e *engine) helperImageID(ctx context.Context) (string, error) {
 	var img struct {
 		ID string `json:"Id"`
 	}
-	err := e.client.getJSON(ctx, pathImageInspect+url.PathEscape(DefaultHelperImage)+"/json", &img)
-	if err != nil || img.ID == "" {
-		return "", fmt.Errorf("%w: %s（请先在本机拉取该镜像）", ErrHelperImageMissing, DefaultHelperImage)
+	if err := e.client.getJSON(ctx, pathImageInspect+url.PathEscape(DefaultHelperImage)+"/json", &img); err != nil {
+		if isImageAbsent(err) {
+			return "", helperImageMissing()
+		}
+		return "", err
+	}
+	if img.ID == "" {
+		// 2xx 却没有 ID：引擎返回的内容不可信，按不可用处理（同样是缺镜像语义）。
+		return "", helperImageMissing()
 	}
 	return img.ID, nil
+}
+
+// helperImageMissing 构造"本地缺 helper 基础镜像"的错误。
+//
+// 只带镜像名，不带"请先在本机拉取"这类动作文案：动作由 handler 决定，
+// runtime 层不该知道界面怎么措辞（也更不该说"本机"这种有歧义的说法）。
+func helperImageMissing() error {
+	return fmt.Errorf("%w: %s", ErrHelperImageMissing, DefaultHelperImage)
+}
+
+// isImageAbsent 判断一次镜像 inspect 是否因为"本地确实没有这个镜像"而失败。
+//
+// 判据只有 404：其它状态码与传输层错误都不代表缺镜像。
+func isImageAbsent(err error) bool {
+	var se *statusError
+	return errors.As(err, &se) && se.Status == http.StatusNotFound
 }
 
 // volumeMountpoint 取具名卷在宿主机上的真实路径（由 daemon 提供）。

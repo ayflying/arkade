@@ -2,6 +2,7 @@ package httpx
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +17,8 @@ type autoBackendFake struct {
 	blockers  []string
 	badHash   bool
 	adoptFail bool
+	// sourceErr 让"读配置这一步就失败"可被构造（模拟缺镜像、超时等环境问题）。
+	sourceErr *agentlink.ConnError
 }
 
 func (f *autoBackendFake) ComposeList(context.Context, string) (envelope.ComposeListResult, *agentlink.ConnError) {
@@ -24,6 +27,9 @@ func (f *autoBackendFake) ComposeList(context.Context, string) (envelope.Compose
 }
 func (f *autoBackendFake) ComposeSource(context.Context, string, string) (envelope.ComposeSourceResult, *agentlink.ConnError) {
 	f.calls = append(f.calls, "source")
+	if f.sourceErr != nil {
+		return envelope.ComposeSourceResult{}, f.sourceErr
+	}
 	h := composeProjectHash(f.content, "")
 	if f.badHash {
 		h = "bad"
@@ -151,5 +157,37 @@ func TestAutoAdoptRetryAndNeverOverwriteDifferentConfig(t *testing.T) {
 	got, _ := e.db.GetComposeStack(ctx, "b", "auto-test")
 	if got.Content != "user-data" || got.Version != 4 {
 		t.Fatal("overwrote user record")
+	}
+}
+
+// TestAutoAdoptDependencyMissingIsRetryable 验证"服务器缺 helper 基础镜像"这类
+// 环境问题按可自愈处理。
+//
+// 回归背景：这个错误以前被 Agent 报成 unsupported，于是 Hub 判成确定性阻塞，
+// 落地成 skipped 并永久停扫——用户照着提示把镜像拉下来，后台却再也不会试。
+// 因此这里锁住两点：
+//  1. 结论必须是 failed（会退避重试），不是 skipped；
+//  2. 原因里要保留 Agent 给出的具体信息（缺的是哪个镜像），不能被泛泛文案盖掉。
+func TestAutoAdoptDependencyMissingIsRetryable(t *testing.T) {
+	e := newTestEnv(t)
+	msg := "服务器上缺少文件助手镜像 alpine:3.20，可在「镜像」页拉取"
+	f := &autoBackendFake{sourceErr: &agentlink.ConnError{Code: envelope.CodeDependencyMissing, Message: msg}}
+	a := newAutoAdopter(e.db, f, nil)
+	a.scan(context.Background(), "a")
+	prev, err := e.db.GetAutoAdoptState(context.Background(), "a", "auto-test")
+	if err != nil {
+		t.Fatalf("结论未落库: %v", err)
+	}
+	if prev.Status != store.AutoAdoptStatusFailed {
+		t.Fatalf("缺依赖属于环境问题，应落 failed 并按退避重试，实际: %+v", prev)
+	}
+	if prev.NextCheckAt.IsZero() {
+		t.Fatal("可自愈的失败必须排定下一次扫描")
+	}
+	if !strings.Contains(prev.Reason, msg) {
+		t.Fatalf("原因应保留 Agent 给出的具体信息，实际: %s", prev.Reason)
+	}
+	if !strings.Contains(prev.Reason, "将按退避自动重试") {
+		t.Fatalf("可自愈失败应告知会自动重试，实际: %s", prev.Reason)
 	}
 }

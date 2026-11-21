@@ -241,13 +241,11 @@ func (a *autoAdopter) adopt(ctx context.Context, agent, name string, known map[s
 	source, cerr := a.ops.ComposeSource(ctx, agent, name)
 	if cerr != nil {
 		// 区分环境性失败与确定性失败：前者退避重试，后者不再重扫。
-		// 这一条判断是"容器数量"的关键——缺镜像这类原因以前会被无限重试。
+		// 这一条判断是"容器数量"的关键——环境性原因若被判成确定性的，
+		// 用户修好之后后台也永远不会再试。
 		retryable := autoAdoptRetryable(cerr)
-		reason := "无法读取项目配置，请检查Agent版本、本地助手镜像及项目文件权限"
-		if !retryable {
-			reason = "无法读取项目配置（" + cerr.Message + "），重试不会自动恢复，已暂停自动扫描"
-		}
-		a.persist(ctx, agent, name, autoAdoptFailureState(prev, has, retryable, reason, time.Now()))
+		a.persist(ctx, agent, name, autoAdoptFailureState(prev, has, retryable,
+			readFailureReason(cerr, retryable), time.Now()))
 		return
 	}
 	if len(source.Blockers) > 0 {

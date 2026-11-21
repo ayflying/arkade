@@ -12,6 +12,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -337,6 +338,42 @@ func TestHelperRejectsNonLocalOrOptionedVolume(t *testing.T) {
 			if _, err := e.RunVolumeFileHelper(context.Background(), "v",
 				map[string]any{"operation": "list"}); err == nil {
 				t.Fatal("必须拒绝")
+			}
+		})
+	}
+}
+
+// TestHelperImageIDOnlyTreats404AsMissing 验证"缺 helper 镜像"只由 404 判定。
+//
+// 以前 inspect 的任何失败（daemon 5xx、超时、套接字权限）都会被翻译成
+// "镜像未安装，请先拉取"，用户照着拉一个本来就存在的镜像，问题照旧。
+// 这里锁住两种响应的区别：只有 404 才算缺镜像。
+func TestHelperImageIDOnlyTreats404AsMissing(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		status      int
+		body        string
+		wantMissing bool
+	}{
+		{"镜像确实不存在", http.StatusNotFound, `{"message":"No such image: alpine:3.20"}`, true},
+		{"引擎内部错误", http.StatusInternalServerError, `{"message":"boom"}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := helperEngine(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasSuffix(r.URL.Path, "/images/"+DefaultHelperImage+"/json") {
+					w.WriteHeader(tc.status)
+					_, _ = w.Write([]byte(tc.body))
+					return
+				}
+				t.Errorf("不应继续后续请求: %s", r.URL.Path)
+				w.WriteHeader(http.StatusInternalServerError)
+			}))
+			_, err := e.helperImageID(context.Background())
+			if err == nil {
+				t.Fatal("应当返回错误")
+			}
+			if got := errors.Is(err, ErrHelperImageMissing); got != tc.wantMissing {
+				t.Fatalf("ErrHelperImageMissing=%v，期望 %v（err=%v）", got, tc.wantMissing, err)
 			}
 		})
 	}

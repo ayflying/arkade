@@ -96,8 +96,25 @@ function managedReg(row: StackSummary): { state: StackRegState; reason: string }
  *
  * 到了这里说明它**不在**已纳管列表里，也就是 Arkade 里没有它的配置记录。
  * 自动登记失败/跳过的原因由 `auto_adopt_reason` 给出（可能是整句中文）。
+ *
+ * ## 只有 `skipped` 才解释原因
+ *
+ * 后端把结论分成两类（见 auto_adopt_policy.go）：
+ *   - `skipped`：这个**项目自身**的确定性结论（多配置文件、工作目录不合规…），
+ *     用户想接管时确实需要照着改，所以要显示；
+ *   - `failed`：**整台服务器**的环境问题（缺 helper 镜像、引擎忙、超时），
+ *     后台会自己退避重试，用户在这一行里做不了任何事。
+ *
+ * 把环境问题逐行展示，等于把"后台顺手接管一下"的失败写成每个项目的故障：
+ * 未登记的项目本来就不需要用户处理，这条告警只会让人觉得线上出事了。
+ * 真正想看原因的人会进详情页，那里有完整说明和「重新扫描」按钮。
  */
 function externalReg(row: ExternalStack): { state: StackRegState; reason: string } {
+  if (row.auto_adopt_status !== 'skipped') {
+    // pending（正在读取）与 failed（环境性、会自愈）都不是项目的问题，
+    // 行内保持中性的「未登记」即可，不挂 tooltip。
+    return { state: 'unregistered', reason: '' }
+  }
   const reason = typeof row.auto_adopt_reason === 'string' ? row.auto_adopt_reason.trim() : ''
   return {
     state: 'unregistered',

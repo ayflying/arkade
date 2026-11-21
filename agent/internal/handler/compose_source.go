@@ -108,8 +108,15 @@ func newComposeSourceHandler(rt runtime.Runtime) Handler {
 func translateSourceError(err error) error {
 	switch {
 	case errors.Is(err, runtime.ErrHelperImageMissing):
-		return envelope.NewError(envelope.CodeUnsupported,
-			"文件助手镜像未安装，请先在本机拉取 "+runtime.DefaultHelperImage)
+		// 用 dependency_missing 而不是 unsupported：这只是"这台机器还没拉那个镜像"，
+		// 拉下来就能成功，Hub 的自动发现据此按可自愈故障退避重试；
+		// 报成 unsupported 会被当成"运行时根本做不到"而永久放弃。
+		//
+		// 文案写"服务器"而不是"本机"：操作者在浏览器里管的是远端机器，
+		// 说"本机"会让人以为要动自己的电脑。
+		img := runtime.DefaultHelperImage
+		return envelope.NewError(envelope.CodeDependencyMissing,
+			"服务器上缺少文件助手镜像 "+img+"，可在「镜像」页拉取，或在该服务器执行 docker pull "+img)
 	case errors.Is(err, runtime.ErrHelperBusy):
 		return envelope.NewError(envelope.CodeAgentBusy, "操作繁忙（同时最多 2 个），请稍后重试")
 	case errors.Is(err, runtime.ErrComposeSourceUnavailable):

@@ -14,6 +14,10 @@ const ERROR_MESSAGE_MAP: Record<string, string> = {
   agent_offline: '服务器已离线，无法执行该操作',
   timeout: '操作超时，服务器未在规定时间内响应',
   runtime_failed: '容器运行时操作失败',
+  // 服务器缺少执行该操作所需的本地依赖（典型是读取编排配置、
+  // 浏览卷文件要用的一次性 helper 基础镜像）。属于补齐就能成功，
+  // 所以文案只说"缺什么"，具体镜像名与拉取方式由后端 message 给。
+  dependency_missing: '服务器缺少执行该操作所需的镜像或组件',
   internal: '服务器内部错误'
 }
 

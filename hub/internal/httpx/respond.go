@@ -91,7 +91,10 @@ func statusForCode(code string) int {
 	// 协议层提供同名常量后这里只需列一次，重复 case 在 Go 里是编译错误。
 	case envelope.CodeConflict:
 		return http.StatusConflict
-	case envelope.CodeAgentOffline, envelope.CodeTimeout, envelope.CodeAgentBusy, envelope.CodeRuntimeFailed:
+	case envelope.CodeAgentOffline, envelope.CodeTimeout, envelope.CodeAgentBusy, envelope.CodeRuntimeFailed,
+		// 缺本地依赖（如 helper 基础镜像）与 runtime_failed 同类：
+		// 机器准备好之后同样的请求就会成功，映射 503 让调用方按"可重试"处理。
+		envelope.CodeDependencyMissing:
 		return http.StatusServiceUnavailable
 	case envelope.CodeUnsupported:
 		return http.StatusNotImplemented
