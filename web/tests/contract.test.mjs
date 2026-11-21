@@ -449,8 +449,24 @@ check('统一列表: 独立登记状态列区分未登记与未同步', /title: 
 check('统一列表: 未同步状态不依赖原因是否存在', row('adopt-unsynced').regState === 'unsynced' && row('adopt-unsynced-nohint').regState === 'unsynced')
 check('统一列表: 保留真实同步原因并补充缺失原因', row('adopt-unsynced').regReason === unsynced.sync_hint && row('adopt-unsynced-nohint').regReason.includes('尚未下发'))
 check('统一列表: 正常记录不显示虚假同步原因', row('my-app').regState === 'synced' && row('my-app').regReason === '')
-check('统一列表: skipped/failed 原因保留给登记状态展示', row('legacy-skip').regReason === extByStatus.get('legacy-skip').auto_adopt_reason && row('legacy-fail').regReason === extByStatus.get('legacy-fail').auto_adopt_reason)
-check('统一列表: unknown 不推测失败原因', row('legacy-weird').regReason === '配置只存在于服务器的原目录，Arkade 中没有记录')
+/*
+ * 登记状态列只解释"这个项目自身"的阻塞（skipped：多配置文件、工作目录不合规……），
+ * 用户想接管时照着改就行。
+ *
+ * failed 是**整台服务器**的环境问题（缺 helper 镜像、引擎繁忙、超时），
+ * 后台会退避重试，用户在这一行里做不了任何事——未登记的项目本来就不需要他处理，
+ * 逐行展示等于把后台动作的失败写成每个项目的故障。详情页仍有完整说明。
+ */
+check(
+  '统一列表: skipped 的项目原因进入登记状态展示',
+  row('legacy-skip').regState === 'unregistered' &&
+    row('legacy-skip').regReason === extByStatus.get('legacy-skip').auto_adopt_reason
+)
+check(
+  '统一列表: failed（环境性）不逐行展示原因',
+  row('legacy-fail').regState === 'unregistered' && row('legacy-fail').regReason === ''
+)
+check('统一列表: unknown 不推测失败原因', row('legacy-weird').regState === 'unregistered' && row('legacy-weird').regReason === '')
 check('统一列表: 原因实际接入登记状态 tooltip', /row\.regReason/.test(tableSrc) && /default: \(\) => h\('div', \{ class: 'stack-unified__tip' \}, row\.regReason\)/.test(tableSrc))
 check('统一列表: 所有项目名称进入统一详情', /@open="goDetail"/.test(stackListSrc) && /name: 'agent-stack-detail'/.test(stackListSrc))
 check('手动登记: 外部项目配置区保留预检登记 fallback', /@click="handleApply\(editorContent\)"/.test(externalSection) && /登记到 Arkade/.test(externalSection))
