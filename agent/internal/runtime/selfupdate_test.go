@@ -262,6 +262,7 @@ func TestRunDetachedComposeUpUsesFixedArgv(t *testing.T) {
 		HostConfig struct {
 			Privileged bool     `json:"Privileged"`
 			CapDrop    []string `json:"CapDrop"`
+			CapAdd     []string `json:"CapAdd"`
 			Mounts     []struct {
 				Type   string `json:"Type"`
 				Source string `json:"Source"`
@@ -334,6 +335,12 @@ func TestRunDetachedComposeUpUsesFixedArgv(t *testing.T) {
 	}
 	if len(created.HostConfig.CapDrop) != 1 || created.HostConfig.CapDrop[0] != "ALL" {
 		t.Fatalf("必须 CapDrop ALL，实际 %v", created.HostConfig.CapDrop)
+	}
+	// 非纳管自更新要读宿主上的 .env 与编排文件（常为 0600/0700）。
+	// CapDrop ALL 连 DAC_OVERRIDE 一起丢了，容器里的 root 也会读失败，
+	// 所以必须加回 DAC_READ_SEARCH；除此以外不许多给任何能力。
+	if len(created.HostConfig.CapAdd) != 1 || created.HostConfig.CapAdd[0] != "DAC_READ_SEARCH" {
+		t.Fatalf("非纳管自更新必须只加回 DAC_READ_SEARCH，实际 %v", created.HostConfig.CapAdd)
 	}
 	if len(created.HostConfig.Mounts) != 2 {
 		t.Fatalf("只允许挂 socket 与编排目录两处，实际 %+v", created.HostConfig.Mounts)

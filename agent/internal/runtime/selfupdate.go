@@ -486,6 +486,17 @@ func (e *engine) RunDetachedComposeUp(ctx context.Context, req DetachedComposeUp
 		body.Entrypoint = []string{"/bin/sh", "-c", selfUpdateManagedScript, "arkade-selfupdate"}
 		body.HostConfig.Mounts[1].ReadOnly = true
 		body.Env = append(body.Env, "COMPOSE_DISABLE_ENV_FILE=1", "COMPOSE_REMOVE_ORPHANS=0", "COMPOSE_MENU=0")
+	} else {
+		// 非纳管路径要读**宿主上**的 compose 文件与 .env，它们常是 0600/0700。
+		// helper 是 User:0:0 + CapDrop ALL，已经连 DAC_OVERRIDE 一起丢了，
+		// 于是容器内的 root 也受文件权限位约束——直接读会 permission denied
+		// （和 helperSpec.readSearch 描述的是同一个坑）。
+		//
+		// 正确的做法不是让用户放宽自己的文件权限，而是只加回"读与目录遍历"：
+		// DAC_READ_SEARCH 不授予写、不改变属主，也扩不大挂载范围。
+		//
+		// 纳管路径读的是自己层里的快照，没有这个需求，因此保持不加。
+		body.HostConfig.CapAdd = []string{"DAC_READ_SEARCH"}
 	}
 	raw, merr := json.Marshal(body)
 	if merr != nil {
