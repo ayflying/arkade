@@ -94,12 +94,17 @@ func TestMCPAdminKeyAndTools(t *testing.T) {
 	}
 }
 
+// TestMCPOrigin 记录"MCP 端点不再自行判断来源"这一取舍。
+//
+// 原因同 csrf_test.go：Hub 在反向代理后面看到的协议是代理那一跳的明文 http，
+// 浏览器发来的是 https，服务端永远判不出同源——放在 HTTPS 域名下的部署会连 MCP 都连不上。
+// MCP 的安全边界不依赖这里：它只认 Authorization Bearer，不认 Cookie。
 func TestMCPOrigin(t *testing.T) {
 	req := httptest.NewRequest("POST", "https://arkade.example/mcp", nil)
 	for _, tc := range []struct {
 		value string
 		want  bool
-	}{{"", true}, {"https://arkade.example", true}, {"http://arkade.example", false}, {"https://other.example", false}, {"null", false}, {"https://arkade.example/a", false}} {
+	}{{"", true}, {"https://arkade.example", true}, {"http://arkade.example", true}, {"https://other.example", true}, {"null", true}, {"https://arkade.example/a", true}} {
 		req.Header.Del("Origin")
 		if tc.value != "" {
 			req.Header.Set("Origin", tc.value)

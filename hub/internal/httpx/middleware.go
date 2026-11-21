@@ -103,17 +103,15 @@ func recoverer(log *slog.Logger) func(http.Handler) http.Handler {
 }
 
 // securityHeaders 设置基础安全响应头。
+//
+// 这里**不再做跨站写请求拦截**：Hub 通常跑在反向代理后面，代理到 Hub 的一跳是
+// 明文 http，服务端无法可靠判断浏览器侧的真实协议与主机，
+// 猜错就会把登录一起拦掉。这道防线由反向代理承担，详见 csrf.go。
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "same-origin")
-		if !browserMutationAllowed(r) {
-			w.Header().Set("Content-Type", "application/json; charset=utf-8")
-			w.WriteHeader(http.StatusForbidden)
-			_, _ = w.Write([]byte(`{"code":"forbidden","message":"拒绝跨站修改请求"}`))
-			return
-		}
 		next.ServeHTTP(w, r)
 	})
 }

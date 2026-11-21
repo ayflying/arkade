@@ -3,8 +3,6 @@ package httpx
 import (
 	"context"
 	"net/http"
-	"net/url"
-	"strings"
 
 	api "arkade/hub/api/mcp/v1"
 	"arkade/hub/internal/auth"
@@ -96,21 +94,13 @@ func (m *mcpTransport) Transport(ctx context.Context, _ *api.TransportReq) (*api
 	return nil, controller.ErrResponseCommitted
 }
 
+// mcpOriginAllowed 现在不再拦截浏览器来源，原因与 csrf.go 相同：
+// Hub 在反向代理后面看到的协议是代理那一跳的明文 http，而浏览器发来的是 https，
+// 服务端据此判断"是否同源"永远失败——配置在 HTTPS 域名下的部署会连 MCP 都连不上。
+//
+// MCP 端点本身的防线与这层无关：它只认 Authorization: Bearer 的 API 密钥，
+// 不依赖 Cookie，跨站请求拿不到密钥就调不动。真正的来源限制交给反向代理。
 func mcpOriginAllowed(req *http.Request) bool {
-	origins := req.Header.Values("Origin")
-	if len(origins) == 0 {
-		return true
-	}
-	if len(origins) != 1 || req.Header.Get("Sec-Fetch-Site") == "cross-site" {
-		return false
-	}
-	orig, err := url.Parse(origins[0])
-	if err != nil || orig.User != nil || orig.Host == "" || orig.Path != "" || orig.RawQuery != "" || orig.Fragment != "" || orig.ForceQuery {
-		return false
-	}
-	scheme := "http"
-	if isHTTPS(req) {
-		scheme = "https"
-	}
-	return orig.Scheme == scheme && strings.EqualFold(orig.Host, req.Host)
+	_ = req
+	return true
 }
