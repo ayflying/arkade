@@ -196,7 +196,12 @@ func TestRenewEnrollmentGuards(t *testing.T) {
 	_, err = c.RenewEnrollment(ctx, &api.RenewEnrollmentReq{AgentID: "agent-missing"})
 	requireError(t, err, 404, "服务器不存在")
 
-	// 内置本机由 Hub 配置托管，没有可换发的网络密钥。
-	_, err = c.RenewEnrollment(ctx, &api.RenewEnrollmentReq{AgentID: store.LocalAgentID})
+	// 内置本机由 Hub 配置托管：换发必须在查库之前就被拒，
+	// 而不是因为"库里没有这条记录"报一个误导人的 404。
+	local, _, _ := setup(t)
+	if err := local.d.Registry.ReserveLocalID(store.LocalAgentID); err != nil {
+		t.Fatal(err)
+	}
+	_, err = local.RenewEnrollment(ctx, &api.RenewEnrollmentReq{AgentID: store.LocalAgentID})
 	requireError(t, err, 400, "本机由 Hub 配置 local.enabled 管理，不支持删除、重置密钥或启用禁用")
 }

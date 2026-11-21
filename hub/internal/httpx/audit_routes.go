@@ -170,6 +170,12 @@ var auditRoutes = map[string]auditRoute{
 		Action:      audit.ActionAgentTokenReset,
 		TargetParam: "agentID",
 	},
+	// 换发未接入服务器的密钥：旧密钥立即失效，属于凭据变更，必须留痕。
+	// 与 token/reset 分开登记，便于事后区分"主动重置在线服务器"和"重新获取未接入服务器的接入信息"。
+	"/api/agents/{agentID}/enrollment/renew": {
+		Action:      audit.ActionAgentTokenRenew,
+		TargetParam: "agentID",
+	},
 	// 自更新：重建目标服务器上的容器，是可追溯的高影响操作。
 	// 只记 agent_id，不记镜像名/临时容器名——那些值已能从服务器详情复原。
 	"/api/agents/{agentID}/self-update": {

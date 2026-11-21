@@ -81,6 +81,11 @@ const (
 	// 密钥一旦落进审计就等于永久泄漏（备份里已有副本，无法撤回）。
 	ActionAgentCreate     = "agent.create"
 	ActionAgentTokenReset = "agent.token_reset"
+	// ActionAgentTokenRenew 是"还没接入的服务器换发一把新密钥"。
+	//
+	// 与 token_reset 分开记录：那条会断开在线服务器，这条只在服务器从未接入时发生，
+	// 排查问题时两者的严重程度完全不同，混在一个动作里会让审计看起来更吓人。
+	ActionAgentTokenRenew = "agent.token_renew"
 	// ActionAgentSelfUpdate 是"让这台服务器更新自己的组件镜像"。
 	//
 	// 单独立一个动作而不是复用 agent.update：前者改的是 Hub 里的登记信息，
