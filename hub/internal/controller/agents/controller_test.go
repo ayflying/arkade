@@ -138,74 +138,65 @@ func TestAgentViewOnlineOverridesPending(t *testing.T) {
 	}
 }
 
-// TestEnrollmentViewableWhilePending 验证「待接入可反复查看密钥、接入后立刻不可用」。
+// TestRenewEnrollmentIssuesFreshToken 验证「每次换发都是新密钥，旧密钥立即作废」。
 //
-// 这是本次需求的核心不变量：明文副本只在从未接入的窗口内存在。
-func TestEnrollmentViewableWhilePending(t *testing.T) {
+// 这是本次需求的核心不变量：库里不留明文，想看只能换发；而换发只在
+// 从未接入时允许，因此不会打断任何在跑的连接。
+func TestRenewEnrollmentIssuesFreshToken(t *testing.T) {
 	c, db, _ := setup(t)
 	ctx := t.Context()
-	created, err := c.Create(ctx, &api.CreateReq{Name: "peek-host"})
+	created, err := c.Create(ctx, &api.CreateReq{Name: "renew-host"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	id := created.Agent.ID
 
-	first, err := c.GetEnrollment(ctx, &api.GetEnrollmentReq{AgentID: id})
+	first, err := c.RenewEnrollment(ctx, &api.RenewEnrollmentReq{AgentID: id})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.Enrollment.Token != created.Enrollment.Token || first.Enrollment.AgentID != id {
-		t.Fatalf("回读的密钥与创建时不一致: %+v", first.Enrollment)
+	if first.Enrollment.Token == created.Enrollment.Token || first.Enrollment.AgentID != id {
+		t.Fatalf("换发后密钥应当变化: %+v", first.Enrollment)
 	}
-	// 反复查看必须拿到同一把：不能每次读取都换密钥。
-	again, err := c.GetEnrollment(ctx, &api.GetEnrollmentReq{AgentID: id})
-	if err != nil || again.Enrollment.Token != first.Enrollment.Token {
-		t.Fatalf("第二次读取=%+v %v", again, err)
+	// 旧密钥必须立刻失效，新密钥可解析到同一条记录。
+	if _, err := db.LookupAgentByTokenHash(ctx, agentlink.HashEnrollmentToken(created.Enrollment.Token)); !errors.Is(err, store.ErrAgentTokenNotFound) {
+		t.Fatalf("旧密钥仍然有效: %v", err)
+	}
+	if got, err := db.LookupAgentByTokenHash(ctx, agentlink.HashEnrollmentToken(first.Enrollment.Token)); err != nil || got != id {
+		t.Fatalf("新密钥解析失败: %q %v", got, err)
+	}
+	// 再换一次又是新的：接口语义是"发一把新的"，不是"回看同一把"。
+	second, err := c.RenewEnrollment(ctx, &api.RenewEnrollmentReq{AgentID: id})
+	if err != nil || second.Enrollment.Token == first.Enrollment.Token {
+		t.Fatalf("第二次换发=%+v %v", second, err)
 	}
 
-	// 模拟首次握手成功：状态转为在线并抹掉明文。
+	// 一旦接入成功，就不再允许换发（避免把在线服务器踢下线）。
 	if err := db.UpdateAgentStatus(ctx, id, "online", time.Now().Unix()); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.ClearAgentTokenPlain(ctx, id); err != nil {
-		t.Fatal(err)
-	}
-	_, err = c.GetEnrollment(ctx, &api.GetEnrollmentReq{AgentID: id})
+	_, err = c.RenewEnrollment(ctx, &api.RenewEnrollmentReq{AgentID: id})
 	requireError(t, err, 409, "该服务器已接入，接入密钥只在添加时展示一次；需要重新获取请重置密钥")
-
-	// 重置后进入"等待重新接入"的窗口，又应该能看。
-	if err := db.UpdateAgentStatus(ctx, id, store.StatusPending, 0); err != nil {
-		t.Fatal(err)
-	}
-	reset, err := c.ResetToken(ctx, &api.ResetTokenReq{AgentID: id})
-	if err != nil {
-		t.Fatal(err)
-	}
-	afterReset, err := c.GetEnrollment(ctx, &api.GetEnrollmentReq{AgentID: id})
-	if err != nil || afterReset.Enrollment.Token != reset.Enrollment.Token {
-		t.Fatalf("重置后回读=%+v %v", afterReset, err)
-	}
 }
 
-// TestEnrollmentViewRequiresPlainAndAdmin 验证明文缺失时给可操作提示，且非管理员被拒。
-func TestEnrollmentViewRequiresPlainAndAdmin(t *testing.T) {
-	c, db, s := setup(t)
+// TestRenewEnrollmentGuards 验证换发的权限、内置本机与不存在记录的处理。
+func TestRenewEnrollmentGuards(t *testing.T) {
+	c, _, s := setup(t)
 	ctx := t.Context()
-	created, err := c.Create(ctx, &api.CreateReq{Name: "no-plain-host"})
+	created, err := c.Create(ctx, &api.CreateReq{Name: "guarded-host"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 明文被清掉（或历史数据从未写过）时，查看必须给出可操作的提示，而不是返回空密钥。
-	if err := db.ClearAgentTokenPlain(ctx, created.Agent.ID); err != nil {
-		t.Fatal(err)
-	}
-	_, err = c.GetEnrollment(ctx, &api.GetEnrollmentReq{AgentID: created.Agent.ID})
-	requireError(t, err, 409, "该服务器的接入信息已不可查看，请重置密钥")
 
 	s.actor.Role = user.RoleUser
-	_, err = c.GetEnrollment(ctx, &api.GetEnrollmentReq{AgentID: created.Agent.ID})
+	_, err = c.RenewEnrollment(ctx, &api.RenewEnrollmentReq{AgentID: created.Agent.ID})
 	requireError(t, err, 403, "该操作仅管理员可用")
 
-	_, err = c.GetEnrollment(ctx, &api.GetEnrollmentReq{AgentID: "agent-missing"})
+	s.actor.Role = user.RoleAdmin
+	_, err = c.RenewEnrollment(ctx, &api.RenewEnrollmentReq{AgentID: "agent-missing"})
 	requireError(t, err, 404, "服务器不存在")
+
+	// 内置本机由 Hub 配置托管，没有可换发的网络密钥。
+	_, err = c.RenewEnrollment(ctx, &api.RenewEnrollmentReq{AgentID: store.LocalAgentID})
+	requireError(t, err, 400, "本机由 Hub 配置 local.enabled 管理，不支持删除、重置密钥或启用禁用")
 }

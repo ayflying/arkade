@@ -10,9 +10,8 @@ import (
 
 // AgentTokens is the golang structure of table agent_tokens for DAO operations like Where/Data.
 type AgentTokens struct {
-	g.Meta      `orm:"table:agent_tokens, do:true"`
-	TokenHash   any //
-	AgentId     any //
-	CreatedAt   any //
-	TokenPlain any //
+	g.Meta    `orm:"table:agent_tokens, do:true"`
+	TokenHash any //
+	AgentId   any //
+	CreatedAt any //
 }

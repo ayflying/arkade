@@ -28,7 +28,7 @@ import PageHeader from '@/components/common/PageHeader.vue'
 import { agentRowProps, createAgentColumns } from '@/composables/agentColumns'
 import { usePolling } from '@/composables/usePolling'
 import { useResponsiveColumns } from '@/utils/responsiveColumns'
-import { deleteAgent, disableAgent, enableAgent, getAgentEnrollment, getAgentSelfUpdateStatus, listAgents, resetAgentToken, selfUpdateAgent } from '@/api/agents'
+import { deleteAgent, disableAgent, enableAgent, renewAgentEnrollment, getAgentSelfUpdateStatus, listAgents, resetAgentToken, selfUpdateAgent } from '@/api/agents'
 import { useAgentsStore } from '@/stores/agents'
 import type { Agent, CreateAgentResponse, Enrollment } from '@/types/agent'
 import { ApiError } from '@/types/api'
@@ -87,7 +87,7 @@ const columns = useResponsiveColumns(computed(() =>
     onToggleDisabled: (agent: Agent) => void handleToggleDisabled(agent),
     onDelete: (agent: Agent) => void handleDelete(agent),
     onSelfUpdate: (agent: Agent) => void handleSelfUpdate(agent),
-    onViewEnrollment: (agent: Agent) => void handleViewEnrollment(agent),
+    onRenewEnrollment: (agent: Agent) => void handleRenewEnrollment(agent),
     isBusy: (agentId: string) => enteringId.value === agentId || busyId.value === agentId
   })
 ))
@@ -392,25 +392,40 @@ function handleCreated(payload: CreateAgentResponse): void {
 }
 
 /**
- * 查看「待接入」服务器的接入信息（密钥 + 编排示例）。
+ * 重新获取「待接入」服务器的接入信息（密钥 + 编排示例）。
  *
- * 为什么不复用重置：重置会换掉密钥、并断开可能正在连接的 Agent。
- * 用户过几天回来部署时只是想再抄一遍密钥和编排，重置的代价完全没必要。
- * Hub 只在 pending 期间保留加密副本，接入成功后本入口就不再出现。
+ * 这里不是"查看历史"：Hub 数据库只存摘要，没有任何可回看的明文，
+ * 所以每次点开都会换发一把新密钥、旧密钥立即作废。
+ * 因为是换密钥，必须先二次确认；好在这台机器从未接入，
+ * 旧密钥作废不会打断任何正在运行的连接（已接入的服务器没有这个入口，
+ * 那种情况必须走「重置密钥」，确认框会明确说明会断开）。
  */
-async function handleViewEnrollment(agent: Agent): Promise<void> {
+async function handleRenewEnrollment(agent: Agent): Promise<void> {
   if (busyId.value !== '') return
+  const name = agentDisplayName(agent)
+  const confirmed = await confirmAction({
+    title: `重新获取「${name}」的接入信息？`,
+    content:
+      'Arkade 不保存密钥原文，重新获取时会生成一把新密钥，之前给你的那一把立即失效。\n\n' +
+      '这台服务器还没有接入，所以不会断开任何正在运行的连接；' +
+      '如果你之前已经把旧密钥填进了那台机器的配置，需要换成新的再启动。',
+    positiveText: '生成新密钥并查看',
+    negativeText: '取消'
+  })
+  if (!confirmed) return
+
   busyId.value = agent.id
   try {
-    const res = await getAgentEnrollment(agent.id)
-    pendingAgentName.value = agentDisplayName(agent)
-    tokenIsReset.value = false
-    enrollmentRevealable.value = true
+    const res = await renewAgentEnrollment(agent.id)
+    pendingAgentName.value = agentDisplayName(res.agent)
+    // 旧密钥已作废，文案要按"新密钥"来讲。
+    tokenIsReset.value = true
+    enrollmentRevealable.value = res.agent.status === 'pending'
     pendingEnrollment.value = res.enrollment
     tokenShow.value = true
   } catch (err) {
-    // 409 说明这期间它已经接入（或副本已被清理）：提示用户走重置，而不是让弹窗空白。
-    toastError(err instanceof ApiError ? err.message : '读取接入信息失败')
+    // 409 说明这期间它已经接入：提示用户走重置，而不是让弹窗空白。
+    toastError(err instanceof ApiError ? err.message : '获取接入信息失败')
     void store.refresh()
   } finally {
     busyId.value = ''

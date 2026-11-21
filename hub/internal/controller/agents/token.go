@@ -48,11 +48,6 @@ func (c *Controller) Create(ctx context.Context, req *api.CreateReq) (*api.Creat
 	if err != nil {
 		return nil, err
 	}
-	// 明文单独写：写失败只影响"以后还能不能再看密钥"，
-	// 不该让已经建好的记录和已返回的密钥失效（重试创建只会撞重名）。
-	if err := c.d.DB.SetAgentTokenPlain(ctx, id, plain); err != nil {
-		c.d.Log.Warn("保存接入密钥明文失败，该服务器将无法再次查看密钥", "agent_id", id, "err", err)
-	}
 	secretHeaders(ctx)
 	controller.Status(ctx, 201)
 	return &api.CreateRes{Agent: view, Enrollment: api.EnrollmentView{Token: plain, AgentID: id}}, nil
@@ -88,26 +83,30 @@ func (c *Controller) ResetToken(ctx context.Context, req *api.ResetTokenReq) (*a
 	if err != nil {
 		return nil, err
 	}
-	// 重置一定发生在"服务器还要重新接入"的语境里，因此新密钥同样保留可回读副本。
-	if err := c.d.DB.SetAgentTokenPlain(ctx, req.AgentID, plain); err != nil {
-		c.d.Log.Warn("保存接入密钥明文失败，该服务器将无法再次查看密钥", "agent_id", req.AgentID, "err", err)
-	}
 	secretHeaders(ctx)
 	return &api.ResetTokenRes{Agent: view, Enrollment: api.EnrollmentView{Token: plain, AgentID: req.AgentID}}, nil
 }
 
-// GetEnrollment 查看「尚未接入」服务器的密钥与编排信息。
+// RenewEnrollment 为「尚未接入」的服务器换发一把新密钥，并返回接入信息。
 //
-// 存在这件事的理由：用户在「添加服务器」后常常过一阵才去那台机器部署，
-// 期间要反复核对密钥和编排示例。只给一次就得靠"重置"才能再看，
-// 而重置会让已经开始连接的 Agent 掉线。
+// 为什么是"换发"而不是"回看历史"：库里不保存任何可解密的密钥副本，
+// 所以想看就得重新生成——这样即使数据库被拖走，也拿不到能直接用的密钥。
 //
-// 只对 pending（从未接入）开放，其余一律 409：接入之后列表不再提供查看入口，
-// 那时也确有"重置"这条正当路径。
-func (c *Controller) GetEnrollment(ctx context.Context, req *api.GetEnrollmentReq) (*api.GetEnrollmentRes, error) {
+// 怎么避免把已经接上的服务器踢下线：这里绝不调用 Registry.Close，
+// 只在"从未接入"（pending）时换发。旧密钥的摘要被覆盖，因此旧密钥立即作废；
+// 由于这台机器本来就还没连上来，不会有任何在跑的连接被打断。
+//
+// 只对 pending 开放，其余一律 409：已接入的服务器走"重置密钥"那条明确的危险路径，
+// 用户在那条路径上会看到"会断开连接"的二次确认。
+func (c *Controller) RenewEnrollment(ctx context.Context, req *api.RenewEnrollmentReq) (*api.RenewEnrollmentRes, error) {
 	if err := c.requireAdmin(ctx); err != nil {
 		return nil, err
 	}
+	if err := c.rejectReservedLocal(req.AgentID); err != nil {
+		return nil, err
+	}
+	// 先做一次快速判断只为给出更早的 404/409 提示；
+	// 真正的原子校验在 RenewPendingAgentToken 的事务里（含行锁）。
 	rec, err := c.d.DB.GetAgent(ctx, req.AgentID)
 	if err != nil {
 		return nil, c.storeError(err, "服务器不存在")
@@ -115,22 +114,24 @@ func (c *Controller) GetEnrollment(ctx context.Context, req *api.GetEnrollmentRe
 	if rec.Status != store.StatusPending {
 		return nil, &controller.Error{Status: 409, Code: "conflict", Message: "该服务器已接入，接入密钥只在添加时展示一次；需要重新获取请重置密钥"}
 	}
-	plain, err := c.d.DB.AgentTokenPlain(ctx, req.AgentID)
+	plain, hash, err := agentlink.GenerateEnrollmentTokenAvoiding(c.d.SharedToken)
 	if err != nil {
-		if errors.Is(err, store.ErrAgentTokenNotFound) {
-			return nil, &controller.Error{Status: 409, Code: "conflict", Message: "该服务器的接入信息已不可查看，请重置密钥"}
-		}
-		return nil, c.storeError(err, "服务器不存在")
+		c.d.Log.Error("生成接入密钥失败", "err", err)
+		return nil, internal("生成接入密钥失败，请重试", err)
 	}
-	if plain == "" {
-		return nil, &controller.Error{Status: 409, Code: "conflict", Message: "该服务器的接入信息已不可查看，请重置密钥"}
+	// 状态校验与摘要替换在同一个事务里完成：见 store.RenewPendingAgentToken 的说明。
+	if _, err := c.d.DB.RenewPendingAgentToken(ctx, req.AgentID, hash, time.Now().UTC()); err != nil {
+		if errors.Is(err, store.ErrNotPending) {
+			return nil, &controller.Error{Status: 409, Code: "conflict", Message: "该服务器已接入，接入密钥只在添加时展示一次；需要重新获取请重置密钥"}
+		}
+		return nil, c.storeError(err, "换发接入密钥失败")
 	}
 	view, err := c.viewByID(ctx, req.AgentID)
 	if err != nil {
 		return nil, err
 	}
 	secretHeaders(ctx)
-	return &api.GetEnrollmentRes{Agent: view, Enrollment: api.EnrollmentView{Token: plain, AgentID: req.AgentID}}, nil
+	return &api.RenewEnrollmentRes{Agent: view, Enrollment: api.EnrollmentView{Token: plain, AgentID: req.AgentID}}, nil
 }
 
 // The only transport exception: one-shot credentials must never be cached.

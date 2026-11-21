@@ -39,8 +39,8 @@ const emit = defineEmits<{
   (e: 'toggle-disabled'): void
   (e: 'delete'): void
   (e: 'self-update'): void
-  /** 待接入服务器的「查看接入信息」：再次展示密钥与编排示例 */
-  (e: 'view-enrollment'): void
+  /** 待接入服务器的「接入信息」：换发新密钥并再次展示 */
+  (e: 'renew-enrollment'): void
 }>()
 
 const disabled = computed(() => isAgentDisabled(props.agent))
@@ -102,7 +102,7 @@ const updateDisabled = computed(() => props.busy || disabled.value || !isOnline.
           type="primary"
           secondary
           :disabled="busy"
-          @click="emit('view-enrollment')"
+          @click="emit('renew-enrollment')"
         >
           接入信息
         </n-button>
@@ -111,7 +111,7 @@ const updateDisabled = computed(() => props.busy || disabled.value || !isOnline.
           容器
         </n-button>
       </template>
-      {{ isPending && !isLocal ? '查看接入密钥和容器编排示例（接入成功后不再显示）' : enterHint }}
+      {{ isPending && !isLocal ? '重新生成接入密钥并查看容器编排示例（旧密钥立即失效）' : enterHint }}
     </n-tooltip>
 
     <n-tooltip trigger="hover" placement="top">

@@ -71,15 +71,16 @@ export async function resetAgentToken(agentId: string): Promise<ResetAgentTokenR
 }
 
 /**
- * 查看某台「尚未接入」服务器的接入信息（密钥 + 编排示例要用到的名称）。
+ * 给某台「尚未接入」的服务器换发一把新密钥，并拿回编排示例在内的接入信息。
  *
- * 只在 status=pending 时有意义：一旦接入成功，Hub 侧就抹掉了可解密的副本，
- * 这里会返回 409（此时应当提示用户去重置密钥）。
- * 与创建/重置不同，这个接口可以反复调用——这正是它的价值：
- * 用户过几天再回来部署时不必重置密钥，也不会把已经在连的 Agent 踢下线。
+ * 这是 POST 而不是 GET，因为它的语义是「换发」：Hub 数据库只存摘要，
+ * 没有任何可回看的明文，所以每次调用都会生成新密钥并让旧密钥立即失效。
+ *
+ * 只对 status=pending 有效：一旦接入成功就返回 409（那时应走重置密钥）。
+ * 由于旧密钥会作废，调用方必须先用二次确认把这一点告诉用户。
  */
-export async function getAgentEnrollment(agentId: string): Promise<ResetAgentTokenResponse> {
-  return httpGet<ResetAgentTokenResponse>(`${agentPath(agentId)}/enrollment`)
+export async function renewAgentEnrollment(agentId: string): Promise<ResetAgentTokenResponse> {
+  return httpPost<ResetAgentTokenResponse>(`${agentPath(agentId)}/enrollment/renew`)
 }
 
 /**

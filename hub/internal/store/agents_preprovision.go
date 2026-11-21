@@ -117,33 +117,83 @@ func createPreprovisionedAgentTx(ctx context.Context, tx gdb.TX, rec AgentRecord
 // 记录不存在时返回 ErrNotFound（调用方据此 404）。
 func (d *DB) ResetAgentTokenHash(ctx context.Context, agentID, tokenHash string, at time.Time) error {
 	return d.TxModel(ctx, func(ctx context.Context, tx gdb.TX) error {
-		exists, err := tx.Model(dao.Agents.Table()).Ctx(ctx).
-			Where(dao.Agents.Columns().Id, agentID).
-			Count()
+		return resetAgentTokenHashTx(ctx, tx, agentID, tokenHash, at)
+	})
+}
+
+// RenewPendingAgentToken 用新摘要替换「尚未接入」记录的旧摘要，并返回记录本身。
+//
+// ## 为什么状态判断必须和写入在同一个事务里
+//
+// 换发的全部安全性都建立在"这台机器还没连上来"之上：没有在跑的连接，
+// 所以旧密钥作废不会踢掉任何人。若先查状态再单独写库，
+// 中间恰好有一次握手成功，就会把**正在工作的**服务器密钥换掉——
+// 那等价于一次没有二次确认的重置，而且那条握手还会因为摘要变了而落在奇怪的状态。
+// 放在一个事务里并加行锁，判断与替换就是原子的。
+//
+// 不属于 pending（或记录不存在）时返回 ErrNotPending，调用方据此拒绝并引导走重置。
+func (d *DB) RenewPendingAgentToken(ctx context.Context, agentID, tokenHash string, at time.Time) (AgentRecord, error) {
+	var rec AgentRecord
+	err := d.TxModel(ctx, func(ctx context.Context, tx gdb.TX) error {
+		c := dao.Agents.Columns()
+		// LockUpdate 是 PostgreSQL 的 SELECT ... FOR UPDATE：在事务结束前
+		// 挡住任何想改这行状态的并发写（包括握手侧的 Upsert）。
+		one, err := tx.Model(dao.Agents.Table()).Ctx(ctx).
+			Fields(c.Id, c.Name, c.Status).
+			Where(c.Id, agentID).
+			LockUpdate().
+			One()
 		if err != nil {
 			return gerror.Wrap(err, "查询服务器失败")
 		}
-		if exists == 0 {
+		if one.IsEmpty() {
 			return ErrNotFound
 		}
-
-		// 先删该 Agent 的所有旧摘要，再插入新的。
-		// 不用 UPDATE 是因为也可能出现"该 Agent 还没有凭据行"的情况
-		// （例如预建时写凭据失败后人工补建），先删后插两种都覆盖。
-		if _, err := tx.Model(dao.AgentTokens.Table()).Ctx(ctx).
-			Where(dao.AgentTokens.Columns().AgentId, agentID).
-			Delete(); err != nil {
-			return gerror.Wrap(err, "删除旧凭据失败")
+		if one[c.Status].String() != StatusPending {
+			return ErrNotPending
 		}
-		if _, err := tx.Model(dao.AgentTokens.Table()).Ctx(ctx).Data(do.AgentTokens{
-			TokenHash: tokenHash,
-			AgentId:   agentID,
-			CreatedAt: at.Unix(),
-		}).Insert(); err != nil {
-			return gerror.Wrap(err, "写入新凭据失败")
+		if err := resetAgentTokenHashTx(ctx, tx, agentID, tokenHash, at); err != nil {
+			return err
 		}
+		rec.ID = one[c.Id].String()
+		rec.Name = one[c.Name].String()
+		rec.Status = one[c.Status].String()
 		return nil
 	})
+	return rec, err
+}
+
+// ErrNotPending 表示该服务器已经接入（不再是 pending），不能走"换发"路径。
+var ErrNotPending = errors.New("该服务器已接入，不能换发接入密钥")
+
+// resetAgentTokenHashTx 在给定事务内替换凭据摘要。调用方必须已持有事务。
+func resetAgentTokenHashTx(ctx context.Context, tx gdb.TX, agentID, tokenHash string, at time.Time) error {
+	exists, err := tx.Model(dao.Agents.Table()).Ctx(ctx).
+		Where(dao.Agents.Columns().Id, agentID).
+		Count()
+	if err != nil {
+		return gerror.Wrap(err, "查询服务器失败")
+	}
+	if exists == 0 {
+		return ErrNotFound
+	}
+
+	// 先删该 Agent 的所有旧摘要，再插入新的。
+	// 不用 UPDATE 是因为也可能出现"该 Agent 还没有凭据行"的情况
+	// （例如预建时写凭据失败后人工补建），先删后插两种都覆盖。
+	if _, err := tx.Model(dao.AgentTokens.Table()).Ctx(ctx).
+		Where(dao.AgentTokens.Columns().AgentId, agentID).
+		Delete(); err != nil {
+		return gerror.Wrap(err, "删除旧凭据失败")
+	}
+	if _, err := tx.Model(dao.AgentTokens.Table()).Ctx(ctx).Data(do.AgentTokens{
+		TokenHash: tokenHash,
+		AgentId:   agentID,
+		CreatedAt: at.Unix(),
+	}).Insert(); err != nil {
+		return gerror.Wrap(err, "写入新凭据失败")
+	}
+	return nil
 }
 
 // agentNameExistsTx 在事务内判断是否已有同名记录。
