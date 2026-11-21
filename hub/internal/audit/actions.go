@@ -150,6 +150,8 @@ var labels = map[string]string{
 	ActionAgentEnable:     "启用服务器",
 	ActionAgentCreate:     "添加服务器",
 	ActionAgentTokenReset: "重置服务器接入密钥",
+	// 与"重置"区分：这条只在服务器从未接入时发生，不会断开连接。
+	ActionAgentTokenRenew: "换发未接入服务器的接入密钥",
 	ActionAgentSelfUpdate: "更新服务器组件",
 
 	ActionUserCreate:  "创建用户",
