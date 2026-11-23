@@ -5,6 +5,8 @@ import (
 	"arkade/hub/internal/agentlink"
 	"arkade/hub/internal/config"
 	"arkade/hub/internal/store"
+	"arkade/protocol/envelope"
+	"arkade/protocol/hostmetrics"
 	"context"
 	"log/slog"
 	"time"
@@ -49,28 +51,40 @@ func newLocalExecutor(ctx context.Context, cfg config.Config, db *store.DB, reg 
 	return executor, nil
 }
 
-func startLocalHeartbeat(db *store.DB, executor *embedded.Executor, log *slog.Logger, version string) func(context.Context) error {
+func startLocalHeartbeat(db *store.DB, executor *embedded.Executor, reg *agentlink.Registry, log *slog.Logger, version string) func(context.Context) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
+	collector := hostmetrics.NewCollector()
+	record := reg.LocalHealthRecorder(store.LocalAgentID)
 	go func() {
 		defer close(done)
 		timer := time.NewTicker(30 * time.Second)
 		defer timer.Stop()
-		for {
+		for ctx.Err() == nil {
+			metrics := collector.Sample()
+			run, stop := context.WithTimeout(ctx, 5*time.Second)
+			info, err := executor.Info(run)
+			runtimeOK := false
+			if err == nil && (info.Kind == string(envelope.RuntimeDocker) || info.Kind == string(envelope.RuntimePodman)) {
+				// Info 是启动探测的缓存；成功查询容器才能证明当前引擎可达。
+				_, probeErr := executor.Call(run, envelope.MethodContainerList, nil)
+				runtimeOK = probeErr == nil
+			}
+			stop()
+			record(runtimeOK, metrics)
+			if err == nil {
+				now := time.Now().Unix()
+				write, stopWrite := context.WithTimeout(ctx, 5*time.Second)
+				err = db.UpdateEmbeddedLocalAgentRuntime(write, store.AgentRecord{ID: store.LocalAgentID, Status: "online", Version: version, Runtime: info.Kind, RuntimeVersion: info.Version, LastSeen: now, UpdatedAt: now})
+				stopWrite()
+			}
+			if err != nil && ctx.Err() == nil {
+				log.Warn("更新内置本机运行状态失败")
+			}
 			select {
 			case <-ctx.Done():
 				return
 			case <-timer.C:
-				run, stop := context.WithTimeout(ctx, 5*time.Second)
-				info, err := executor.Info(run)
-				if err == nil {
-					now := time.Now().Unix()
-					err = db.UpdateEmbeddedLocalAgentRuntime(run, store.AgentRecord{ID: store.LocalAgentID, Status: "online", Version: version, Runtime: info.Kind, RuntimeVersion: info.Version, LastSeen: now, UpdatedAt: now})
-				}
-				if err != nil && ctx.Err() == nil {
-					log.Warn("更新内置本机运行状态失败")
-				}
-				stop()
 			}
 		}
 	}()

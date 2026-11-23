@@ -147,7 +147,7 @@ func NewApp(ctx context.Context, cfg config.Config, log *slog.Logger, version st
 	backgroundClose = append(backgroundClose, monitorEngine.Shutdown)
 	backgroundClose = append(backgroundClose, startMonitorRetention(db, log))
 	if localExecutor != nil {
-		backgroundClose = append(backgroundClose, startLocalHeartbeat(db, localExecutor, log, version))
+		backgroundClose = append(backgroundClose, startLocalHeartbeat(db, localExecutor, reg, log, version))
 	}
 
 	// GoFrame 的 session/request 清理依赖 Start 初始化，不能只把未启动

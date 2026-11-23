@@ -15,6 +15,7 @@ type LocalExecutor interface {
 }
 type localEntry struct {
 	executor LocalExecutor
+	health   healthSample
 	ctx      context.Context
 	cancel   context.CancelFunc
 }

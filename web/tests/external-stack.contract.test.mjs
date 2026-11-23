@@ -588,13 +588,13 @@ check(
 )
 check(
   '总览: 未纳管项直达外部详情',
-  /enterExternalStack\(item\.agentId, item\.stackName\)/.test(overviewSrc) &&
+  /:to="enterExternalStack\(selection\.agentId, stack\)"/.test(overviewSrc) &&
     /agent-stack-external-detail/.test(overviewSrc)
 )
 // 漂移项仍然只跳列表：它不是外部项目，没有 external 详情页
 check(
   '总览: 漂移项仍跳编排列表，不被误改',
-  /enterStacks\(item\.agentId\)/.test(overviewSrc)
+  /:to="enterStacks\(selection\.agentId\)"/.test(overviewSrc)
 )
 
 /* ───────── 路由与视图接线（源码级） ───────── */

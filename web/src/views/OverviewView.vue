@@ -1,628 +1,290 @@
 <script setup lang="ts">
-/**
- * 全局概览页 /overview（登录后的首页）
- *
- * 一屏回答三个问题：
- * 1. **我总共有多少东西**（统计卡片）；
- * 2. **哪里出问题了**（异常提示区：离线服务器 / 配置漂移 / 未纳管编排）；
- * 3. **每台服务器怎么样**（服务器缩略列表，点击进去）。
- *
- * ## 数据来源
- * 没有专属接口，由 api/overview.ts 聚合已有接口。聚合层负责并发与容错，
- * 本页只负责渲染与「不假装是全量」的提示。
- *
- * ## 为什么异常区排在统计卡片下面、服务器列表上面
- * 用户打开概览的第一诉求通常是「有没有事」，而不是「我有几个镜像」。
- * 统计卡片给个宏观印象就够，真正需要用户动手的信息必须在折叠线以上。
- */
-import { computed, h, onMounted, ref } from 'vue'
+import { computed, onMounted, onScopeDispose, ref, shallowRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { NAlert, NButton, NDataTable, NSelect, NSkeleton, NTag } from 'naive-ui'
-import type { DataTableColumns } from 'naive-ui'
-import AgentStatusTag from '@/components/agent/AgentStatusTag.vue'
+import { NAlert, NButton, NSelect, NSkeleton, NTag } from 'naive-ui'
+import { listAgents } from '@/api/agents'
+import { loadAgentOverview } from '@/api/overview'
 import EmptyState from '@/components/common/EmptyState.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
-import RelativeTime from '@/components/common/RelativeTime.vue'
+import HostUsage from '@/components/overview/HostUsage.vue'
 import StatCard from '@/components/overview/StatCard.vue'
-import { OVERVIEW_AGENT_LIMIT, displayNameOf, loadOverview } from '@/api/overview'
-import { listAgents } from '@/api/agents'
-import type { Agent } from '@/types/agent'
 import { usePolling } from '@/composables/usePolling'
-import type { AgentOverview, OverviewData } from '@/types/overview'
+import type { Agent } from '@/types/agent'
 import { ApiError } from '@/types/api'
-import { isAgentDisabled } from '@/utils/agentDisplay'
-import { useResponsiveColumns } from '@/utils/responsiveColumns'
+import type { AgentOverview } from '@/types/overview'
+import { agentDisplayName } from '@/utils/agentDisplay'
+import { getAgentHealth, HEALTH_STATES, sampleExpiresAt } from '@/utils/dashboardHealth'
+import { formatAbsoluteTime } from '@/utils/formatTime'
 
+const SELECT_KEY = 'arkade.overview.selectedAgent'
 const router = useRouter()
-
-const data = ref<OverviewData | null>(null)
-const loading = ref(false)
+const agents = shallowRef<Agent[] | null>(null)
+const receivedAt = ref(0)
+const now = ref(Date.now())
+const refreshing = ref(false)
 const errorText = ref('')
+const selectedAgentId = ref(readSelection())
+const details = shallowRef<AgentOverview | null>(null)
+const detailLoading = ref(false)
 
-/**
- * 用户明确选中的服务器。
- *
- * 默认 null 表示"还没选"：概览只给服务器台数与在线数，不铺任何一台的资源、
- * 编排和未纳管清单。用户自己选过之后才统计那一台，选择存在 sessionStorage，
- * 刷新页面不丢，但换浏览器/新会话时仍需重新选，避免悄悄沿用旧选择。
- */
-const SELECTED_AGENT_KEY = 'arkade.overview.selectedAgent'
-
-function readSelectedAgent(): string | null {
-  try {
-    const stored = sessionStorage.getItem(SELECTED_AGENT_KEY)
-    return stored && stored !== '' ? stored : null
-  } catch {
-    // 隐私模式或存储被禁用时退回"未选择"，功能不受影响
-    return null
-  }
+function readSelection(): string | null {
+  try { return sessionStorage.getItem(SELECT_KEY) || null }
+  catch { return null }
 }
 
-function writeSelectedAgent(agentId: string | null): void {
+function onSelectAgent(id: string | null): void {
+  selectedAgentId.value = id
   try {
-    if (agentId === null) sessionStorage.removeItem(SELECTED_AGENT_KEY)
-    else sessionStorage.setItem(SELECTED_AGENT_KEY, agentId)
-  } catch {
-    // 忽略存储失败：本次会话内仍然生效
-  }
+    if (id === null) sessionStorage.removeItem(SELECT_KEY)
+    else sessionStorage.setItem(SELECT_KEY, id)
+  } catch { /* Selection still works without sessionStorage. */ }
 }
 
-const selectedAgentId = ref<string | null>(readSelectedAgent())
+const rows = computed(() => (agents.value ?? [])
+  .map((agent) => getAgentHealth(agent, now.value, receivedAt.value))
+  .sort((a, b) => a.rank - b.rank || agentDisplayName(a.agent).localeCompare(agentDisplayName(b.agent), 'zh-CN') || a.agent.id.localeCompare(b.agent.id)))
+const breakdown = computed(() => {
+  const counts = new Map<string, number>()
+  for (const { state } of rows.value) counts.set(state.key, (counts.get(state.key) ?? 0) + 1)
+  return HEALTH_STATES.flatMap((state) => counts.has(state.key) ? [{ ...state, count: counts.get(state.key)! }] : [])
+})
+const agentOptions = computed(() => (agents.value ?? []).map((agent) => ({ label: agentDisplayName(agent), value: agent.id })))
+const selectedAgent = computed(() => agents.value?.find((agent) => agent.id === selectedAgentId.value))
+const selection = computed(() => details.value?.agentId === selectedAgentId.value ? details.value : null)
 
-/**
- * 拉取概览数据。
- *
- * @param silent 静默刷新：自动轮询用。
- *               - 不显示骨架：概览有 6 张卡片 + 一张表，骨架闪烁非常刺眼；
- *               - 失败不写 errorText：偶发失败不该把整页替换成错误提示，
- *                 连续失败交给 usePolling 的退避处理。
- *
- * 失败时保留旧数据：概览是「随便看一眼」的场景，
- * 因为一次刷新失败就清空成空白页，比显示几秒前的数据糟糕得多。
- */
-async function refresh(silent = false): Promise<void> {
-  if (!silent) loading.value = true
-  if (!silent) errorText.value = ''
-  try {
-    // 下拉框需要完整服务器清单；它与资源统计分离，未选择时也不为空。
-    // 把这份清单同时交给聚合层，避免它再发一次同样的列表请求。
-    allAgents.value = await listAgents()
-    data.value = await loadOverview(selectedAgentId.value, OVERVIEW_AGENT_LIMIT, allAgents.value)
-    if (silent) errorText.value = ''
-  } catch (err) {
-    if (silent) {
-      // 抛给 usePolling 计入连续失败
-      throw err
+let listController: AbortController | undefined
+let detailController: AbortController | undefined
+let detailRequest: Promise<void> | undefined
+let expiryTimer: ReturnType<typeof setTimeout> | undefined
+
+// One local expiry timer, no extra network requests and no per-row timers.
+function updateClock(): void {
+  clearTimeout(expiryTimer)
+  now.value = Date.now()
+  let next = Infinity
+  for (const agent of agents.value ?? []) {
+    if (agent.status !== 'online' || agent.disabled === true) continue
+    const expires = sampleExpiresAt(agent.sampled_at, receivedAt.value)
+    if (expires > now.value) next = Math.min(next, expires)
+  }
+  if (Number.isFinite(next)) expiryTimer = setTimeout(updateClock, next - now.value)
+}
+
+function loadDetails(id: string): Promise<void> {
+  if (detailController && detailRequest) return detailRequest
+  const controller = new AbortController()
+  detailController = controller
+  detailLoading.value = true
+  detailRequest = loadAgentOverview(id, controller.signal).then((result) => {
+    if (!controller.signal.aborted && selectedAgentId.value === id) details.value = result
+  }).finally(() => {
+    if (detailController === controller) {
+      detailController = undefined
+      detailRequest = undefined
+      detailLoading.value = false
     }
-    errorText.value = err instanceof ApiError ? err.message : '加载概览数据失败'
-  } finally {
-    if (!silent) loading.value = false
-  }
-}
-
-const totals = computed(() => data.value?.totals)
-const problems = computed(() => data.value?.problems)
-const hasSelection = computed(() => data.value?.hasSelection === true)
-
-/**
- * 服务器下拉选项：用于选择要统计哪一台。
- *
- * 未选择时概览不返回任何 AgentOverview，因此下拉框要退回监听服务器清单本身。
- */
-const agentOptions = computed(() =>
-  allAgents.value.map((agent) => ({
-    label: displayNameOf(agent),
-    value: agent.id
-  }))
-)
-
-/**
- * 切换服务器。
- *
- * 下拉框的值立刻跟着变，列表区域只显示「加载中」占位而不是整页消失：
- * 清空数据会让整页塌下去，看起来像点击没生效。旧数据保留到新数据到达，
- * 由 loading 状态表明正在刷新，避免用户盯着空白等。
- */
-async function onSelectAgent(agentId: string | null): Promise<void> {
-  selectedAgentId.value = agentId
-  writeSelectedAgent(agentId)
-  await refresh()
-}
-
-/** 异常总数：0 时显示「一切正常」，>0 时展开异常区 */
-const problemCount = computed(() => {
-  const p = problems.value
-  if (!p) return 0
-  return p.offlineAgents.length + p.driftedStacks.length + p.orphanStacks.length
-})
-
-/** 是否有任何服务器（决定是否显示空态引导） */
-const hasAgents = computed(() => (totals.value?.agents ?? 0) > 0)
-
-/**
- * 全部服务器（含未选中统计的）。
- *
- * 概览在"未选服务器"时不会聚合任何一台，但仍要把服务器名字提供给下拉框，
- * 否则用户没有可选项。单独保存一份列表，不参与资源统计。
- */
-const allAgents = ref<Agent[]>([])
-
-/**
- * 进入某台服务器：与服务器列表保持一致，默认落在容器编排。
- *
- * 「随便点一台服务器」在哪里都是同一个动作，落地页也应该一样；
- * 否则从概览点进去看到的是容器列表，从列表点进去看到的是编排，会让人以为点错了。
- */
-function enterAgent(agentId: string): void {
-  void router.push({ name: 'agent-stacks', params: { id: agentId } })
-}
-
-/** 进入某台服务器的编排页（漂移/未纳管项要跳到能处理它的地方） */
-function enterStacks(agentId: string): void {
-  void router.push({ name: 'agent-stacks', params: { id: agentId } })
-}
-
-/**
- * 直接进入某个未纳管外部项目的详情页。
- *
- * 未纳管项目现在能看容器、日志与配置草稿，所以点了应该直达详情，
- * 而不是丢回列表再让人自己找一遍。
- */
-function enterExternalStack(agentId: string, stackName: string): void {
-  if (stackName === '') {
-    enterStacks(agentId)
-    return
-  }
-  void router.push({
-    name: 'agent-stack-external-detail',
-    params: { id: agentId, name: stackName }
   })
+  return detailRequest
 }
 
-const agentColumns = computed<DataTableColumns<AgentOverview>>(() => [
-  {
-    title: '服务器',
-    key: 'name',
-    minWidth: 180,
-    render: (row) =>
-      h(
-        'a',
-        { class: 'arkade-link', onClick: () => enterAgent(row.agent.id) },
-        displayNameOf(row.agent)
-      )
-  },
-  {
-    title: '状态',
-    key: 'status',
-    width: 110,
-    render: (row) =>
-      // 禁用优先于在线状态展示：禁用是管理员主动意图，比「在线/离线」更需要被看到
-      isAgentDisabled(row.agent)
-        ? h(NTag, { size: 'small', bordered: false }, { default: () => '已禁用' })
-        : h(AgentStatusTag, { status: row.agent.status })
-  },
-  {
-    title: '容器',
-    key: 'containers',
-    width: 120,
-    render: (row) =>
-      h(
-        'span',
-        { style: 'font-variant-numeric: tabular-nums' },
-        `${row.counts.runningContainers} / ${row.counts.containers}`
-      )
-  },
-  {
-    title: '编排',
-    key: 'stacks',
-    width: 90,
-    render: (row) => h('span', { style: 'font-variant-numeric: tabular-nums' }, row.counts.stacks)
-  },
-  {
-    title: '镜像',
-    key: 'images',
-    width: 80,
-    render: (row) => h('span', { style: 'font-variant-numeric: tabular-nums' }, row.counts.images)
-  },
-  {
-    title: '最后心跳',
-    key: 'last_seen',
-    width: 130,
-    render: (row) => h(RelativeTime, { seconds: row.agent.last_seen, prefix: '最后心跳' })
-  },
-  {
-    title: '操作',
-    key: 'actions',
-    width: 100,
-    fixed: 'right',
-    render: (row) =>
-      h(
-        NButton,
-        { size: 'tiny', quaternary: true, onClick: () => enterAgent(row.agent.id) },
-        { default: () => '查看' }
-      )
-  }
-])
-const shownAgentColumns = useResponsiveColumns(agentColumns)
+function clearDetails(): void {
+  detailController?.abort()
+  detailController = undefined
+  detailRequest = undefined
+  detailLoading.value = false
+  details.value = null
+}
 
-/**
- * 统计自动刷新：每 30 秒静默拉一次。
- *
- * 概览是**聚合页**，一次刷新要为每台服务器发 5 个请求；
- * 间隔必须明显长于单台页面（容器 5 秒 / 编排 10 秒），否则服务器一多就是可观的负载。
- * 30 秒对「宏观数字有没有变化」这个用途完全够用。
- *
- * 用 interval 函数返回固定值而不是常量，是为了将来若要做
- * 「服务器多时自动放慢」时只改这里一处。
- */
-usePolling(() => refresh(true), {
-  name: 'overview',
-  interval: 30000,
-  // 首屏由 onMounted 的 refresh() 负责，避免重复聚合一次
-  immediate: false
+watch(selectedAgentId, (id) => {
+  clearDetails()
+  if (id && selectedAgent.value) void loadDetails(id)
+}, { flush: 'sync' })
+
+async function refresh(): Promise<void> {
+  const controller = new AbortController()
+  listController = controller
+  refreshing.value = true
+  try {
+    const list = await listAgents({ signal: controller.signal, cache: 'no-store' })
+    if (controller.signal.aborted) return
+    receivedAt.value = Date.now()
+    agents.value = list
+    updateClock()
+    errorText.value = ''
+    const selected = selectedAgent.value
+    if (selected) void loadDetails(selected.id)
+    else if (selectedAgentId.value !== null) onSelectAgent(null)
+  } catch (err) {
+    if (controller.signal.aborted) return
+    if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+      agents.value = null
+      clearDetails()
+    }
+    errorText.value = err instanceof ApiError ? err.message : '无法读取服务器列表'
+    throw err
+  } finally {
+    if (!controller.signal.aborted) refreshing.value = false
+  }
+}
+
+const { trigger } = usePolling(refresh, { name: 'dashboard', interval: 30_000, immediate: false })
+onMounted(() => { void trigger() })
+onScopeDispose(() => {
+  listController?.abort()
+  detailController?.abort()
+  clearTimeout(expiryTimer)
 })
 
-onMounted(() => {
-  void refresh()
+function enterStacks(id: string) {
+  return { name: 'agent-stacks', params: { id } }
+}
+
+function enterExternalStack(agentId: string, stackName: string) {
+  return stackName ? { name: 'agent-stack-external-detail', params: { id: agentId, name: stackName } } : enterStacks(agentId)
+}
+
+const stackHint = computed(() => {
+  const unmanaged = selection.value?.counts.unmanagedStacks
+  if (unmanaged === undefined) return '未纳管数量未知'
+  return unmanaged > 0 ? `另有 ${unmanaged} 个未纳管` : '无未纳管项目'
 })
 </script>
 
 <template>
-  <div class="overview-page">
-    <page-header title="概览" subtitle="查看所有服务器的整体运行状况与需要处理的问题">
+  <div class="dashboard">
+    <page-header title="仪表盘" subtitle="查看有权访问的服务器、引擎状态和主机资源采样。">
       <template #actions>
-        <n-button size="small" :loading="loading" @click="refresh()">刷新</n-button>
+        <n-button size="small" :loading="refreshing" @click="trigger()">刷新</n-button>
       </template>
     </page-header>
 
-    <div v-if="errorText !== ''" class="overview-page__row">
-      <n-alert type="error" closable>{{ errorText }}</n-alert>
-      <n-button size="small" quaternary @click="refresh()">重试</n-button>
-    </div>
+    <n-alert v-if="errorText" :type="agents ? 'warning' : 'error'" title="未能刷新服务器健康" role="alert">
+      {{ errorText }}。{{ agents ? '服务器状态为上次查询结果，不代表当前状态。' : '请点击刷新重试。' }}
+    </n-alert>
+    <n-skeleton v-if="agents === null && !errorText" height="156px" />
+    <empty-state v-else-if="agents?.length === 0" description="暂无可访问的服务器。可在服务器页查看接入方式，或联系管理员确认授权。">
+      <template #extra><n-button size="small" @click="router.push({ name: 'agents' })">查看服务器</n-button></template>
+    </empty-state>
 
-    <!-- 首次加载：用骨架屏而不是转圈，避免页面高度突然跳变 -->
-    <template v-if="data === null && loading">
-      <div class="stat-grid">
-        <div v-for="i in 6" :key="i" class="stat-skeleton">
-          <n-skeleton text :repeat="2" />
+    <template v-if="agents?.length">
+      <section class="fleet" aria-labelledby="fleet-heading">
+        <header class="fleet__header">
+          <div>
+            <h2 id="fleet-heading">服务器健康</h2>
+            <p>{{ errorText ? '上次成功查询' : '列表更新' }}：{{ formatAbsoluteTime(receivedAt / 1000) }}</p>
+          </div>
+          <span class="fleet__total"><strong>{{ agents.length }}</strong> 台可访问</span>
+        </header>
+        <ul class="fleet__summary" aria-label="各健康状态的服务器数量">
+          <li v-for="state in breakdown" :key="state.key">
+            <n-tag :type="state.tone" :bordered="false" size="small" round>
+              {{ state.label }} <b>{{ state.count }}</b>
+            </n-tag>
+          </li>
+        </ul>
+        <ul class="fleet__list" aria-label="服务器健康列表，离线与异常优先">
+          <li v-for="row in rows" :key="row.agent.id" class="fleet__row" :data-state="row.state.key">
+            <div class="host-identity">
+              <router-link class="arkade-link host-identity__name" :to="enterStacks(row.agent.id)">{{ agentDisplayName(row.agent) }}</router-link>
+              <n-tag :type="row.state.tone" size="small" :bordered="false">{{ row.state.label }}</n-tag>
+            </div>
+            <div v-if="row.sample && !errorText" class="host-metrics">
+              <host-usage label="CPU" :cpu-percent="row.sample.cpuPercent" />
+              <host-usage label="内存" :usage="row.sample.memory" />
+              <host-usage :label="row.sample.disk?.scope === 'host_filesystem' ? '磁盘（监控分区）' : '磁盘（根分区）'" :usage="row.sample.disk" />
+            </div>
+            <div v-else class="host-no-data">
+              {{ errorText ? '当前用量未确认' : row.agent.status === 'online' && !row.agent.disabled ? '暂无有效用量采样' : '当前无可用用量' }}
+              <span v-if="row.state.key === 'no-data' && !errorText">{{ row.runtimeOk === true ? '引擎可达' : '引擎状态未知' }}</span>
+            </div>
+            <div class="host-time">
+              <template v-if="row.sample && !errorText"><span>采样时间</span>{{ formatAbsoluteTime(row.agent.sampled_at) }}</template>
+              <template v-else-if="row.agent.last_seen > 0"><span>最后心跳</span>{{ formatAbsoluteTime(row.agent.last_seen) }}</template>
+              <span v-else>无心跳记录</span>
+            </div>
+          </li>
+        </ul>
+      </section>
+
+      <section class="server-detail" aria-labelledby="detail-heading">
+        <header class="server-detail__header">
+          <div>
+            <h2 id="detail-heading">单台服务器资源</h2>
+            <p>选择服务器后，仅查询该台的编排和资源数量。</p>
+          </div>
+          <n-select :value="selectedAgentId" :options="agentOptions" clearable placeholder="选择服务器" aria-label="选择要统计的服务器" class="server-detail__select" @update:value="onSelectAgent" />
+        </header>
+        <n-skeleton v-if="detailLoading && !selection" height="92px" />
+        <div v-if="selection" class="server-detail__result" :aria-busy="detailLoading">
+          <n-alert v-if="selection.failures.length" type="warning" title="部分资源未能确认">
+            <ul class="failure-list"><li v-for="failure in selection.failures" :key="failure.resource">{{ failure.resource }}：{{ failure.message }}</li></ul>
+          </n-alert>
+          <n-alert v-if="selection.driftedStacks.length" type="warning" title="编排配置发生漂移">
+            服务器上的 Compose 配置与 Hub 记录不一致。保存前请先核对服务器上的真实配置。
+            <div class="problem-links">
+              <router-link v-for="stack in selection.driftedStacks" :key="stack" class="arkade-link" :to="enterStacks(selection.agentId)">{{ stack }}</router-link>
+            </div>
+          </n-alert>
+          <n-alert v-if="selection.orphanStacks.length" type="info" title="存在未纳管的编排">
+            可进入外部项目查看容器、日志与配置草稿。
+            <div class="problem-links">
+              <router-link v-for="stack in selection.orphanStacks" :key="stack" class="arkade-link" :to="enterExternalStack(selection.agentId, stack)">{{ stack }}</router-link>
+            </div>
+          </n-alert>
+          <div class="stat-grid">
+            <stat-card label="容器" :value="selection.counts.containers" unit="个" :hint="selection.counts.runningContainers === undefined ? '数量未知' : `运行中 ${selection.counts.runningContainers} 个`" />
+            <stat-card label="已纳管编排" :value="selection.counts.stacks" unit="个" :hint="stackHint" />
+            <stat-card label="本地镜像" :value="selection.counts.images" unit="个" />
+            <stat-card label="网络" :value="selection.counts.networks" unit="个" />
+            <stat-card label="存储卷" :value="selection.counts.volumes" unit="个" />
+          </div>
         </div>
-      </div>
-    </template>
-
-    <!-- 空态：一台服务器都没有 → 引导部署 Agent（这是唯一能接入服务器的方式） -->
-    <template v-if="data !== null && !hasAgents">
-      <empty-state description="还没有任何服务器接入 Arkade。部署一个 Agent 后，它所在的服务器就会自动出现在这里。">
-        <template #extra>
-          <n-button size="small" type="primary" @click="router.push({ name: 'agents' })">
-            去服务器页查看部署说明
-          </n-button>
-        </template>
-      </empty-state>
-    </template>
-
-    <template v-else-if="data !== null">
-      <!--
-        服务器选择器
-        默认不选：概览只给出"共有几台服务器、几台在线"，不把任何一台的编排、
-        容器、卷铺在首页。用户点了具体的服务器后才统计那一台。
-      -->
-      <div class="overview-page__row">
-        <n-select
-          :value="selectedAgentId"
-          :options="agentOptions"
-          clearable
-          placeholder="选择服务器"
-          aria-label="选择要查看的服务器"
-          class="overview-page__agent-select"
-          @update:value="onSelectAgent"
-        />
-      </div>
-
-      <!-- 未选择服务器：只给服务器台数，资源统计与未纳管清单一律不展示 -->
-      <template v-if="!hasSelection">
-        <div class="stat-grid">
-          <stat-card
-            label="服务器"
-            :value="data.totals.agents"
-            unit="台"
-            :hint="`在线 ${data.totals.onlineAgents} 台`"
-          />
-        </div>
-        <empty-state description="请先在上方选择一台服务器。未选择时不会统计任何服务器的容器、编排与存储资源。">
-          <template #extra>
-            <n-button size="small" type="primary" @click="router.push({ name: 'agents' })">
-              去服务器页查看全部服务器
-            </n-button>
-          </template>
-        </empty-state>
-      </template>
-
-      <!-- 已选择服务器：显示该台的完整统计与异常提示 -->
-      <template v-else>
-      <!--
-        统计范围提示：服务器超过上限时只统计前 N 台，必须明说，
-        否则用户会以为卡片上是全量数字。
-      -->
-      <div v-if="data.truncated" class="overview-page__row">
-        <n-alert type="info" :bordered="false">
-          服务器较多，为避免拖慢页面，下方统计仅包含<strong>前 {{ OVERVIEW_AGENT_LIMIT }} 台</strong>服务器的资源数量（共
-          {{ data.totalAgents }} 台）。离线服务器列表不受此限制。
-        </n-alert>
-      </div>
-
-      <!-- 一、统计卡片 -->
-      <div class="stat-grid">
-        <stat-card
-          label="服务器"
-          :value="data.totals.agents"
-          unit="台"
-          :hint="`在线 ${data.totals.onlineAgents} 台`"
-          :tone="data.totals.onlineAgents === data.totals.agents ? 'good' : 'normal'"
-        />
-        <stat-card
-          label="容器"
-          :value="data.totals.containers"
-          unit="个"
-          :hint="`运行中 ${data.totals.runningContainers} 个`"
-        />
-        <!--
-          容器编排：必须同时给出「已纳管」和「未纳管」两个数。
-          只显示已纳管时，如果全部项目都没纳管，这里就是 0，
-          用户会以为服务器上一个编排都没有——实际他机器上跑着一堆。
-        -->
-        <stat-card
-          label="容器编排"
-          :value="data.totals.stacks"
-          unit="个"
-          :hint="
-            data.totals.unmanagedStacks > 0
-              ? `另有 ${data.totals.unmanagedStacks} 个未纳管`
-              : '全部已纳管'
-          "
-        />
-        <stat-card label="本地镜像" :value="data.totals.images" unit="个" />
-        <stat-card label="网络" :value="data.totals.networks" unit="个" />
-        <stat-card label="存储卷" :value="data.totals.volumes" unit="个" />
-      </div>
-
-      <!--
-        二、异常提示区
-        三类问题集中展示。数量为 0 时整个区都不渲染——一个「0 个问题」的空盒子
-        只会占用首屏空间，反而让真正的问题不显眼。
-      -->
-      <div v-if="problemCount > 0" class="problem-area">
-        <!-- 离线服务器 -->
-        <n-alert
-          v-if="data.problems.offlineAgents.length > 0"
-          type="warning"
-          :bordered="false"
-          title="有服务器离线"
-          class="problem-area__item"
-        >
-          <div class="problem-area__text">
-            以下服务器的 Agent 已断开连接，其上的容器操作将无法执行：
-          </div>
-          <div class="problem-area__tags">
-            <n-tag
-              v-for="agent in data.problems.offlineAgents"
-              :key="agent.id"
-              size="small"
-              :bordered="false"
-              type="warning"
-              class="problem-area__tag"
-              @click="enterAgent(agent.id)"
-            >
-              {{ displayNameOf(agent) }}
-            </n-tag>
-          </div>
-        </n-alert>
-
-        <!-- 配置漂移 -->
-        <n-alert
-          v-if="data.problems.driftedStacks.length > 0"
-          type="warning"
-          :bordered="false"
-          title="编排配置发生漂移"
-          class="problem-area__item"
-        >
-          <div class="problem-area__text">
-            以下编排的 compose.yml 与 Hub 记录不一致，通常是有人直接在服务器上改了文件。
-            在 Hub 里编辑保存会覆盖那些改动，处理前请先确认线上真实配置：
-          </div>
-          <div class="problem-area__tags">
-            <n-tag
-              v-for="item in data.problems.driftedStacks"
-              :key="`${item.agentId}/${item.stackName}`"
-              size="small"
-              :bordered="false"
-              type="warning"
-              class="problem-area__tag"
-              @click="enterStacks(item.agentId)"
-            >
-              {{ item.agentName }} / {{ item.stackName }}
-            </n-tag>
-          </div>
-        </n-alert>
-
-        <!-- 未纳管编排 -->
-        <n-alert
-          v-if="data.problems.orphanStacks.length > 0"
-          type="info"
-          :bordered="false"
-          title="存在未纳管的编排"
-          class="problem-area__item"
-        >
-          <div class="problem-area__text">
-            以下编排存在于服务器上，但尚未登记。可进入外部项目查看容器、日志与配置草稿：
-          </div>
-          <div class="problem-area__tags">
-            <n-tag
-              v-for="item in data.problems.orphanStacks"
-              :key="`${item.agentId}/${item.stackName}`"
-              size="small"
-              :bordered="false"
-              type="info"
-              class="problem-area__tag"
-              @click="enterExternalStack(item.agentId, item.stackName)"
-            >
-              {{ item.agentName }} / {{ item.stackName }}
-            </n-tag>
-          </div>
-        </n-alert>
-      </div>
-
-      <!-- 全部正常时给一句明确结论，而不是让用户自己去确认「是不是没加载出来」 -->
-      <div v-else-if="!data.truncated || data.failures.length === 0" class="problem-area">
-        <n-alert type="success" :bordered="false" class="problem-area__item">
-          未发现离线服务器、配置漂移或未纳管编排。
-        </n-alert>
-      </div>
-
-      <!--
-        三、部分数据未统计到
-        必须显式列出，否则用户会拿一张「少了几台」的统计表当全量用。
-      -->
-      <div v-if="data.failures.length > 0" class="overview-page__row">
-        <n-alert type="warning" :bordered="false" title="部分数据未能统计">
-          以下服务器的数据拉取失败，上方统计数字不包含它们：
-          <ul class="failure-list">
-            <li v-for="(item, index) in data.failures" :key="index">
-              {{ item.agentName }} · {{ item.resource }}：{{ item.message }}
-            </li>
-          </ul>
-        </n-alert>
-      </div>
-
-      <!-- 四、服务器缩略列表 -->
-      <div class="section-title">服务器状态</div>
-      <div class="table-card arkade-table-scroll">
-        <n-data-table
-          :columns="shownAgentColumns"
-          :data="data.agents"
-          :loading="loading"
-          :row-key="(row: AgentOverview) => row.agent.id"
-          :bordered="false"
-          :single-line="false"
-          size="medium"
-          :scroll-x="900"
-        />
-      </div>
-      </template>
+      </section>
     </template>
   </div>
 </template>
 
 <style scoped>
-/* 按内容区（扣除侧栏及页面留白）决定列数，而不是只看浏览器宽度。 */
-.overview-page {
-  container-type: inline-size;
+.dashboard { container-type: inline-size; }
+.dashboard > .n-alert { margin-bottom: 16px; }
+.fleet { border: 1px solid var(--arkade-border-color); border-radius: 10px; background: var(--arkade-surface-bg); }
+.fleet__header, .server-detail__header { display: flex; align-items: center; justify-content: space-between; gap: 12px 20px; flex-wrap: wrap; }
+.fleet__header { padding: 18px 20px 12px; }
+.fleet__header h2, .server-detail__header h2 { font-size: 17px; line-height: 1.35; margin: 0; color: var(--arkade-text-primary); }
+.fleet__header p, .server-detail__header p { margin: 5px 0 0; font-size: 12px; color: var(--arkade-text-secondary); }
+.fleet__total { color: var(--arkade-text-secondary); white-space: nowrap; }
+.fleet__total strong { font-size: 23px; font-variant-numeric: tabular-nums; color: var(--arkade-text-primary); }
+.fleet__summary, .fleet__list { list-style: none; margin: 0; padding: 0; }
+.fleet__summary { display: flex; gap: 6px; flex-wrap: wrap; padding: 0 20px 16px; }
+.fleet__summary b { margin-inline-start: 4px; }
+.fleet__row { display: grid; grid-template-columns: minmax(155px, 1.1fr) minmax(0, 3fr) 140px; align-items: start; gap: 12px 20px; border-top: 1px solid var(--arkade-border-color); border-inline-start: 3px solid transparent; padding: 15px 20px 15px 17px; }
+.fleet__row:last-child { border-end-start-radius: 9px; border-end-end-radius: 9px; }
+.fleet__row[data-state='offline'], .fleet__row[data-state='engine-error'] { border-inline-start-color: var(--arkade-danger); background: var(--arkade-surface-bg-subtle); }
+.host-identity { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; min-width: 0; }
+.host-identity__name { font-weight: 600; overflow-wrap: anywhere; }
+.host-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 16px; }
+.host-time, .host-no-data { color: var(--arkade-text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
+.host-time span, .host-no-data span { display: block; }
+.server-detail { margin-top: 26px; }
+.server-detail__header { margin-bottom: 12px; }
+.server-detail__select { width: min(100%, 300px); }
+.server-detail__result { display: grid; gap: 10px; }
+.failure-list { margin: 0; padding-inline-start: 18px; overflow-wrap: anywhere; }
+.problem-links { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 6px; overflow-wrap: anywhere; }
+.stat-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
+@container (max-width: 820px) {
+  .fleet__row { grid-template-columns: minmax(0, 1fr) auto; align-items: start; }
+  .host-metrics, .host-no-data { grid-column: 1 / -1; grid-row: 2; }
+  .host-time { text-align: end; }
+  .stat-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
-
-.stat-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  margin-bottom: 16px;
-}
-
-@container (min-width: 540px) {
-  .stat-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-}
-
-@container (min-width: 1000px) {
-  .stat-grid {
-    grid-template-columns: repeat(6, minmax(0, 1fr));
-  }
-}
-
-.overview-page__agent-select {
-  width: 100%;
-  max-width: 420px;
-}
-
-.stat-skeleton {
-  background: var(--arkade-surface-bg);
-  border-radius: 8px;
-  padding: 16px;
-}
-
-/* 通用「提示条 + 按钮/内容并排」容器 */
-.overview-page__row {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  margin-bottom: 16px;
-}
-
-.overview-page__row :deep(.n-alert) {
-  flex: 1;
-  min-width: 0;
-}
-
-.problem-area {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  margin-bottom: 16px;
-}
-
-.problem-area__item {
-  /* Naive UI 的 alert 内部有默认宽度行为，这里确保在窄屏下可以换行收缩 */
-  min-width: 0;
-}
-
-.problem-area__text {
-  line-height: 1.6;
-}
-
-/* 异常项标签：可点击跳转到对应页面，因此给出明确的可点反馈 */
-.problem-area__tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 8px;
-}
-
-.problem-area__tag {
-  height: auto;
-  max-width: 100%;
-  min-height: var(--n-height);
-  padding-block: 3px;
-  white-space: normal;
-  line-height: 1.4;
-  cursor: pointer;
-  font-family: var(--arkade-mono-font);
-}
-
-.problem-area__tag :deep(.n-tag__content),
-.failure-list {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.problem-area__tag:hover {
-  opacity: 0.8;
-  text-decoration: underline;
-}
-
-.failure-list {
-  margin: 6px 0 0;
-  padding-left: 18px;
-  line-height: 1.7;
-}
-
-.section-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--arkade-text-primary);
-  margin-bottom: 8px;
-}
-
-.table-card {
-  background: var(--arkade-surface-bg);
-  border-radius: 8px;
-  padding: 4px;
+@container (max-width: 440px) {
+  .fleet__header { padding-inline: 12px; }
+  .fleet__summary { padding-inline: 12px; }
+  .fleet__row { grid-template-columns: minmax(0, 1fr); padding-inline: 9px 12px; }
+  .host-time { text-align: start; }
+  .host-time span { display: inline; margin-inline-end: 6px; }
+  .host-metrics { gap: 8px; }
+  .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 </style>

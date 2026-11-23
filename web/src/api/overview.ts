@@ -1,274 +1,40 @@
-/**
- * 概览数据聚合
- *
- * 概览页没有专属接口，这里把「服务器列表 + 每台的 5 类资源」聚合起来。
- *
- * ## 三个必须守住的约束
- *
- * 1. **不能 N+1 串行**。N 台服务器 × 5 个接口若串行发，10 台就是 50 个 RTT，
- *    页面会转很久。这里用 Promise.all 把同一台内部的 5 个请求并发，
- *    再把所有服务器并发展开——总耗时约等于「最慢的那一个请求」。
- *
- * 2. **单点失败不能拖垮整页**。任何一台离线，它那 5 个接口基本都会失败。
- *    如果整体 reject，用户明明能看到别的服务器也白搭。因此每个请求都包一层
- *    settle()，失败只记进 failures，统计照常进行。
- *
- * 3. **不能假装是全量**。服务器很多时逐个拉会打爆后端与浏览器连接数，
- *    因此限制只拉前 N 台，并明确回传 truncated=true，由界面提示
- *    「仅统计前 N 台」。
- */
-
-import { listAgents } from '@/api/agents'
 import { listContainers } from '@/api/containers'
 import { listImages, listNetworks, listVolumes } from '@/api/resources'
 import { listStacks } from '@/api/stacks'
 import { ApiError } from '@/types/api'
-import type { Agent } from '@/types/agent'
-import type {
-  AgentOverview,
-  AgentResourceCounts,
-  AggregationFailure,
-  OverviewData,
-  Settled
-} from '@/types/overview'
+import type { AgentOverview } from '@/types/overview'
 
-/**
- * 最多参与统计的服务器台数。
- *
- * 取 20 的理由：正常运维规模下 20 台已覆盖绝大多数场景；每台 5 个请求，
- * 峰值并发 100 个，浏览器与 Hub 都能承受。超出部分不做静默忽略——
- * 界面会提示「仅统计前 N 台」。
- */
-export const OVERVIEW_AGENT_LIMIT = 20
-
-/** 把可能抛错的操作包成 Settled，错误统一转成中文文案 */
-async function settle<T>(task: Promise<T>): Promise<Settled<T>> {
-  try {
-    return { ok: true, value: await task }
-  } catch (err) {
-    return { ok: false, message: err instanceof ApiError ? err.message : '请求失败' }
+/** Resource lookups are only for the explicitly selected server, not fleet health. */
+export async function loadAgentOverview(agentId: string, signal: AbortSignal): Promise<AgentOverview> {
+  const overview: AgentOverview = { agentId, counts: {}, driftedStacks: [], orphanStacks: [], failures: [] }
+  const { counts, failures } = overview
+  async function read(resource: string, load: () => Promise<void>): Promise<void> {
+    try {
+      await load()
+    } catch (err) {
+      if (!signal.aborted) failures.push({ resource, message: err instanceof ApiError ? err.message : '请求失败' })
+    }
   }
-}
-
-/** 取容器计数：总数与运行中 */
-async function fetchContainerCounts(
-  agentId: string
-): Promise<{ total: number; running: number }> {
-  const list = await listContainers(agentId)
-  return {
-    total: list.length,
-    running: list.filter((c) => c.state === 'running').length
-  }
-}
-
-/** 取编排相关的统计：数量、漂移、未纳管 */
-async function fetchStackStats(
-  agentId: string
-): Promise<{ total: number; drifted: string[]; orphans: string[] }> {
-  const res = await listStacks(agentId)
-  // 未纳管项目只取当前 external_stacks 契约，不读取旧名字列表。
-  const external = Array.isArray(res.external_stacks)
-    ? res.external_stacks.map((s) => s.name).filter((n): n is string => typeof n === 'string')
-    : []
-  // drift 只看后端给的布尔值，不自己比 config_hash / remote_hash——
-  // 后端对空配置、未同步状态可能有额外规则，前端重复判断迟早不一致
-  return {
-    total: Array.isArray(res.stacks) ? res.stacks.length : 0,
-    drifted: Array.isArray(res.stacks) ? res.stacks.filter((s) => s.drift === true).map((s) => s.name) : [],
-    orphans: external
-  }
-}
-
-/** 取镜像/网络/卷的数量：这三个接口都返回 { items: [...] } 包装对象 */
-async function fetchImageCount(agentId: string): Promise<number> {
-  const res = await listImages(agentId)
-  return Array.isArray(res.images) ? res.images.length : 0
-}
-
-async function fetchNetworkCount(agentId: string): Promise<number> {
-  const res = await listNetworks(agentId)
-  return Array.isArray(res.networks) ? res.networks.length : 0
-}
-
-async function fetchVolumeCount(agentId: string): Promise<number> {
-  const res = await listVolumes(agentId)
-  return Array.isArray(res.volumes) ? res.volumes.length : 0
-}
-
-/** 空计数值，用于「某类资源拉取失败」时占位（失败会被计入 failures 单独提示） */
-function emptyCounts(): AgentResourceCounts {
-  return {
-    containers: 0,
-    runningContainers: 0,
-    stacks: 0,
-    unmanagedStacks: 0,
-    images: 0,
-    networks: 0,
-    volumes: 0
-  }
-}
-
-/** 服务器展示名：优先用户设置的显示名 */
-function displayNameOf(agent: Agent): string {
-  const display = (agent.display_name ?? '').trim()
-  return display !== '' ? display : agent.name || agent.id
-}
-
-/**
- * 聚合单台服务器。
- *
- * 5 个请求并发发出（不是串行），任何一个失败都只记录不影响其它。
- */
-async function aggregateOne(
-  agent: Agent,
-  failures: AggregationFailure[]
-): Promise<AgentOverview> {
-  const id = agent.id
-  const name = displayNameOf(agent)
-
-  // 同一台内部的 5 个请求并发
-  const [containers, stacks, images, networks, volumes] = await Promise.all([
-    settle(fetchContainerCounts(id)),
-    settle(fetchStackStats(id)),
-    settle(fetchImageCount(id)),
-    settle(fetchNetworkCount(id)),
-    settle(fetchVolumeCount(id))
+  await Promise.all([
+    read('容器', async () => {
+      const containers = await listContainers(agentId, signal)
+      counts.containers = containers.length
+      counts.runningContainers = containers.filter((container) => container.state === 'running').length
+    }),
+    read('编排', async () => {
+      const stacks = await listStacks(agentId, signal)
+      counts.stacks = stacks.stacks.length
+      if (!stacks.agent_online) {
+        failures.push({ resource: '编排状态', message: '无法读取服务器上的编排，配置漂移与未纳管项目暂不可确认' })
+        return
+      }
+      overview.driftedStacks = stacks.stacks.filter((stack) => stack.drift === true).map((stack) => stack.name)
+      overview.orphanStacks = stacks.external_stacks.map((stack) => stack.name)
+      counts.unmanagedStacks = overview.orphanStacks.length
+    }),
+    read('镜像', async () => { counts.images = (await listImages(agentId, signal)).images?.length ?? 0 }),
+    read('网络', async () => { counts.networks = (await listNetworks(agentId, signal)).networks?.length ?? 0 }),
+    read('存储卷', async () => { counts.volumes = (await listVolumes(agentId, signal)).volumes?.length ?? 0 })
   ])
-
-  const counts = emptyCounts()
-
-  // 每类失败单独记一条，界面提示时能说清「哪台服务器的哪类数据没统计到」
-  function record(label: string, result: Settled<unknown>): void {
-    if (!result.ok) {
-      failures.push({ agentId: id, agentName: name, resource: label, message: result.message })
-    }
-  }
-  record('容器', containers)
-  record('编排', stacks)
-  record('镜像', images)
-  record('网络', networks)
-  record('存储卷', volumes)
-
-  if (containers.ok) {
-    counts.containers = containers.value.total
-    counts.runningContainers = containers.value.running
-  }
-  if (stacks.ok) {
-    counts.stacks = stacks.value.total
-    // 未纳管项目单独计数：它们不属于「已纳管」，混进 stacks 会让人以为能在这里管理
-    counts.unmanagedStacks = stacks.value.orphans.length
-  }
-  if (images.ok) counts.images = images.value
-  if (networks.ok) counts.networks = networks.value
-  if (volumes.ok) counts.volumes = volumes.value
-
-  return {
-    agent,
-    counts,
-    driftedStacks: stacks.ok ? stacks.value.drifted : [],
-    orphanStacks: stacks.ok ? stacks.value.orphans : []
-  }
+  return overview
 }
-
-/**
- * 拉取概览数据。
- *
- * @param agentId 用户选中的服务器；未选择时传入 null，此时**不统计任何服务器**。
- *               概览是登录后的首页，用户还没明确要看哪台机器时，
- *               直接把它下面所有编排、容器、卷都铺出来既侵犯边界也让人误以为已被接管，
- *               因此默认只给「有多少台服务器」这个宏观印象。
- * @param limit 已选服务器时最多统计多少台服务器，默认 OVERVIEW_AGENT_LIMIT
- * @param knownAgents 调用方已经取到的服务器清单。传进来可以省掉一次重复的
- *                    `GET /api/agents`——页面刚拉过一遍列表又在这里拉一遍，
- *                    切服务器时会多等一个 RTT。
- */
-export async function loadOverview(
-  agentId: string | null,
-  limit = OVERVIEW_AGENT_LIMIT,
-  knownAgents?: Agent[]
-): Promise<OverviewData> {
-  const agents = knownAgents ?? (await listAgents())
-
-  // 未选择服务器：只回传服务器清单与在线数，资源统计一律为 0，问题清单为空。
-  // 不能退回「聚合第一台」——那正是用户明确反对的行为。
-  if (agentId === null) {
-    return {
-      agents: [],
-      failures: [],
-      countedAgents: 0,
-      totalAgents: agents.length,
-      truncated: false,
-      hasSelection: false,
-      totals: {
-        agents: agents.length,
-        onlineAgents: agents.filter((a) => a.status === 'online').length,
-        containers: 0,
-        runningContainers: 0,
-        stacks: 0,
-        unmanagedStacks: 0,
-        images: 0,
-        networks: 0,
-        volumes: 0
-      },
-      problems: { offlineAgents: [], driftedStacks: [], orphanStacks: [] }
-    }
-  }
-
-  // 只统计被选中的那一台：选择是显式意图，不能再偷偷把其它服务器也算进来。
-  const selected = agents.filter((agent) => agent.id === agentId)
-  const counted = selected.slice(0, limit)
-  const failures: AggregationFailure[] = []
-
-  // 单台聚合：整体耗时 ≈ 最慢的那一个请求
-  const overviews = await Promise.all(counted.map((agent) => aggregateOne(agent, failures)))
-
-  const totals: OverviewData['totals'] = {
-    agents: agents.length,
-    onlineAgents: agents.filter((a) => a.status === 'online').length,
-    containers: 0,
-    runningContainers: 0,
-    stacks: 0,
-    unmanagedStacks: 0,
-    images: 0,
-    networks: 0,
-    volumes: 0
-  }
-
-  const problems: OverviewData['problems'] = {
-    // 离线提醒只针对选中的服务器：用户没问的机器不该出现在异常区
-    offlineAgents: selected.filter((a) => a.status === 'offline'),
-    driftedStacks: [],
-    orphanStacks: []
-  }
-
-  for (const item of overviews) {
-    totals.containers += item.counts.containers
-    totals.runningContainers += item.counts.runningContainers
-    totals.stacks += item.counts.stacks
-    totals.unmanagedStacks += item.counts.unmanagedStacks
-    totals.images += item.counts.images
-    totals.networks += item.counts.networks
-    totals.volumes += item.counts.volumes
-
-    const name = displayNameOf(item.agent)
-    for (const stackName of item.driftedStacks) {
-      problems.driftedStacks.push({ agentId: item.agent.id, agentName: name, stackName })
-    }
-    for (const stackName of item.orphanStacks) {
-      problems.orphanStacks.push({ agentId: item.agent.id, agentName: name, stackName })
-    }
-  }
-
-  return {
-    agents: overviews,
-    failures,
-    countedAgents: counted.length,
-    totalAgents: agents.length,
-    truncated: selected.length > limit,
-    hasSelection: true,
-    totals,
-    problems
-  }
-}
-
-export { displayNameOf }

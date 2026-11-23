@@ -33,7 +33,8 @@
  * 所以布局、页面、面包屑多处同时使用也不会重复打后端。
  */
 
-import { getCurrentScope, onMounted } from 'vue'
+import { computed, getCurrentScope, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { useAgentsStore } from '@/stores/agents'
 import { usePolling } from '@/composables/usePolling'
 
@@ -59,10 +60,13 @@ export function useAgentStatusSync(): void {
   if (getCurrentScope() === undefined) return
 
   const store = useAgentsStore()
+  const route = useRoute()
+  // The dashboard owns its listAgents refresh, including when the shared layout is mounted.
+  const enabled = computed(() => route.name !== 'overview')
 
   // 挂载即校准：不信任 store 里可能过期的在线状态（传 0 跳过节流）
   onMounted(() => {
-    void store.syncStatus(0)
+    if (enabled.value) void store.syncStatus(0)
   })
 
   /*
@@ -74,6 +78,6 @@ export function useAgentStatusSync(): void {
     async () => {
       await store.syncStatus()
     },
-    { name: 'agent-status', interval: STATUS_POLL_INTERVAL_MS, immediate: false }
+    { name: 'agent-status', interval: STATUS_POLL_INTERVAL_MS, immediate: false, enabled }
   )
 }

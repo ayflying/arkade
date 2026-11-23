@@ -473,7 +473,7 @@ func (s *Server) serve(ws *websocket.Conn, r *http.Request, auth authResult) {
 	go conn.heartbeatWatch()
 
 	// 读循环阻塞直到断开；断开后统一收尾。
-	conn.readLoop(s.makeEventHandler())
+	conn.readLoop(s.makeEventHandler(conn))
 
 	s.registry.Remove(conn)
 	s.log.Info("Agent 离线", "agent_id", agentID)
@@ -484,7 +484,7 @@ func (s *Server) serve(ws *websocket.Conn, r *http.Request, auth authResult) {
 }
 
 // makeEventHandler 构造事件分发函数，把心跳与快照转给上层处理。
-func (s *Server) makeEventHandler() IncomingHandler {
+func (s *Server) makeEventHandler(conn *connection) IncomingHandler {
 	return func(agentID string, env *envelope.Envelope) {
 		// 事件处理用独立的短超时上下文，不阻塞读循环太久。
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -499,6 +499,7 @@ func (s *Server) makeEventHandler() IncomingHandler {
 			}
 			// 以连接侧身份为准，不信任 payload 里的 agent_id（防止伪造他人的心跳）。
 			hb.AgentID = agentID
+			conn.health.record(hb.RuntimeOK, hb.HostMetrics, time.Now())
 			s.handler.OnAgentHeartbeat(ctx, hb)
 
 		case envelope.MethodSnapshotPush:

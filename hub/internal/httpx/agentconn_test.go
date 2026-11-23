@@ -250,9 +250,11 @@ func TestAgentConnectHandshake(t *testing.T) {
 		t.Fatalf("返回的容器列表不符合预期: %+v", res.Containers)
 	}
 
-	// --- 4. 发送心跳事件，业务层应收到 ---
+	// --- 4. 心跳摘要绑定认证连接，采样使用 Hub 的接收时间 ---
+	runtimeOK, cpu := false, 26.0
 	hb, _ := envelope.NewEvent("hb-1", envelope.MethodHeartbeat, "hub", envelope.HeartbeatPayload{
-		AgentID: "should-be-overridden-by-hub", At: time.Now().Unix(),
+		AgentID: "should-be-overridden-by-hub", At: 1,
+		RuntimeOK: &runtimeOK, HostMetrics: &envelope.HostMetrics{CPUPercent: &cpu},
 	})
 	if err := client.conn.WriteJSON(hb); err != nil {
 		t.Fatalf("发送心跳失败: %v", err)
@@ -262,6 +264,12 @@ func TestAgentConnectHandshake(t *testing.T) {
 		defer sink.mu.Unlock()
 		return sink.heartbeats > 0
 	}, "业务层应收到心跳事件")
+	health := reg.Health(ack.AgentID)
+	if health == nil || health.SampledAt <= 1 || health.RuntimeOK == nil || *health.RuntimeOK ||
+		health.HostMetrics == nil || health.HostMetrics.CPUPercent == nil || *health.HostMetrics.CPUPercent != cpu ||
+		reg.Health("should-be-overridden-by-hub") != nil {
+		t.Fatalf("心跳采样不符合预期: %+v", health)
+	}
 
 	// --- 5. 断开后在线表移除、触发离线回调 ---
 	_ = client.conn.Close()

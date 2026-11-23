@@ -34,6 +34,14 @@ export type AgentStatus = 'online' | 'offline' | 'pending' | 'upgrading'
 /** Agent 探测到的容器运行时 */
 export type RuntimeKind = 'docker' | 'podman' | 'none'
 
+export type HostByteUsage = { used_bytes: number; total_bytes: number }
+
+export type HostMetrics = {
+  cpu_percent?: number
+  memory?: HostByteUsage
+  disk?: HostByteUsage & { scope: 'host_root' | 'host_filesystem' }
+}
+
 export type Agent = {
   id: string
   /**
@@ -58,6 +66,11 @@ export type Agent = {
   version: string
   runtime: RuntimeKind | string
   runtime_version: string
+  /** 最近一次明确报告的引擎可达性；缺失表示未知。 */
+  runtime_ok?: boolean
+  host_metrics?: HostMetrics
+  /** Hub 接收主机资源采样的 Unix 秒级时间戳。 */
+  sampled_at?: number
   /** Unix 秒级时间戳（非毫秒） */
   last_seen: number
   labels: Record<string, string>

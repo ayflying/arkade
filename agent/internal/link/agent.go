@@ -15,6 +15,7 @@ import (
 
 	"arkade/agent/internal/runtime"
 	"arkade/protocol/envelope"
+	"arkade/protocol/hostmetrics"
 )
 
 // Dispatcher 是请求分发函数。
@@ -45,10 +46,11 @@ type Options struct {
 
 // Agent 是连接器主体，持有可跨重连复用的状态（agent_id、退避进度）。
 type Agent struct {
-	opts     Options
-	log      *slog.Logger
-	dialer   *dialer
-	dispatch Dispatcher
+	opts              Options
+	log               *slog.Logger
+	dialer            *dialer
+	dispatch          Dispatcher
+	sampleHostMetrics func() *envelope.HostMetrics
 
 	// ctx 是所有会话共享的父 context，Stop 时取消。
 	ctx    context.Context
@@ -76,13 +78,14 @@ func New(opts Options) (*Agent, error) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Agent{
-		opts:     opts,
-		log:      opts.Logger,
-		dialer:   d,
-		dispatch: opts.Dispatch,
-		ctx:      ctx,
-		cancel:   cancel,
-		agentID:  opts.AgentID,
+		opts:              opts,
+		log:               opts.Logger,
+		dialer:            d,
+		dispatch:          opts.Dispatch,
+		sampleHostMetrics: hostmetrics.NewCollector().Sample,
+		ctx:               ctx,
+		cancel:            cancel,
+		agentID:           opts.AgentID,
 	}, nil
 }
 
@@ -317,16 +320,27 @@ func (a *Agent) capabilities() []string {
 
 // buildHeartbeat 采集心跳摘要。
 func (a *Agent) buildHeartbeat(ctx context.Context) (envelope.HeartbeatPayload, error) {
-	p := envelope.HeartbeatPayload{AgentID: a.AgentID(), At: time.Now().Unix()}
+	runtimeOK := false
+	p := envelope.HeartbeatPayload{AgentID: a.AgentID(), At: time.Now().Unix(), RuntimeOK: &runtimeOK}
+	if a.sampleHostMetrics != nil {
+		p.HostMetrics = a.sampleHostMetrics()
+	}
 
 	// 心跳要快：给运行时查询一个较短的子超时，避免慢引擎拖累心跳节奏
 	// 从而误触发"3 次失败判定断线"。
 	hbCtx, cancel := context.WithTimeout(ctx, heartbeatQueryTimeout)
 	defer cancel()
+	// noneRuntime.List deliberately returns an empty successful list for normal
+	// callers. It does not represent a successful engine probe.
+	info, err := a.opts.Runtime.Info(hbCtx)
+	if err != nil || info.Kind == runtime.KindNone {
+		return p, err
+	}
 	containers, err := a.opts.Runtime.List(hbCtx, true)
 	if err != nil {
 		return p, err
 	}
+	runtimeOK = true
 	p.ContainerTotal = len(containers)
 	for _, c := range containers {
 		if c.State == "running" {

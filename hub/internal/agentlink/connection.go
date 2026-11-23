@@ -31,6 +31,7 @@ type connection struct {
 	closed         bool
 	closeCh        chan struct{} // 关闭信号，供读/写/心跳三条路径感知
 	lastSeen       time.Time     // 最后收到消息的时间，受 mu 保护
+	health         healthSample  // 最新心跳摘要，受 mu 保护
 	requestHandler func(agentID string, env *envelope.Envelope) *envelope.Envelope
 }
 

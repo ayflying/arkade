@@ -7,6 +7,7 @@ import (
 	"arkade/hub/internal/store"
 	"arkade/hub/internal/testdb"
 	"arkade/hub/internal/user"
+	"arkade/protocol/envelope"
 	"context"
 	"errors"
 	"io"
@@ -131,6 +132,33 @@ func TestAgentAuthorizationAndViews(t *testing.T) {
 	_, err = c.List(ctx, &api.ListReq{})
 	requireError(t, err, 401, "登录已失效，请重新登录")
 }
+func TestAgentHealthFollowsListPermission(t *testing.T) {
+	c, db, session := setup(t)
+	ctx := t.Context()
+	if err := db.UpsertAgent(ctx, store.AgentRecord{ID: "health-node", Name: "health-node", Status: "online"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.d.Registry.RegisterLocal("health-node", embeddedExecutor{}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { c.d.Registry.RemoveLocal("health-node") })
+	cpu := 20.0
+	c.d.Registry.LocalHealthRecorder("health-node")(false, &envelope.HostMetrics{CPUPercent: &cpu})
+	list, err := c.List(ctx, &api.ListReq{})
+	if err != nil || len(list.Agents) != 1 {
+		t.Fatalf("admin list=%+v err=%v", list, err)
+	}
+	view := list.Agents[0]
+	if view.SampledAt <= 0 || view.RuntimeOK == nil || *view.RuntimeOK || view.HostMetrics == nil {
+		t.Fatalf("missing health fields: %+v", view)
+	}
+	session.actor.Role = user.RoleUser
+	list, err = c.List(ctx, &api.ListReq{})
+	if err != nil || len(list.Agents) != 0 {
+		t.Fatalf("ungrouped user's list=%+v err=%v", list, err)
+	}
+}
+
 func TestAgentViewOnlineOverridesPending(t *testing.T) {
 	view := ToAgentView(store.AgentRecord{ID: "x", Status: store.StatusPending}, map[string]struct{}{"x": {}})
 	if view.Status != "online" || view.Labels == nil {

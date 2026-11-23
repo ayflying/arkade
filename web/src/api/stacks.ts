@@ -167,8 +167,8 @@ function normalizeExternal(raw: ExternalStack): ExternalStack {
  * 且 `agent_online` 为 false。因此调用方不能靠"请求是否失败"判断在线状态，
  * 要看 `agent_online`。
  */
-export async function listStacks(agentId: string): Promise<StackListResponse> {
-  const res = await httpGet<StackListResponse>(stacksBase(agentId))
+export async function listStacks(agentId: string, signal?: AbortSignal): Promise<StackListResponse> {
+  const res = await httpGet<StackListResponse>(stacksBase(agentId), { signal })
   return {
     stacks: Array.isArray(res.stacks) ? res.stacks.map(normalizeStack) : [],
     agent_online: res.agent_online === true,

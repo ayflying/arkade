@@ -48,7 +48,7 @@ const OPERATION_LABELS: Record<string, string> = {
 
 /** 顶层页面（不依赖选中服务器）的路由名 → 面包屑文案 */
 const TOP_LEVEL_LABELS: Record<string, string> = {
-  overview: '概览',
+  overview: '仪表盘',
   agents: '服务器',
   audit: '操作审计'
 }

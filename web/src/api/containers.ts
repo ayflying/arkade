@@ -32,9 +32,9 @@ function containerPath(agentId: string, containerId: string): string {
 }
 
 /** 某台 Agent 上的容器列表 */
-export async function listContainers(agentId: string): Promise<Container[]> {
+export async function listContainers(agentId: string, signal?: AbortSignal): Promise<Container[]> {
   const res = await httpGet<ContainerListResponse>(
-    `/agents/${encodeURIComponent(agentId)}/containers`
+    `/agents/${encodeURIComponent(agentId)}/containers`, { signal }
   )
   return Array.isArray(res.containers) ? res.containers : []
 }

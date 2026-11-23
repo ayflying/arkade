@@ -23,6 +23,13 @@ Hub 默认 root，安装 Docker CLI 和 Compose 插件，镜像体积包含本�
 
 仅控制中心部署：将 YAML 的 `LOCAL_ENABLED` 改为 `"false"`，**同时移除 socket bind mount**，保留 `/data` 以保存设置主密钥。只关闭开关而继续挂 socket 不能撤销宿主权限。
 
+## 仪表盘资源用量
+
+- 服务器状态来自当前 Agent 连接；容器引擎连通性和资源用量随心跳更新。纯 Hub 不采集控制中心自身，开启内置本机时才采集本机。旧版 Agent 仍能显示在线状态，但没有新的采样字段。
+- CPU 和内存取 Linux `/proc` 可见的系统数据，不是 Agent 容器自身的配额；Docker Desktop 等虚拟化部署显示的是 Docker 所在 Linux 环境的数据。资源未采集或已过期时，仪表盘不会显示为零。
+- Docker 部署默认不采集磁盘。需要时，在想监控的宿主分区上选一个**专用空目录**（例如先创建 `/var/lib/arkade-disk-probe`），在 Agent 或启用了本机执行面的 Hub 的 `volumes` 内添加 `- /var/lib/arkade-disk-probe:/run/arkade/host-disk:ro`。界面显示这个目录所在文件系统的用量，不统计其他分区；不要挂载整棵宿主目录或含敏感文件的目录。
+- 用原生 Linux 进程运行 Agent 或启用了本机执行面的 Hub 时，可设置 `ARKADE_HOST_DISK_NATIVE=1` 采集根分区；该选项不适用于容器内进程。
+
 ## 普通配置与凭据
 
 - 镜像、端口、数据库地址/用户/库名、TLS、本机开关及日志直接修改 YAML。`.env` 仅填写对应密码/接入密钥，由 Compose 读取，程序不会自动加载它。

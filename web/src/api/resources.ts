@@ -20,8 +20,8 @@ function resourceBase(agentId: string, resource: string): string {
 }
 
 /** 列出本地镜像 */
-export async function listImages(agentId: string): Promise<ImageListResponse> {
-  return httpGet<ImageListResponse>(resourceBase(agentId, 'images'))
+export async function listImages(agentId: string, signal?: AbortSignal): Promise<ImageListResponse> {
+  return httpGet<ImageListResponse>(resourceBase(agentId, 'images'), { signal })
 }
 
 /**
@@ -36,8 +36,8 @@ export async function deleteImage(agentId: string, imageId: string, force = fals
 }
 
 /** 列出网络 */
-export async function listNetworks(agentId: string): Promise<NetworkListResponse> {
-  return httpGet<NetworkListResponse>(resourceBase(agentId, 'networks'))
+export async function listNetworks(agentId: string, signal?: AbortSignal): Promise<NetworkListResponse> {
+  return httpGet<NetworkListResponse>(resourceBase(agentId, 'networks'), { signal })
 }
 
 /** 删除网络 */
@@ -46,8 +46,8 @@ export async function deleteNetwork(agentId: string, networkId: string): Promise
 }
 
 /** 列出存储卷 */
-export async function listVolumes(agentId: string): Promise<VolumeListResponse> {
-  return httpGet<VolumeListResponse>(resourceBase(agentId, 'volumes'))
+export async function listVolumes(agentId: string, signal?: AbortSignal): Promise<VolumeListResponse> {
+  return httpGet<VolumeListResponse>(resourceBase(agentId, 'volumes'), { signal })
 }
 
 /** 删除存储卷（数据永久丢失，调用方必须二次确认） */

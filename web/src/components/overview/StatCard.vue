@@ -11,7 +11,7 @@ interface Props {
   /** 卡片标题，如「服务器」 */
   label: string
   /** 主数值 */
-  value: number
+  value: number | undefined
   /** 数值单位（可选），如「台」 */
   unit?: string
   /**
@@ -40,8 +40,8 @@ const valueClass = computed(() => `stat-card__value stat-card__value--${props.to
   <div class="stat-card">
     <div class="stat-card__label">{{ label }}</div>
     <div class="stat-card__main">
-      <span :class="valueClass">{{ value }}</span>
-      <span v-if="unit !== ''" class="stat-card__unit">{{ unit }}</span>
+      <span :class="valueClass">{{ value ?? '—' }}</span>
+      <span v-if="value !== undefined && unit !== ''" class="stat-card__unit">{{ unit }}</span>
     </div>
     <div v-if="hint !== ''" class="stat-card__hint">{{ hint }}</div>
   </div>

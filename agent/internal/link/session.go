@@ -160,8 +160,8 @@ func (s *session) heartbeatLoop(ctx context.Context) {
 func (s *session) sendHeartbeat(ctx context.Context) bool {
 	payload, err := s.agent.buildHeartbeat(ctx)
 	if err != nil {
-		// 心跳载荷里的容器计数只是摘要，取不到时退化为 0，不影响"我还活着"这个语义。
-		s.agent.log.Debug("采集心跳摘要失败，使用空摘要", "error", err)
+		// 运行时不可用不影响连接存活状态，仍上报主机资源及 runtime_ok=false。
+		s.agent.log.Debug("心跳探测容器运行时失败", "error", err)
 	}
 	env, err := envelope.NewEvent(newMessageID(), envelope.MethodHeartbeat, s.agent.target(), payload)
 	if err != nil {

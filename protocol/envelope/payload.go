@@ -41,10 +41,36 @@ type HelloAckPayload struct {
 
 // HeartbeatPayload 是心跳载荷，只带摘要，不带全量容器列表，避免高频消息过大。
 type HeartbeatPayload struct {
-	AgentID          string `json:"agent_id"`
-	ContainerTotal   int    `json:"container_total"`
-	ContainerRunning int    `json:"container_running"`
-	At               int64  `json:"at"`
+	AgentID          string       `json:"agent_id"`
+	ContainerTotal   int          `json:"container_total"`
+	ContainerRunning int          `json:"container_running"`
+	At               int64        `json:"at"`
+	HostMetrics      *HostMetrics `json:"host_metrics,omitempty"`
+	RuntimeOK        *bool        `json:"runtime_ok,omitempty"` // List 是否成功；旧 Agent 不发送。false 时容器计数不可用。
+}
+
+// HostMetrics 是主机资源样本；未取得某项样本时省略该项，而不是发送 0。
+type HostMetrics struct {
+	CPUPercent *float64       `json:"cpu_percent,omitempty"` // 0–100，两个采样点之间的 CPU 忙碌比例
+	Memory     *ResourceUsage `json:"memory,omitempty"`      // 使用量按 MemTotal - MemAvailable 计算
+	Disk       *DiskUsage     `json:"disk,omitempty"`
+}
+
+// ResourceUsage 以字节表示容量。
+type ResourceUsage struct {
+	UsedBytes  uint64 `json:"used_bytes"`
+	TotalBytes uint64 `json:"total_bytes"`
+}
+
+const (
+	DiskScopeHostRoot       = "host_root"       // 原生主机根文件系统
+	DiskScopeHostFilesystem = "host_filesystem" // 运维显式指定的一个宿主文件系统
+)
+
+// DiskUsage 只表示单个文件系统；使用量为总块数减空闲块数（不含未使用的保留块）。
+type DiskUsage struct {
+	ResourceUsage
+	Scope string `json:"scope"`
 }
 
 // ContainerSummary 是容器列表项。只保留界面需要的字段，不搬运运行时全量结构。

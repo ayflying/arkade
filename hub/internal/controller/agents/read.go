@@ -24,7 +24,13 @@ func (c *Controller) List(ctx context.Context, _ *api.ListReq) (*api.ListRes, er
 	views := make([]api.AgentView, 0, len(records))
 	for _, rec := range records {
 		if controller.CanAccess(u, grants, rec.ID, user.PermView) {
-			views = append(views, ToAgentView(rec, online))
+			view := ToAgentView(rec, online)
+			if view.Status == "online" && !view.Disabled {
+				if health := c.d.Registry.Health(rec.ID); health != nil {
+					view.SampledAt, view.RuntimeOK, view.HostMetrics = health.SampledAt, health.RuntimeOK, health.HostMetrics
+				}
+			}
+			views = append(views, view)
 		}
 	}
 	sort.SliceStable(views, func(i, j int) bool { return views[i].Name < views[j].Name })
