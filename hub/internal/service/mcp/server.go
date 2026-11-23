@@ -65,7 +65,7 @@ func execute(ctx context.Context, raw json.RawMessage, tool Tool, validator *jso
 	}
 	out := &response{header: make(http.Header)}
 	invoke(ctx, r, out, tool.Name)
-	return safeToolResponse(out, policy)
+	return safeToolResponse(out, policy, tool.Name)
 }
 
 func toolResult(text string, failed bool) *protocol.CallToolResult {

@@ -14,7 +14,7 @@ func TestMCPPrivacyContracts(t *testing.T) {
 			t.Errorf("%s: missing public response contract", tool.Name)
 		}
 		switch tool.Name {
-		case "arkade_get_container_logs", "arkade_get_stack_logs":
+		case "arkade_get_stack_logs":
 			t.Errorf("raw log tool exposed: %s", tool.Name)
 		}
 	}
@@ -32,6 +32,9 @@ func TestMCPPrivacyResponses(t *testing.T) {
 		{"arkade_update_stack", `{"sync_ok":false,"sync_hint":"PRIVATE","stack":{"name":"demo","version":2,"env_content":"PRIVATE"}}`, `{"stack":{"name":"demo","version":2},"sync_ok":false}`, 200, true},
 		{"arkade_get_stack_operation", `{"task":{"status":"failed","error":"PRIVATE","command":"PRIVATE","output":[{"text":"PRIVATE"}],"task_id":"demo-123","migrate":{"residual":{"uncertain":true,"extra":"PRIVATE"}}}}`, `{"task":{"migrate":{"residual":{"uncertain":true}},"status":"failed","task_id":"demo-123"}}`, 200, false},
 		{"arkade_inspect_container", `{"container":{"id":"demo","command":"PRIVATE","env":["PRIVATE"],"networks":[{"name":"internal","address":"PRIVATE"}],"mounts":[{"type":"volume","source":"PRIVATE"}]}}`, `{"container":{"id":"demo","mounts":[{"type":"volume"}],"networks":[{"name":"internal"}]}}`, 200, false},
+		{"arkade_get_container_logs", `{"lines":["started",{"secret":"PRIVATE"},"failed"],"truncated":true,"detail":"PRIVATE"}`, `{"lines":["started","failed"],"truncated":true}`, 200, false},
+		{"arkade_get_container_logs", `{"lines":[],"truncated":false}`, `{"lines":[],"truncated":false}`, 200, false},
+		{"arkade_get_container_logs", `{"error":{"message":"PRIVATE"}}`, `"code":"not_found"`, 404, true},
 		{"arkade_read_volume_file", `{"result":{"size":5,"sha256":"test-hash","data_base64":"PRIVATE"}}`, `{"result":{"sha256":"test-hash","size":5}}`, 200, false},
 		{"arkade_list_images", `{"images":[{"id":"sha256:demo","tags":["demo:latest",{"unexpected":"PRIVATE"}]}]}`, `{"images":[{"id":"sha256:demo","tags":["demo:latest"]}]}`, 200, false},
 		{"arkade_list_agents", `{"agents":[{"id":"a","name":{"unexpected":"PRIVATE"},"direct_address":"PRIVATE"}]}`, `{"agents":[{"id":"a"}]}`, 200, false},
@@ -44,7 +47,7 @@ func TestMCPPrivacyResponses(t *testing.T) {
 		t.Run(tc.tool, func(t *testing.T) {
 			out := &response{header: make(http.Header), status: tc.status}
 			out.body.WriteString(tc.input)
-			result := safeToolResponse(out, publicFieldPolicy(publicFields(tc.tool)))
+			result := safeToolResponse(out, publicFieldPolicy(publicFields(tc.tool)), tc.tool)
 			text := result.Content[0].(*protocol.TextContent).Text
 			if result.IsError != tc.failed || !strings.Contains(text, tc.want) || strings.Contains(text, "PRIVATE") {
 				t.Fatalf("unexpected result: error=%t text=%q", result.IsError, text)

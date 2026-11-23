@@ -1,13 +1,21 @@
 package httpx
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
 
 	"arkade/hub/internal/user"
+	"arkade/protocol/envelope"
 )
+
+type mcpLogsExecutor func(context.Context, string, []byte) ([]byte, *envelope.Error)
+
+func (fn mcpLogsExecutor) Call(ctx context.Context, method string, payload []byte) ([]byte, *envelope.Error) {
+	return fn(ctx, method, payload)
+}
 
 func TestMCPPersonalKeyFollowsLiveGrants(t *testing.T) {
 	e := newTestEnv(t)
@@ -28,6 +36,19 @@ func TestMCPPersonalKeyFollowsLiveGrants(t *testing.T) {
 		}
 	}
 	grant("mcp-allowed", user.PermView)
+	var logCalls int
+	if err := e.registry.RegisterLocal("mcp-allowed", mcpLogsExecutor(func(_ context.Context, method string, payload []byte) ([]byte, *envelope.Error) {
+		logCalls++
+		var p envelope.ContainerLogsPayload
+		if err := json.Unmarshal(payload, &p); err != nil || method != envelope.MethodContainerLogs || p.ContainerID != "example" || p.TailLines != 17 {
+			t.Errorf("unexpected Agent call: %s %+v %v", method, p, err)
+			return nil, envelope.NewError(envelope.CodeBadRequest, "unexpected call")
+		}
+		return []byte(`{"lines":["service startup failed"],"truncated":false}`), nil
+	})); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { e.registry.RemoveLocal("mcp-allowed") })
 	const keys = "/api/mcp/keys"
 	r := mcpTestRequest(e.router, http.MethodPost, keys, "", `{"name":"个人客户端"}`, viewer...)
 	var created struct {
@@ -70,6 +91,11 @@ func TestMCPPersonalKeyFollowsLiveGrants(t *testing.T) {
 		t.Fatalf("服务器列表未正确按授权过滤：%t %s", failed, text)
 	}
 	checkDenied("arkade_list_containers", map[string]any{"agentID": "mcp-hidden"})
+	checkDenied("arkade_get_container_logs", map[string]any{"agentID": "mcp-hidden", "containerID": "example"})
+	logs := map[string]any{"agentID": "mcp-allowed", "containerID": "example", "tail": 17}
+	if failed, text := call("arkade_get_container_logs", logs); failed || text != `{"lines":["service startup failed"],"truncated":false}` {
+		t.Fatalf("查看权限应能读取容器日志：%t %s", failed, text)
+	}
 	checkDenied("arkade_delete_container", map[string]any{"agentID": "mcp-allowed", "containerID": "example"})
 	grant("mcp-allowed", user.PermManage)
 	migrate := map[string]any{"agentID": "mcp-allowed", "name": "demo", "target_agent_id": "mcp-hidden", "confirmation": "demo", "request_id": "mcp-personal-migrate"}
@@ -83,6 +109,10 @@ func TestMCPPersonalKeyFollowsLiveGrants(t *testing.T) {
 	}
 	checkDenied("arkade_migrate_stack", migrate)
 	checkDenied("arkade_list_containers", map[string]any{"agentID": "mcp-allowed"})
+	checkDenied("arkade_get_container_logs", logs)
+	if logCalls != 1 {
+		t.Fatalf("只有获授权的日志读取应到达 Agent，实际调用 %d 次", logCalls)
+	}
 	if r := mcpTestRequest(e.router, http.MethodDelete, keys+"/"+created.Key.ID, "", "", viewer...); r.Code != 204 {
 		t.Fatalf("本人撤销失败：%d", r.Code)
 	}

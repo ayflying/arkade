@@ -79,7 +79,7 @@ func projectPublicValue(value any, policy publicFieldTree) (any, bool) {
 	}
 }
 
-func safeToolResponse(out *response, policy publicFieldTree) *protocol.CallToolResult {
+func safeToolResponse(out *response, policy publicFieldTree, tool string) *protocol.CallToolResult {
 	if out.status < 200 || out.status >= 300 {
 		// Hub/Agent errors may echo config, stderr, credentials or user input.
 		code := "operation_failed"
@@ -114,6 +114,9 @@ func safeToolResponse(out *response, policy publicFieldTree) *protocol.CallToolR
 	}
 	projected, _ := projectPublicValue(body, policy)
 	result := projected.(map[string]any)
+	if tool == "arkade_get_container_logs" {
+		limitContainerLogs(result)
+	}
 	safe, err := json.Marshal(result)
 	if err != nil {
 		return toolResult("无法生成 MCP 安全响应", true)

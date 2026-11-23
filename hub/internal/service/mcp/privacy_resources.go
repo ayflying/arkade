@@ -21,6 +21,8 @@ func resourcePublicFields(tool string) []string {
 			"container.exposed_ports.[]", "container.resource_limits.memory_bytes", "container.resource_limits.nano_cpus",
 			"container.resource_limits.pids_limit",
 		}
+	case "arkade_get_container_logs":
+		return []string{"lines.[]", "truncated"}
 	case "arkade_list_container_metrics":
 		return []string{
 			"agent_id", "stale_after_seconds", "containers.container_id", "containers.at",
