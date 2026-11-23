@@ -10,7 +10,8 @@ package compose
 // 用户真正要的是「有新版本就更新，没有就别动」。这个意图无法靠一条固定命令完成，
 // 必须自己判定，因此它是一段编排流程，而不是一条 compose 子命令：
 //
-//	第 1 步  docker compose ps --format json   读本机容器及其镜像 ID / 摘要（输出不展示）
+//	第 1 步  docker compose config --format json  解析有效服务和镜像（输出不展示）
+//	         docker compose ps --format json      读本机容器及其镜像 ID / 摘要（输出不展示）
 //	第 2 步  docker manifest inspect <引用>    只查远端元数据，不在本机产生镜像（输出不展示）
 //	第 3 步  docker compose pull <服务名>      只拉候选镜像对应的服务
 //	第 4 步  docker compose up -d <该服务>     只重建有更新的
@@ -103,6 +104,16 @@ func (m *Manager) deployLocked(ctx context.Context, n string) (deployOutcome, er
 
 	m.deployNote(ctx, "正在检查本机容器和镜像仓库是否有更新…")
 
+	// 用和 pull/up 相同的项目目录、.env 和运行环境解析一次，由 Compose 决定有效服务及镜像。
+	decls, err := m.deployServiceImages(ctx, n)
+	if err != nil {
+		return out, err
+	}
+	images := serviceImages(decls)
+	if len(images) == 0 {
+		return out, safeErr("编排里没有找到可更新的服务（已启用的服务没有 image: 声明）")
+	}
+
 	// ============================ 第 1 步：现状 ============================
 	//
 	// 用 probe 而不是 runStream：ps 的 JSON 是给这里解析的，
@@ -114,20 +125,10 @@ func (m *Manager) deployLocked(ctx context.Context, n string) (deployOutcome, er
 	}
 	running := runningLocalImages(parsePSJson(ps.Stdout))
 
-	// 配置里的引用：compose 正文是唯一权威。
-	cfg, cerr := m.readProjectConfig(n)
-	if cerr != nil {
-		return deployOutcome{}, safeErr("读取编排配置失败，未做任何改动")
-	}
-	images := serviceImages(cfg)
-	if len(images) == 0 {
-		return deployOutcome{}, safeErr("编排里没有找到可更新的服务（缺少 image: 声明或服务清单无法解析）")
-	}
-
 	// ============================ 第 2 步：对比远端 ============================
 	hunks, unknown := m.planDeploy(ctx, n, images, running)
 	if len(unknown) > 0 && len(unknown) < len(images) {
-		m.deployNote(ctx, unknownText(unknown, images))
+		m.deployNote(ctx, unknownText(servicesOf(decls, selfHunks(unknown))))
 	}
 
 	toPull := hunks
@@ -144,8 +145,8 @@ func (m *Manager) deployLocked(ctx context.Context, n string) (deployOutcome, er
 	// ============================ 第 3 步：只拉有更新的 ============================
 	//
 	// 失败立即停：拉取失败还继续重建，会让服务白停一次而用户以为已经更新。
-	if failed := m.deployPull(ctx, n, cfg, toPull); failed != "" {
-		return out, safeErr("拉取镜像 %s 失败，已停止后续重建；正在运行的容器没有改动", failed)
+	if !m.deployPull(ctx, n, decls, toPull) {
+		return out, safeErr("拉取镜像失败，已停止后续重建；正在运行的容器没有改动")
 	}
 
 	// ============================ 第 4 步：只重建确实换了内容的 ============================
@@ -162,7 +163,7 @@ func (m *Manager) deployLocked(ctx context.Context, n string) (deployOutcome, er
 			continue
 		}
 		if hasContainer {
-			m.deployNote(ctx, fmt.Sprintf("%s：拉取后镜像与本机一致，无需重建", h.ref))
+			m.deployNote(ctx, fmt.Sprintf("%s：拉取后镜像与本机一致，无需重建", strings.Join(servicesOf(decls, []deployHunk{h}), "、")))
 			continue
 		}
 		// 没有容器的引用在退化路径里只把镜像拉到最新，不在这里创建容器。
@@ -170,13 +171,13 @@ func (m *Manager) deployLocked(ctx context.Context, n string) (deployOutcome, er
 	}
 	out.ChangedImages = dedupeSorted(out.ChangedImages)
 
-	names := servicesOf(cfg, changed)
+	names := servicesOf(decls, changed)
 	if len(names) == 0 {
 		m.deployNote(ctx, "拉取到的镜像与本机一致；未重建任何容器。")
 		return out, nil
 	}
 
-	upArgs := append([]string{"up", "-d"}, names...)
+	upArgs := append([]string{"up", "-d", "--"}, names...)
 	up := m.runStream(ctx, n, TimeoutLong, quietSink(), upArgs...)
 	if up.ExitCode != 0 {
 		// ============================ 失败必须回滚 ============================
@@ -199,7 +200,7 @@ func (m *Manager) deployLocked(ctx context.Context, n string) (deployOutcome, er
 	// 只在"清单查不到、但拉取确实拿到了新内容"时才会走到这里。
 	// 目的是不把服务落成"半更新"：镜像已新、容器仍是旧的。
 	if needForceRecreate(changed) {
-		force := append([]string{"up", "-d", "--force-recreate"}, names...)
+		force := append([]string{"up", "-d", "--force-recreate", "--"}, names...)
 		res := m.runStream(ctx, n, TimeoutLong, quietSink(), force...)
 		if res.ExitCode != 0 {
 			return out, safeErr("镜像已更新，但重建 %s 失败；容器可能仍在运行旧版本",
@@ -267,14 +268,14 @@ func planDeployWith(images []string, running map[string]localImage,
 	return hunks, dedupeSorted(unknown)
 }
 
-// deployPull 只拉给定的引用，任一失败即返回该引用。
+// deployPull 只拉给定的引用，任一失败即返回 false。
 //
 // 拉取的输出**要展示**（用户需要看到每一层在拉、拉了多少），
 // 因此这里用普通 ctx + quietSink：sink 吞掉自己的副本，
 // 而观察者由 RunStream 从 ctx 取出，照样把每一行推进任务日志。
-func (m *Manager) deployPull(ctx context.Context, n, config string, hunks []deployHunk) string {
+func (m *Manager) deployPull(ctx context.Context, n string, decls []serviceTag, hunks []deployHunk) bool {
 	byImage := make(map[string][]string)
-	for _, decl := range serviceDecls(config) {
+	for _, decl := range decls {
 		byImage[decl.image] = append(byImage[decl.image], decl.service)
 	}
 	seen := make(map[string]struct{}, len(hunks))
@@ -290,14 +291,14 @@ func (m *Manager) deployPull(ctx context.Context, n, config string, hunks []depl
 		// 让它按对应服务的 platform 等配置拉取；不能退回裸 pull。
 		services := dedupeSorted(byImage[h.ref])
 		if len(services) == 0 {
-			return h.ref
+			return false
 		}
 		args := append([]string{"pull", "--"}, services...)
 		if res := m.runStream(ctx, n, TimeoutLong, quietSink(), args...); res.ExitCode != 0 {
-			return h.ref
+			return false
 		}
 	}
-	return ""
+	return true
 }
 
 // imageChanged 判断拉取之后，该引用指向的内容与本机容器是否已经不同。
@@ -369,7 +370,7 @@ func needForceRecreate(hunks []deployHunk) bool {
 }
 
 // servicesOf 反查这些镜像引用对应的服务名（去重、排序）。
-func servicesOf(content string, hunks []deployHunk) []string {
+func servicesOf(decls []serviceTag, hunks []deployHunk) []string {
 	if len(hunks) == 0 {
 		return nil
 	}
@@ -378,7 +379,7 @@ func servicesOf(content string, hunks []deployHunk) []string {
 		want[h.ref] = struct{}{}
 	}
 	names := make([]string, 0, len(hunks))
-	for _, d := range serviceDecls(content) {
+	for _, d := range decls {
 		if _, ok := want[d.image]; ok {
 			names = append(names, d.service)
 		}
@@ -393,15 +394,10 @@ func (m *Manager) deployNote(ctx context.Context, text string) {
 	}
 }
 
-// unknownText 拼出"哪些镜像无法判定"的说明。
-//
-// 必须点名到具体镜像：用户要能判断是不是自己的私有仓库没登录。
-func unknownText(unknown, all []string) string {
-	if len(unknown) >= len(all) {
-		return deployAllUnknownText
-	}
-	return fmt.Sprintf("以下镜像无法从仓库取得摘要，本次保持原样、不拉取也不重建：%s。"+
-		"（私有仓库可能需要先登录，或该镜像不是从仓库拉取的）", strings.Join(unknown, "、"))
+// unknownText 只点出无法判定的服务，不回显插值后的镜像引用。
+func unknownText(services []string) string {
+	return fmt.Sprintf("以下服务的镜像无法从仓库取得摘要，本次保持原样、不拉取也不重建：%s。"+
+		"（私有仓库可能需要先登录，或该镜像不是从仓库拉取的）", strings.Join(services, "、"))
 }
 
 // dedupeSorted 去重并升序排序（空串丢弃）。

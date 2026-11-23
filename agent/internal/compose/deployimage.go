@@ -2,7 +2,7 @@ package compose
 
 // deployimage.go：更新部署用到的两件"读"的本事。
 //
-//   1. 从 compose 正文里取出每个服务声明的镜像引用（serviceDecls / serviceImages）；
+//   1. 用 Compose 规范化配置，取出每个服务实际使用的镜像引用；
 //   2. 查远端清单身份（manifest inspect），并把本机容器与其镜像摘要对齐。
 //
 // 单独成文的原因：这里全是**证据采集**，不含任何"要不要重建"的判断。
@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"runtime"
+	"sort"
 	"strings"
 )
 
@@ -22,94 +23,45 @@ type serviceTag struct {
 	image   string
 }
 
-// serviceDecls 按正文顺序返回每个服务声明的镜像引用。
-//
-// 只认 services 块里"比服务名深一层"的 image: 行，与 ParseServices 用同一套
-// 缩进规则（indentWidth / keyName / stripComment）：两处若各写一份缩进判断，
-// 迟早会一边认一边不认，出现"列表里有两个服务、更新时只看到一个"的错觉。
-func serviceDecls(content string) []serviceTag {
-	lines := strings.Split(content, "\n")
-
-	var (
-		out           = make([]serviceTag, 0, 8)
-		inServices    = false
-		serviceIndent = -1
-		current       = ""
-		declared      = map[string]struct{}{}
-	)
-
-	for _, raw := range lines {
-		line := stripComment(raw)
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		indent := indentWidth(line)
-		trimmed := strings.TrimSpace(line)
-
-		if !inServices {
-			if indent == 0 && isKey(trimmed, "services") {
-				inServices = true
-			}
-			continue
-		}
-		if indent == 0 {
-			break // 回到顶格：services 块结束
-		}
-
-		// ============================ 这里不能"猜"服务名的缩进 ============================
-		//
-		// 直觉写法是把第一次见到的缩进当成服务层，但它有个静默 bug：
-		// 只要第一行恰好是更深的内容（行内映射的续行、被缩进的注释后的内容等），
-		// 真正的服务名就会被当成"更深一层的属性"而**全部漏掉**，
-		// 表现为"编排里没有找到可更新的服务"。
-		//
-		// 因此判定顺序反过来：先认"这一行像不像 image: 属性（服务名缩进 + 2）"，
-		// 再认"这一行是不是一个新的服务名（任意缩进，只要合法）"。
-		// 两类的区别只在"是否以合法服务名的 key 开头"，互不干扰。
-		if serviceIndent >= 0 && indent == serviceIndent+2 && isKey(trimmed, "image") {
-			if current == "" {
-				continue
-			}
-			if _, dup := declared[current]; dup {
-				continue
-			}
-			declared[current] = struct{}{}
-			if value := imageValue(trimmed); value != "" {
-				out = append(out, serviceTag{service: current, image: value})
-			}
-			continue
-		}
-
-		if name, ok := keyName(trimmed); ok && ValidateService(name) == nil {
-			if serviceIndent < 0 {
-				serviceIndent = indent // 第一个服务名定下服务层缩进
-			}
-			current = name
-			continue
-		}
+// deployServiceImages 让 Compose 自己处理缩进、合并、.env 插值、profiles 等。
+func (m *Manager) deployServiceImages(ctx context.Context, name string) ([]serviceTag, error) {
+	// 规范化配置可能包含展开后的凭据。stdout 和 stderr 都只能留在本地，
+	// 也不能把 JSON 解析错误或 Compose 的错误原文放进任务结果。
+	res := m.probe(ctx, name, TimeoutShort, "config", "--format", "json")
+	if res.ExitCode != 0 {
+		return nil, safeErr("解析编排配置失败（退出码 %d），未做任何改动", res.ExitCode)
 	}
-	return out
+	decls, ok := parseDeployServiceImages(res.Stdout)
+	if !ok {
+		return nil, safeErr("Compose 返回的编排配置无效，未做任何改动")
+	}
+	return decls, nil
 }
 
-// imageValue 取出 `image: xxx` 里的引用值（去引号、去空）。
-//
-// 含 `${...}` 插值的一律视为"取不到"：真实引用要由 compose 结合 .env 与 shell
-// 环境求值，Agent 里无法忠实重现。宁可让它落进"无法判定"，
-// 也不要拿一个带花括号的字符串去 pull——那只会报一个看不懂的错。
-func imageValue(trimmedLine string) string {
-	value := strings.TrimSpace(strings.TrimPrefix(trimmedLine, "image:"))
-	value = strings.Trim(value, `"'`)
-	if value == "" || strings.Contains(value, "${") || strings.ContainsAny(value, " \t") {
-		return ""
+func parseDeployServiceImages(raw string) ([]serviceTag, bool) {
+	var config struct {
+		Services map[string]struct {
+			Image string `json:"image"`
+		} `json:"services"`
 	}
-	return value
+	if json.Unmarshal([]byte(raw), &config) != nil || config.Services == nil {
+		return nil, false
+	}
+	decls := make([]serviceTag, 0, len(config.Services))
+	for name, svc := range config.Services {
+		if ref := strings.TrimSpace(svc.Image); ref != "" {
+			decls = append(decls, serviceTag{service: name, image: ref})
+		}
+	}
+	// JSON 对象无序，先按服务名排序，镜像检查及拉取顺序才能稳定。
+	sort.Slice(decls, func(i, j int) bool { return decls[i].service < decls[j].service })
+	return decls, true
 }
 
-// serviceImages 返回去重后的镜像引用（保持正文出现顺序）。
-func serviceImages(content string) []string {
-	seen := map[string]struct{}{}
-	out := make([]string, 0, 8)
-	for _, d := range serviceDecls(content) {
+func serviceImages(decls []serviceTag) []string {
+	seen := make(map[string]struct{}, len(decls))
+	out := make([]string, 0, len(decls))
+	for _, d := range decls {
 		if _, dup := seen[d.image]; dup {
 			continue
 		}

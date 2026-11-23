@@ -17,124 +17,29 @@ package compose
 
 import (
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
 
-/* ───────────────────────── 1. compose 正文解析 ───────────────────────── */
-
-// TestServiceDeclsBasic 验证服务名与镜像的对应关系。
-func TestServiceDeclsBasic(t *testing.T) {
-	content := `
-services:
-  web:
-    image: nginx:1.25
-    ports:
-      - "80:80"
-  db:
-    image: postgres:16
-    environment:
-      POSTGRES_PASSWORD: x
-volumes:
-  data:
-`
-	decls := serviceDecls(content)
-	if len(decls) != 2 {
-		t.Fatalf("应解析出 2 个服务，实际 %d: %+v", len(decls), decls)
+func TestParseDeployServiceImages(t *testing.T) {
+	raw := `{"services":{
+		"web":{"restart":"unless-stopped","image":"nginx:1.25","labels":{"image":"not-a-service"}},
+		"db":{"image":"postgres:16"},
+		"sidecar":{"image":"nginx:1.25"},
+		"built":{"build":{"context":".","image":"not-an-image"}}
+	}}`
+	decls, ok := parseDeployServiceImages(raw)
+	want := []serviceTag{{"db", "postgres:16"}, {"sidecar", "nginx:1.25"}, {"web", "nginx:1.25"}}
+	if !ok || !slices.Equal(decls, want) {
+		t.Fatalf("服务与镜像映射 = %v, %t，期望 %v", decls, ok, want)
 	}
-	if decls[0].service != "web" || decls[0].image != "nginx:1.25" {
-		t.Errorf("第一个服务解析错误: %+v", decls[0])
+	if got := serviceImages(decls); !slices.Equal(got, []string{"postgres:16", "nginx:1.25"}) {
+		t.Fatalf("镜像应去重且保持稳定顺序，实际 %v", got)
 	}
-	if decls[1].service != "db" || decls[1].image != "postgres:16" {
-		t.Errorf("第二个服务解析错误: %+v", decls[1])
-	}
-}
-
-// TestServiceDeclsNestedKeys 验证深层的 image（如 extends 里）不会被当成服务镜像。
-//
-// ============================ 为什么这条重要 ============================
-//
-// 深层出现 image: 说明它不是"服务直接声明的镜像"。
-// 若把它当成候选，会出现"更新了一个根本没被任何服务使用的引用"，
-// 用户看到"已更新"却没有任何服务变化。
-func TestServiceDeclsNestedKeys(t *testing.T) {
-	content := `
-services:
-  web:
-    build:
-      context: .
-      args:
-        BASE: alpine
-    image: myapp:local
-    labels:
-      com.example.image: not-an-image
-`
-	decls := serviceDecls(content)
-	if len(decls) != 1 {
-		t.Fatalf("应只解析出 1 条声明，实际 %d: %+v", len(decls), decls)
-	}
-	if decls[0].image != "myapp:local" {
-		t.Errorf("应只认服务直属的 image，实际 %q", decls[0].image)
-	}
-}
-
-// TestServiceDeclsInterpolation 验证 ${VAR} 不被当成可拉取的引用。
-//
-// 真实引用要由 compose 结合 .env 与 shell 环境求值，Agent 里无法忠实重现；
-// 拿带花括号的字符串去 pull 只会得到一条看不懂的错误。
-func TestServiceDeclsInterpolation(t *testing.T) {
-	content := `
-services:
-  web:
-    image: ${REGISTRY}/app:${TAG}
-`
-	for _, d := range serviceDecls(content) {
-		if strings.Contains(d.image, "${") {
-			t.Fatalf("插值引用不应进入候选: %q", d.image)
-		}
-	}
-	if images := serviceImages(content); len(images) != 0 {
-		t.Fatalf("插值引用应被排除，实际 %v", images)
-	}
-}
-
-// TestServiceDeclsQuoted 验证引号包裹的引用能取到。
-func TestServiceDeclsQuoted(t *testing.T) {
-	content := `
-services:
-  web:
-    image: "ghcr.io/a/b:1.0"
-`
-	images := serviceImages(content)
-	if len(images) != 1 || images[0] != "ghcr.io/a/b:1.0" {
-		t.Fatalf("引号应被剥掉，实际 %v", images)
-	}
-}
-
-// TestServiceImagesDedupKeepsOrder 验证去重但保留正文顺序。
-//
-// 顺序有意义：日志里"先处理哪个镜像"应当与用户写的顺序一致，便于对照。
-func TestServiceImagesDedupKeepsOrder(t *testing.T) {
-	content := `
-services:
-  a:
-    image: nginx:1.25
-  b:
-    image: redis:7
-  c:
-    image: nginx:1.25
-`
-	images := serviceImages(content)
-	if len(images) != 2 || images[0] != "nginx:1.25" || images[1] != "redis:7" {
-		t.Fatalf("应去重且保持顺序，实际 %v", images)
-	}
-}
-
-// TestServiceDeclsNoServicesBlock 验证没有 services 块时返回空而不是乱认。
-func TestServiceDeclsNoServicesBlock(t *testing.T) {
-	for _, content := range []string{"", "volumes:\n  data:\n", "services:\n"} {
-		if decls := serviceDecls(content); len(decls) != 0 {
-			t.Errorf("%q 不应解析出服务，实际 %+v", content, decls)
+	for _, raw := range []string{"", "not json", `{"services":[]}`, `{"services":{"web":{"image":42}}}`, `null`, `{}`} {
+		if _, ok := parseDeployServiceImages(raw); ok {
+			t.Errorf("接受了无效的配置输出 %q", raw)
 		}
 	}
 }
@@ -315,51 +220,22 @@ func TestNeedForceRecreate(t *testing.T) {
 
 // TestServicesOf 验证按镜像引用反查服务名。
 func TestServicesOf(t *testing.T) {
-	content := `
-services:
-  web:
-    image: nginx:1.25
-  sidecar:
-    image: nginx:1.25
-  db:
-    image: postgres:16
-`
-	names := servicesOf(content, []deployHunk{{ref: "nginx:1.25"}})
-	if len(names) != 2 || names[0] != "sidecar" || names[1] != "web" {
-		for _, d := range serviceDecls(content) {
-			t.Logf("decl service=%q image=%q", d.service, d.image)
-		}
+	decls := []serviceTag{{"web", "nginx:1.25"}, {"sidecar", "nginx:1.25"}, {"db", "postgres:16"}}
+	names := servicesOf(decls, []deployHunk{{ref: "nginx:1.25"}})
+	if !slices.Equal(names, []string{"sidecar", "web"}) {
 		t.Fatalf("应反查出去重排序的两个服务，实际 %v", names)
 	}
-	if out := servicesOf(content, nil); len(out) != 0 {
+	if out := servicesOf(decls, nil); len(out) != 0 {
 		t.Errorf("空条目应返回空，实际 %v", out)
 	}
 }
 
-// TestUnknownText 验证"查不到"的说明会点名具体镜像。
-//
-// 用户要能判断是不是自己的私有仓库没登录；只说"部分镜像无法判定"等于没说。
 func TestUnknownText(t *testing.T) {
-	all := []string{"a:1", "b:1"}
-	txt := unknownText([]string{"b:1"}, all)
-	if !strings.Contains(txt, "b:1") {
-		t.Errorf("应点名具体镜像，实际 %q", txt)
-	}
-	if !strings.Contains(txt, "不拉取也不重建") {
-		t.Errorf("应说明不会改动，实际 %q", txt)
-	}
-
-	// 全部查不到：用"退化为按实际内容判断"的说明，而不是"已是最新"。
-	allTxt := unknownText(all, all)
-	if allTxt != deployAllUnknownText {
-		t.Errorf("全部未知时应用统一文案，实际 %q", allTxt)
-	}
-	if strings.Contains(allTxt, "已是最新") {
-		t.Error("查不到不能声称已是最新（那是没有证据的结论）")
+	txt := unknownText([]string{"web"})
+	if !strings.Contains(txt, "web") || !strings.Contains(txt, "不拉取也不重建") {
+		t.Fatalf("应说明涉及的服务不改动，实际 %q", txt)
 	}
 }
-
-/* ───────────────────────── 5. 判定矩阵（纯函数，任何平台都跑） ───────────────────────── */
 
 // TestPlanDeployWith 穷举"要不要更新"的每一种情形。
 //
@@ -556,7 +432,7 @@ func TestChangedAfterPull(t *testing.T) {
 //     没配的仓库返回查不到（模拟私有/离线）。
 //   - localIDs：「查本机某引用当前指向哪份内容」时用（docker images <ref>）。
 //   - pullExit：pull 的退出码。
-func deployScript(psJSON string, remote, localIDs map[string]string, pullExit int) string {
+func deployScript(configCommand, psJSON string, remote, localIDs map[string]string, pullExit int) string {
 	script := `
 if [ "$1" = "manifest" ]; then
   ref="$3"
@@ -574,6 +450,10 @@ if [ "$1" = "images" ]; then
 fi
 if [ "$1" = "compose" ]; then
   case "$*" in
+    *" config --format json")
+      ` + configCommand + `
+      exit $?
+      ;;
     *" ps "*)
       printf '%s' '` + psJSON + `'
       exit 0
@@ -593,13 +473,27 @@ if [ "$1" = "compose" ]; then
       exit ` + deployExitCode(pullExit) + `
       ;;
     *" up "*)
+      while [ "$1" != "up" ]; do shift; done
+      shift
+      [ "$1" = "-d" ] || exit 1
+      shift
+      if [ "$1" = "--force-recreate" ]; then shift; fi
+      [ "$1" = "--" ] || exit 1
+      shift
+      [ "$#" -gt 0 ] || exit 1
+      for service in "$@"; do
+        case "$service" in
+          web|db) ;;
+          *) echo "no such service: $service" >&2; exit 1 ;;
+        esac
+      done
       echo "up: $*"
       exit 0
       ;;
   esac
-  exit 0
+  exit 1
 fi
-exit 0
+exit 1
 `
 	// 最后把标记替换成真实内容：标记里带仓库名，替换后就是该引用自己的答案。
 	for repo, digest := range remote {
@@ -641,10 +535,10 @@ func deployExitCode(n int) string {
 }
 
 // startDeploy 在给定 compose 正文上跑一次 deploy，返回终态快照。
-func startDeploy(t *testing.T, content, script, reqID string) PullSnapshot {
+func startDeploy(t *testing.T, content, env, script, reqID string) PullSnapshot {
 	t.Helper()
 	_, p := newPullTestManager(t, writeScript(t, script))
-	if _, _, err := p.mgr.ws.CommitProject("app", content, ""); err != nil {
+	if _, _, err := p.mgr.ws.CommitProject("app", content, env); err != nil {
 		t.Fatal(err)
 	}
 	snap, err := p.StartOperation(OperationSpec{Action: ActionDeploy}, "app", reqID)
@@ -662,6 +556,8 @@ services:
   db:
     image: postgres:16
 `
+
+const twoServiceConfig = `printf '%s' '{"services":{"web":{"image":"nginx:1.25"},"db":{"image":"postgres:16"}}}'`
 
 // TestDeployNoUpdateDoesNothing 验证没有新镜像时**一条写命令都不跑**。
 //
@@ -682,7 +578,7 @@ func TestDeployNoUpdateDoesNothing(t *testing.T) {
 	         "RepoDigests":["postgres@sha256:same"]}]`
 	remote := map[string]string{"nginx:1.25": "sha256:same", "postgres:16": "sha256:same"}
 
-	final := startDeploy(t, composeContent, deployScript(ps, remote, nil, 0), "deploy-noop-1")
+	final := startDeploy(t, composeContent, "", deployScript(twoServiceConfig, ps, remote, nil, 0), "deploy-noop-1")
 
 	if final.Status != PullSucceeded {
 		t.Fatalf("应成功（无更新也是成功），实际 %s: %s", final.Status, final.Error)
@@ -716,7 +612,7 @@ func TestDeployPullsOnlyChangedService(t *testing.T) {
 	         "RepoDigests":["postgres@sha256:same"]}]`
 	remote := map[string]string{"nginx:1.25": "sha256:new", "postgres:16": "sha256:same"}
 
-	final := startDeploy(t, composeContent, deployScript(ps, remote, nil, 0), "deploy-up-1")
+	final := startDeploy(t, composeContent, "", deployScript(twoServiceConfig, ps, remote, nil, 0), "deploy-up-1")
 
 	if final.Status != PullSucceeded {
 		t.Fatalf("应成功，实际 %s: %s", final.Status, final.Error)
@@ -762,7 +658,7 @@ func TestDeployPullFailureStopsBeforeUp(t *testing.T) {
 	         "RepoDigests":["postgres@sha256:same"]}]`
 	remote := map[string]string{"nginx:1.25": "sha256:new", "postgres:16": "sha256:same"}
 
-	final := startDeploy(t, composeContent, deployScript(ps, remote, nil, 1), "deploy-pullfail-1")
+	final := startDeploy(t, composeContent, "", deployScript(twoServiceConfig, ps, remote, nil, 1), "deploy-pullfail-1")
 
 	if final.Status != PullFailed {
 		t.Fatalf("拉取失败时任务应为 failed，实际 %s", final.Status)
@@ -776,10 +672,9 @@ func TestDeployPullFailureStopsBeforeUp(t *testing.T) {
 	if len(final.UpdatedServices) != 0 {
 		t.Fatalf("失败时不应声称更新了服务，实际 %v", final.UpdatedServices)
 	}
-	for _, cmd := range cmdEvents(final) {
-		if strings.Contains(composeTail(cmd), " up ") {
-			t.Fatalf("拉取失败后绝不能重建，实际出现 %q", cmd)
-		}
+	cmds := cmdEvents(final)
+	if len(cmds) != 1 || !strings.HasSuffix(cmds[0], " pull -- web") {
+		t.Fatalf("拉取失败后必须停在本次 pull，实际命令 %v", cmds)
 	}
 }
 
@@ -799,8 +694,8 @@ func TestDeployUnknownManifestDegradesToPull(t *testing.T) {
 	// images 给出"拉取后该引用已指向新内容"，退化路径据此判定需要重建。
 	localIDs := map[string]string{"nginx:1.25": "sha256:afterpull"}
 
-	final := startDeploy(t, "services:\n  web:\n    image: nginx:1.25\n",
-		deployScript(ps, nil, localIDs, 0), "deploy-unknown-1")
+	final := startDeploy(t, "services:\n  web:\n    image: nginx:1.25\n", "",
+		deployScript(`printf '%s' '{"services":{"web":{"image":"nginx:1.25"}}}'`, ps, nil, localIDs, 0), "deploy-unknown-1")
 
 	if final.Status != PullSucceeded {
 		t.Fatalf("退化为拉取后应成功，实际 %s: %s", final.Status, final.Error)
@@ -835,13 +730,86 @@ func TestDeployRequiresServices(t *testing.T) {
 		t.Skip("假 docker 是 shell 脚本，仅在 Linux 上运行")
 	}
 
-	final := startDeploy(t, "services:\n  web:\n    build: .\n",
-		deployScript("[]", nil, nil, 0), "deploy-noimage-1")
+	final := startDeploy(t, "services:\n  web:\n    build: .\n", "",
+		deployScript(`printf '%s' '{"services":{"web":{"build":{"context":"."}}}}'`, "[]", nil, nil, 0), "deploy-noimage-1")
 
 	if final.Status != PullFailed {
 		t.Fatalf("没有镜像声明应失败，实际 %s", final.Status)
 	}
 	if !strings.Contains(final.Error, "image") {
 		t.Fatalf("错误应指出缺少 image 声明，实际 %q", final.Error)
+	}
+}
+
+// TestDeployComposeConfigRegression uses a synthetic normalized fixture and
+// rejects writes to any target other than the expected service.
+func TestDeployComposeConfigRegression(t *testing.T) {
+	requireLinux(t)
+	t.Setenv("ARK_TEST_TAG", "wrong-shell-tag")
+
+	const secret = "raw-normalized-config-test-secret"
+	const content = `services:
+  web:
+    restart: unless-stopped
+    image: example.invalid/team/web:1
+    environment:
+      NORMALIZED_CONFIG_PROBE: ` + secret + `
+  db: {image: "example.invalid/team/db:${ARK_TEST_TAG:?missing .env}"}
+`
+	ps := `[{"Service":"web","State":"running","Image":"example.invalid/team/web:1","RepoDigests":["example.invalid/team/web@sha256:old"]},
+	        {"Service":"db","State":"running","Image":"example.invalid/team/db:from-dotenv","RepoDigests":["example.invalid/team/db@sha256:same"]}]`
+	remote := map[string]string{"example.invalid/team/web:1": "sha256:new", "example.invalid/team/db:from-dotenv": "sha256:same"}
+	config := `
+      [ "$#" -eq 8 ] && [ "$1" = "compose" ] && [ "$2" = "--project-name" ] && [ "$3" = "app" ] || exit 23
+      [ "$4" = "--env-file" ] && [ "$5" = "$PWD/.env" ] || exit 24
+      [ -z "${ARK_TEST_TAG+x}" ] || exit 25
+      IFS= read -r assignment < "$5"
+      [ "$assignment" = "ARK_TEST_TAG=from-dotenv" ] || exit 26
+      printf '%s' '{"services":{"web":{"restart":"unless-stopped","image":"example.invalid/team/web:1","environment":{"NORMALIZED_CONFIG_PROBE":"` + secret + `"}},"db":{"image":"example.invalid/team/db:from-dotenv"}}}'`
+	final := startDeploy(t, content, "ARK_TEST_TAG=from-dotenv\n", deployScript(config, ps, remote, nil, 0), "deploy-real-config")
+	if final.Status != PullSucceeded || !slices.Equal(final.UpdatedServices, []string{"web"}) {
+		t.Fatalf("应只更新 web，实际状态 %s，更新服务 %v，错误 %q", final.Status, final.UpdatedServices, final.Error)
+	}
+	cmds := cmdEvents(final)
+	if len(cmds) != 2 || !strings.HasSuffix(cmds[0], " pull -- web") || !strings.HasSuffix(cmds[1], " up -d -- web") {
+		t.Fatalf("应只拉取并重建 web，实际命令 %v", cmds)
+	}
+	if !slices.Contains(streamEvents(final, "stdout"), "pulling...") {
+		t.Fatal("配置探测静默不应屏蔽正常 pull 进度")
+	}
+	assertDeployConfigHidden(t, final, secret)
+}
+
+func TestDeployConfigFailureStopsWithoutLeaking(t *testing.T) {
+	requireLinux(t)
+	const secret = "sensitive-normalization-diagnostic"
+	for _, tc := range []struct{ name, config, want string }{
+		{"nonzero", `printf '%s' '{"services":{"web":{"image":"nginx:1.25"}}}'`, "解析编排配置失败"},
+		{"invalid JSON", `printf '%s' '` + secret + `'`, "编排配置无效"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			config := tc.config + `; echo '` + secret + `' >&2`
+			if tc.name == "nonzero" {
+				config += "; exit 23"
+			}
+			// The original YAML and mocked ps would otherwise permit a pull.
+			final := startDeploy(t, composeContent, "", deployScript(config, "[]", nil, nil, 0), "deploy-invalid-config")
+			if final.Status != PullFailed || !strings.Contains(final.Error, tc.want) || len(cmdEvents(final)) != 0 {
+				t.Fatalf("解析失败应在任何写操作前退出，实际状态 %s，命令 %v，错误 %q", final.Status, cmdEvents(final), final.Error)
+			}
+			assertDeployConfigHidden(t, final, secret)
+		})
+	}
+}
+
+func assertDeployConfigHidden(t *testing.T, final PullSnapshot, secret string) {
+	t.Helper()
+	if strings.Contains(final.Error, secret) {
+		t.Fatal("任务错误泄露了 Compose 配置内容")
+	}
+	for _, event := range final.Output {
+		if strings.Contains(event.Text, secret) {
+			t.Fatal("任务事件泄露了 Compose 配置内容")
+		}
 	}
 }
