@@ -47,7 +47,7 @@ async function loadTs(relPath) {
   return import(`data:text/javascript;base64,${Buffer.from(rewritten, 'utf8').toString('base64')}`)
 }
 
-const { buildMenuOptions, AGENT_OPERATION_ITEMS, isGlobalMenuKey } = await loadTs(
+const { buildMenuOptions, AGENT_OPERATION_ITEMS, isGlobalMenuKey, resolveActiveMenuKey } = await loadTs(
   'src/layouts/menuConfig.ts'
 )
 
@@ -269,6 +269,19 @@ function groupLabelTitle(options, key) {
     '来源: id 为空时不返回服务器',
     /agentId\.value === null \? undefined/.test(hook)
   )
+}
+
+/* ───────── 9. 个人设置仅从顶栏进入 ───────── */
+
+{
+  for (const isAdmin of [false, true]) {
+    const options = buildMenuOptions('ag-1', '服务器', isAdmin)
+    check('侧边菜单不显示个人设置', options.every((group) =>
+      group.children?.every((item) => item.key !== 'account')))
+  }
+  check('个人设置页不高亮侧边菜单', resolveActiveMenuKey('account') === null)
+  const userMenu = readFileSync(join(SRC_ROOT, 'components', 'common', 'UserMenu.vue'), 'utf8')
+  check('右上角下拉保留个人设置', /key: 'account', label: '个人设置'/.test(userMenu))
 }
 
 /* ───────── 结果 ───────── */

@@ -57,10 +57,9 @@ export const AGENT_OPERATION_ITEMS: MenuItemDef[] = [
  * 概览排在最前，因为它是登录后的首页，用户最常从那里开始。
  */
 const GLOBAL_ENTRIES: MenuItemDef[] = [
-  { routeName: 'overview', label: '概览', icon: 'overview' },
+  { routeName: 'overview', label: '仪表盘', icon: 'overview' },
   { routeName: 'agents', label: '服务器', icon: 'server' },
   { routeName: 'audit', label: '操作审计', icon: 'audit' },
-  { routeName: 'account', label: '个人设置', icon: 'audit' },
   { routeName: 'users', label: '用户管理', icon: 'server', adminOnly: true },
   { routeName: 'groups', label: '用户组与授权', icon: 'network', adminOnly: true },
   { routeName: 'settings', label: '系统设置', icon: 'overview', adminOnly: true }
@@ -182,7 +181,7 @@ const ROUTE_TO_MENU_KEY: Record<string, string> = {
   overview: 'overview',
   agents: 'agents',
   audit: 'audit',
-  account: 'account', users: 'users', groups: 'groups', settings: 'settings',
+  users: 'users', groups: 'groups', settings: 'settings',
   'agent-containers': 'agent-containers',
   'agent-stacks': 'agent-stacks',
   // 编排详情/新建属于「容器编排」这一菜单项的下级页面
