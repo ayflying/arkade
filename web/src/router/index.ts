@@ -41,7 +41,7 @@ const agentChildRoutes: RouteRecordRaw[] = [
     name: 'agent-container-detail',
     component: () => import('@/views/ContainerDetailView.vue'),
     props: true,
-    meta: { title: '容器详情' }
+    meta: { title: '容器详情', breadcrumbParent: 'agent-containers' }
   },
   {
     path: 'stacks',
@@ -55,7 +55,7 @@ const agentChildRoutes: RouteRecordRaw[] = [
     name: 'agent-stack-create',
     component: () => import('@/views/StackCreateView.vue'),
     props: true,
-    meta: { title: '新建编排' }
+    meta: { title: '新建编排', breadcrumbParent: 'agent-stacks' }
   },
   {
     // 必须放在 stacks/:name 之前：否则 'external' 会被当成编排名匹配
@@ -69,7 +69,7 @@ const agentChildRoutes: RouteRecordRaw[] = [
     name: 'agent-stack-detail',
     component: () => import('@/views/StackDetailView.vue'),
     props: true,
-    meta: { title: '编排详情' }
+    meta: { title: '编排详情', breadcrumbParent: 'agent-stacks', breadcrumbParam: 'name' }
   },
   {
     path: 'images',
@@ -106,7 +106,7 @@ const agentChildRoutes: RouteRecordRaw[] = [
     name: 'agent-volume-files',
     component: () => import('@/views/VolumeFilesView.vue'),
     props: true,
-    meta: { title: '存储卷文件' }
+    meta: { title: '存储卷文件', breadcrumbParent: 'agent-volumes', breadcrumbParam: 'name' }
   }
 ]
 

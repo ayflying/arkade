@@ -1,23 +1,9 @@
 <script setup lang="ts">
-/**
- * 顶栏面包屑
- *
- * 层级推导（改造后）：
- * - /agents                    → 服务器
- * - /agents/:id/containers     → 服务器 / <机器名> / 容器
- * - /agents/:id/stacks/:name   → 服务器 / <机器名> / 容器编排 / <编排名>
- *
- * 中间层「机器名 / 操作页」都可点击返回：
- * - 点机器名回到该服务器的容器页（它是默认操作页）；
- * - 点「容器编排」回到编排列表。
- *
- * 手机端：只显示最后一级，前面用省略号暗示还有上级，
- * 但**不丢失**层级信息——最后一级仍是全路径中最深的页面名。
- */
 import { computed } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { NBreadcrumb, NBreadcrumbItem } from 'naive-ui'
 import { useCurrentAgent } from '@/composables/useCurrentAgent'
+import { buildBreadcrumbs } from '@/router/breadcrumbs'
 
 interface Props {
   /** 手机档：只保留最后一级 */
@@ -27,70 +13,17 @@ interface Props {
 const props = withDefaults(defineProps<Props>(), { compact: false })
 
 const route = useRoute()
+const router = useRouter()
 const { agentId, displayName } = useCurrentAgent()
 
-interface CrumbItem {
-  label: string
-  /** 可点击返回的目标；最后一级没有 */
-  to?: string
-}
+const allItems = computed(() => buildBreadcrumbs(
+  route,
+  agentId.value === null ? null : { id: agentId.value, label: displayName.value },
+  (to) => router.resolve(to).meta
+))
 
-/** 各操作页的中文名：与菜单文案保持一致，避免同一个东西两种叫法 */
-const OPERATION_LABELS: Record<string, string> = {
-  'agent-containers': '容器',
-  'agent-stacks': '容器编排',
-  'agent-stack-create': '新建编排',
-  'agent-stack-detail': '编排详情',
-  'agent-images': '本地镜像',
-  'agent-networks': '网络',
-  'agent-volumes': '存储卷'
-}
-
-/** 顶层页面（不依赖选中服务器）的路由名 → 面包屑文案 */
-const TOP_LEVEL_LABELS: Record<string, string> = {
-  overview: '仪表盘',
-  agents: '服务器',
-  audit: '操作审计'
-}
-
-/** 完整层级：由路由 name 推导，与路由表保持同步 */
-const allItems = computed<CrumbItem[]>(() => {
-  const routeName = typeof route.name === 'string' ? route.name : ''
-
-  if (agentId.value === null) {
-    // 未选中服务器：只显示当前顶层页面的名字。
-    // 不能一律写「服务器」——概览页和审计页会被误标成「服务器」，用户找不到自己在哪
-    const topLabel = TOP_LEVEL_LABELS[routeName] ?? '概览'
-    return [{ label: topLabel }]
-  }
-
-  const items: CrumbItem[] = [
-    { label: '服务器', to: '/agents' },
-    // 机器名可点回该服务器的默认操作页（容器）
-    { label: displayName.value, to: `/agents/${encodeURIComponent(agentId.value)}/containers` }
-  ]
-
-  const operationLabel = OPERATION_LABELS[routeName]
-  if (operationLabel !== undefined) {
-    items.push({ label: operationLabel })
-  }
-
-  // 编排详情再补一级具体编排名（从 URL 取，避免详情页数据未加载时面包屑缺一级）
-  if (routeName === 'agent-stack-detail') {
-    const rawName = route.params.name
-    const stackName = Array.isArray(rawName) ? rawName[0] : rawName
-    if (typeof stackName === 'string' && stackName !== '') {
-      items.push({ label: stackName })
-    }
-  }
-
-  return items
-})
-
-/** 实际展示项：手机档只留最后一级 */
-const visibleItems = computed<CrumbItem[]>(() =>
-  props.compact ? allItems.value.slice(-1) : allItems.value
-)
+// 手机端保持现有紧凑布局，只展示当前页。
+const visibleItems = computed(() => props.compact ? allItems.value.slice(-1) : allItems.value)
 
 /** 手机档且确实被裁剪时，在最后一级前加点号提示 */
 const hasHiddenPrefix = computed<boolean>(() => props.compact && allItems.value.length > 1)
@@ -103,7 +36,7 @@ const hasHiddenPrefix = computed<boolean>(() => props.compact && allItems.value.
     </n-breadcrumb-item>
     <n-breadcrumb-item v-for="(item, index) in visibleItems" :key="index">
       <router-link v-if="item.to" :to="item.to" class="crumbs__link">{{ item.label }}</router-link>
-      <span v-else class="crumbs__current">{{ item.label }}</span>
+      <span v-else class="crumbs__current" :aria-current="index === visibleItems.length - 1 ? 'page' : undefined">{{ item.label }}</span>
     </n-breadcrumb-item>
   </n-breadcrumb>
 </template>
@@ -121,7 +54,7 @@ const hasHiddenPrefix = computed<boolean>(() => props.compact && allItems.value.
   text-decoration: none;
 }
 
-.crums__link:hover {
+.crumbs__link:hover {
   text-decoration: underline;
 }
 

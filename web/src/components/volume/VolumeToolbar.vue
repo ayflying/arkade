@@ -26,7 +26,6 @@ interface Props {
 const props = withDefaults(defineProps<Props>(), { uploading: false })
 
 const emit = defineEmits<{
-  backToVolumes: []
   navigate: [path: string]
   create: [kind: 'file' | 'dir']
   upload: [file: File]
@@ -63,7 +62,6 @@ function handleFileChange(event: Event): void {
     <volume-breadcrumb
       :volume="volume"
       :path="path"
-      @back-to-volumes="emit('backToVolumes')"
       @navigate="emit('navigate', $event)"
     />
     <div class="vol-toolbar__actions">

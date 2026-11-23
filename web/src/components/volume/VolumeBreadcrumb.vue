@@ -12,7 +12,7 @@ import { computed } from 'vue'
 import { NButton } from 'naive-ui'
 
 interface Props {
-  /** 卷名（面包屑第一级，点击回卷列表） */
+  /** 卷名（面包屑第一级，点击回卷根目录） */
   volume: string
   /** 当前相对路径；根目录为空串 */
   path: string
@@ -21,8 +21,6 @@ interface Props {
 const props = defineProps<Props>()
 
 const emit = defineEmits<{
-  /** 点击卷名：回到卷列表 */
-  backToVolumes: []
   /** 点击某一级：跳到该相对路径（根目录为空串） */
   navigate: [path: string]
 }>()
@@ -46,13 +44,15 @@ const crumbs = computed<{ name: string; path: string }[]>(() => {
 
 <template>
   <nav class="breadcrumb" aria-label="目录路径">
-    <n-button text class="breadcrumb__root" @click="emit('backToVolumes')">
+    <n-button v-if="crumbs.length" text class="breadcrumb__root" @click="emit('navigate', '')">
       {{ volume }}
     </n-button>
+    <span v-else class="breadcrumb__root">{{ volume }}</span>
 
-    <template v-for="crumb in crumbs" :key="crumb.path">
+    <template v-for="(crumb, index) in crumbs" :key="crumb.path">
       <span class="breadcrumb__sep">/</span>
-      <n-button text class="breadcrumb__seg" @click="emit('navigate', crumb.path)">
+      <span v-if="index === crumbs.length - 1" class="breadcrumb__current" aria-current="location">{{ crumb.name }}</span>
+      <n-button v-else text class="breadcrumb__seg" @click="emit('navigate', crumb.path)">
         {{ crumb.name }}
       </n-button>
     </template>

@@ -102,10 +102,6 @@ async function navigateTo(path: string): Promise<void> {
   await router.push({ query: path === '' ? {} : { path } })
 }
 
-async function backToVolumes(): Promise<void> {
-  await router.push({ name: 'agent-volumes', params: { id: agentId.value ?? '' } })
-}
-
 async function handleOpen(entry: VolumeEntry): Promise<void> {
   const path = currentPath.value === '' ? entry.name : `${currentPath.value}/${entry.name}`
   if (entry.kind === 'directory') {
@@ -199,7 +195,6 @@ const subtitle = computed(() => {
       :path="currentPath"
       :disabled="!isOnline"
       :uploading="uploading"
-      @back-to-volumes="backToVolumes"
       @navigate="navigateTo"
       @create="actions.openCreate"
       @upload="handleUpload"
