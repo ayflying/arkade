@@ -39,6 +39,8 @@ export interface AgentColumnHandlers {
   /** 待接入服务器：换发新密钥并再次展示接入信息 */
   onRenewEnrollment: (agent: Agent) => void
   isBusy: (agentId: string) => boolean
+  /** 该服务器的更新正在观察中：只锁这一行「更新」，不影响其它服务器 */
+  isUpdating: (agentId: string) => boolean
 }
 
 /**
@@ -128,6 +130,7 @@ export function createAgentColumns(handlers: AgentColumnHandlers): DataTableColu
         h(AgentRowActions, {
           agent: row,
           busy: handlers.isBusy(row.id),
+          updating: handlers.isUpdating(row.id),
           onEnter: () => handlers.onEnter(row),
           onEdit: () => handlers.onEdit(row),
           'onReset-token': () => handlers.onResetToken(row),

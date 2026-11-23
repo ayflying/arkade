@@ -28,9 +28,11 @@ interface Props {
   agent: Agent
   /** 该行是否有操作在途（删除/禁用等），在途时禁用全部按钮防连点 */
   busy?: boolean
+  /** 该服务器的更新正在观察中：只锁「更新」按钮，不牵连同一行的其它入口 */
+  updating?: boolean
 }
 
-const props = withDefaults(defineProps<Props>(), { busy: false })
+const props = withDefaults(defineProps<Props>(), { busy: false, updating: false })
 
 const emit = defineEmits<{
   (e: 'enter'): void
@@ -79,13 +81,19 @@ const isOnline = computed(() => props.agent.status === 'online')
  * - 被禁用 → 操作入口整体关闭，先去启用。
  */
 const updateHint = computed(() => {
+  if (props.updating) return '这台服务器正在更新中，更新完成后自动解除'
   if (disabled.value) return '该服务器已被禁用，请先启用后再更新'
   if (!isOnline.value) return '服务器当前离线，恢复在线后才能更新'
   return '更新这台服务器上的 Arkade 组件镜像（会短暂中断，数据不受影响）'
 })
 
-/** 更新按钮是否可点：只有在线且未被禁用才下发命令 */
-const updateDisabled = computed(() => props.busy || disabled.value || !isOnline.value)
+/**
+ * 更新按钮是否可点：只有在线且未被禁用才下发命令。
+ *
+ * updating 只锁自己这一行；其它服务器的行各自独立，
+ * 因此这里不能引用页面级的共享 busy 状态（否则又变成全局锁）。
+ */
+const updateDisabled = computed(() => props.busy || props.updating || disabled.value || !isOnline.value)
 </script>
 
 <template>
@@ -124,7 +132,7 @@ const updateDisabled = computed(() => props.busy || disabled.value || !isOnline.
     <n-tooltip trigger="hover" placement="top">
       <template #trigger>
         <n-button size="tiny" tertiary :disabled="updateDisabled" @click="emit('self-update')">
-          更新
+          {{ updating ? '更新中' : '更新' }}
         </n-button>
       </template>
       {{ updateHint }}

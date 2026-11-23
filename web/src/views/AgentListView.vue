@@ -42,10 +42,26 @@ const router = useRouter()
 
 /** 正在跳转的 agentId，用于按钮 loading，防止连点重复 push 路由 */
 const enteringId = ref('')
-/** 正在执行写操作的 agentId（删除/禁用/启用/重置密钥/更新），用于行按钮 loading 与防连点 */
+/**
+ * 正在执行写操作的 agentId（删除/禁用/启用/重置密钥）。
+ *
+ * 只占用**这一台**服务器的行操作：不同服务器互不影响，可以同时各做各的。
+ * 更新用单独的集合（见 updatingIds），因为它的观察期较长，且只应锁住「更新」本身。
+ */
 const busyId = ref('')
-/** 切走页面只停止观察，不会取消已经提交的更新。 */
-const selfUpdateObserver = new AbortController()
+/**
+ * 正在更新中的服务器 id 集合。
+ *
+ * 按 id 记录而不是单一标记：同时更新多台服务器天然互不影响，
+ * 只禁用各自那一行的「更新」，原因见 handleSelfUpdate 的说明。
+ */
+const updatingIds = ref(new Set<string>())
+/**
+ * 每台服务器自己的观察信号：切走页面时统一中止，不会影响其它服务器。
+ *
+ * 曾在途的观察只占它自己那一行，不会让别的行进入 loading。
+ */
+const selfUpdateObservers = new Map<string, AbortController>()
 
 /** 编辑弹窗 */
 const editShow = ref(false)
@@ -88,7 +104,8 @@ const columns = useResponsiveColumns(computed(() =>
     onDelete: (agent: Agent) => void handleDelete(agent),
     onSelfUpdate: (agent: Agent) => void handleSelfUpdate(agent),
     onRenewEnrollment: (agent: Agent) => void handleRenewEnrollment(agent),
-    isBusy: (agentId: string) => enteringId.value === agentId || busyId.value === agentId
+    isBusy: (agentId: string) => enteringId.value === agentId || busyId.value === agentId,
+    isUpdating: (agentId: string) => updatingIds.value.has(agentId)
   })
 ))
 
@@ -246,10 +263,20 @@ async function handleDelete(agent: Agent): Promise<void> {
   }
 }
 
-/** 提交只代表受理；结合助手结果和服务器版本确认本次更新。 */
+/**
+ * 提交只代表受理；结合助手结果和服务器版本确认本次更新。
+ *
+ * ============================ 为什么按 id 而不是单一 busy 标记 ============================
+ *
+ * 每台服务器是独立的一台机器，更新互不影响；用一个共享标记会让「更新 A」时
+ * 整张表的按钮都变成不可用，用户会以为要排队等 A。实际上：
+ * - 只有在途的**这台**服务器不能重复点「更新」（防止重复提交同一台）；
+ * - 其它服务器、以及本行其它操作都不受影响。
+ * 因此这里用 updatingIds 按 id 记录，并在整个观察期（可能一两分钟）结束后才释放。
+ */
 async function handleSelfUpdate(agent: Agent): Promise<void> {
-  if (busyId.value !== '') return
   const name = agentDisplayName(agent)
+  if (updatingIds.value.has(agent.id)) return
   if (agent.status !== 'online') {
     toastWarning('服务器当前离线，恢复在线后才能更新。')
     return
@@ -264,10 +291,14 @@ async function handleSelfUpdate(agent: Agent): Promise<void> {
     positiveText: '开始更新',
     negativeText: '取消'
   })
-  const signal = selfUpdateObserver.signal
-  if (!confirmed || signal.aborted || busyId.value !== '') return
+  if (!confirmed || updatingIds.value.has(agent.id)) return
 
-  busyId.value = agent.id
+  // 点下「更新」后立刻进入「更新中」：按钮即刻不可点，观察期结束才恢复。
+  // 同一个 id 再进来会命中上面的判断，因此不可能重复提交这一台。
+  const observer = new AbortController()
+  selfUpdateObservers.set(agent.id, observer)
+  updatingIds.value = new Set(updatingIds.value).add(agent.id)
+  const signal = observer.signal
   const beforeVersion = store.findById(agent.id)?.version || agent.version
   try {
     let requestId: string | undefined
@@ -315,8 +346,11 @@ async function handleSelfUpdate(agent: Agent): Promise<void> {
       }
     }
   } finally {
-    // 整个观察流程占用操作锁，避免还在拉镜像时再次提交更新。
-    busyId.value = ''
+    // 只释放这一台；别的服务器各自的观察继续，互不取消。
+    selfUpdateObservers.delete(agent.id)
+    const next = new Set(updatingIds.value)
+    next.delete(agent.id)
+    updatingIds.value = next
   }
 }
 
@@ -534,7 +568,9 @@ usePolling(
  * 显式置空是零成本保险。
  */
 onUnmounted(() => {
-  selfUpdateObserver.abort()
+  // 只停止观察（已提交的更新照常执行），每台一个信号，互不牵连。
+  for (const observer of selfUpdateObservers.values()) observer.abort()
+  selfUpdateObservers.clear()
   handleTokenClosed()
 })
 </script>
