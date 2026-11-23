@@ -579,7 +579,16 @@ if [ "$1" = "compose" ]; then
       exit 0
       ;;
     *" pull "*)
-      echo "pull: $*"
+      while [ "$1" != "pull" ]; do shift; done
+      shift
+      if [ "$1" = "--" ]; then shift; fi
+      [ "$#" -gt 0 ] || exit 1
+      for service in "$@"; do
+        case "$service" in
+          web|db) ;;
+          *) echo "no such service: $service" >&2; exit 1 ;;
+        esac
+      done
       echo "pulling..."
       exit ` + deployExitCode(pullExit) + `
       ;;
@@ -726,11 +735,8 @@ func TestDeployPullsOnlyChangedService(t *testing.T) {
 			ups = append(ups, tail)
 		}
 	}
-	if len(pulls) != 1 || !strings.Contains(pulls[0], "nginx:1.25") {
-		t.Fatalf("应只拉 web 的镜像，实际 %v", pulls)
-	}
-	if strings.Contains(pulls[0], "postgres") {
-		t.Fatalf("不应拉已是最新的镜像，实际 %q", pulls[0])
+	if len(pulls) != 1 || !strings.HasSuffix(pulls[0], " pull -- web") {
+		t.Fatalf("应只按服务名拉 web，实际 %v", pulls)
 	}
 	if len(ups) != 1 || !strings.Contains(ups[0], "web") {
 		t.Fatalf("应只重建 web，实际 %v", ups)
@@ -800,8 +806,9 @@ func TestDeployUnknownManifestDegradesToPull(t *testing.T) {
 		t.Fatalf("退化为拉取后应成功，实际 %s: %s", final.Status, final.Error)
 	}
 	notes := strings.Join(streamEvents(final, "stage"), "\n")
-	if !strings.Contains(notes, "无法在拉取前判断") {
-		t.Fatalf("应说明无法在拉取前判断，实际 %q", notes)
+	if !strings.HasPrefix(notes, "正在检查本机容器和镜像仓库是否有更新") ||
+		strings.Count(notes, "无法在拉取前判断") != 1 {
+		t.Fatalf("应先进入检查阶段，再提示一次退化路径，实际 %q", notes)
 	}
 
 	var sawPull, sawUp bool

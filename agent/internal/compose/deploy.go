@@ -12,7 +12,7 @@ package compose
 //
 //	第 1 步  docker compose ps --format json   读本机容器及其镜像 ID / 摘要（输出不展示）
 //	第 2 步  docker manifest inspect <引用>    只查远端元数据，不在本机产生镜像（输出不展示）
-//	第 3 步  docker compose pull <有更新的>    只拉有更新的
+//	第 3 步  docker compose pull <服务名>      只拉候选镜像对应的服务
 //	第 4 步  docker compose up -d <该服务>     只重建有更新的
 //	第 5 步  docker compose up -d --force-recreate 仅当拉取确实引入了新内容却没被重建
 //
@@ -101,6 +101,8 @@ func (m *Manager) deployLocked(ctx context.Context, n string) (deployOutcome, er
 	}
 	out := deployOutcome{}
 
+	m.deployNote(ctx, "正在检查本机容器和镜像仓库是否有更新…")
+
 	// ============================ 第 1 步：现状 ============================
 	//
 	// 用 probe 而不是 runStream：ps 的 JSON 是给这里解析的，
@@ -124,7 +126,7 @@ func (m *Manager) deployLocked(ctx context.Context, n string) (deployOutcome, er
 
 	// ============================ 第 2 步：对比远端 ============================
 	hunks, unknown := m.planDeploy(ctx, n, images, running)
-	if len(unknown) > 0 {
+	if len(unknown) > 0 && len(unknown) < len(images) {
 		m.deployNote(ctx, unknownText(unknown, images))
 	}
 
@@ -142,7 +144,7 @@ func (m *Manager) deployLocked(ctx context.Context, n string) (deployOutcome, er
 	// ============================ 第 3 步：只拉有更新的 ============================
 	//
 	// 失败立即停：拉取失败还继续重建，会让服务白停一次而用户以为已经更新。
-	if failed := m.deployPull(ctx, n, toPull); failed != "" {
+	if failed := m.deployPull(ctx, n, cfg, toPull); failed != "" {
 		return out, safeErr("拉取镜像 %s 失败，已停止后续重建；正在运行的容器没有改动", failed)
 	}
 
@@ -270,7 +272,11 @@ func planDeployWith(images []string, running map[string]localImage,
 // 拉取的输出**要展示**（用户需要看到每一层在拉、拉了多少），
 // 因此这里用普通 ctx + quietSink：sink 吞掉自己的副本，
 // 而观察者由 RunStream 从 ctx 取出，照样把每一行推进任务日志。
-func (m *Manager) deployPull(ctx context.Context, n string, hunks []deployHunk) string {
+func (m *Manager) deployPull(ctx context.Context, n, config string, hunks []deployHunk) string {
+	byImage := make(map[string][]string)
+	for _, decl := range serviceDecls(config) {
+		byImage[decl.image] = append(byImage[decl.image], decl.service)
+	}
 	seen := make(map[string]struct{}, len(hunks))
 	for _, h := range hunks {
 		if h.ref == "" {
@@ -280,9 +286,14 @@ func (m *Manager) deployPull(ctx context.Context, n string, hunks []deployHunk) 
 			continue
 		}
 		seen[h.ref] = struct{}{}
-		// 显式列出引用而不是裸 `pull`：裸 pull 会拉配置里**所有**镜像，
-		// 那就违背了"只拉有更新的"这一承诺。
-		if res := m.runStream(ctx, n, TimeoutLong, quietSink(), "pull", h.ref); res.ExitCode != 0 {
+		// Compose pull 接受服务名，不接受镜像引用。保留 Compose 上下文，
+		// 让它按对应服务的 platform 等配置拉取；不能退回裸 pull。
+		services := dedupeSorted(byImage[h.ref])
+		if len(services) == 0 {
+			return h.ref
+		}
+		args := append([]string{"pull", "--"}, services...)
+		if res := m.runStream(ctx, n, TimeoutLong, quietSink(), args...); res.ExitCode != 0 {
 			return h.ref
 		}
 	}

@@ -179,7 +179,7 @@ const phaseText = computed(() => {
     case 'starting':
       return '正在提交任务…'
     case 'queued':
-      return '已排队，等待开始'
+      return '已受理，等待此编排开始'
     case 'running':
       // 不说「第几步/共几步」——命令数是已发生的计数，不是总进度
       return commandCount.value > 1 ? '正在执行（多步）…' : '正在执行…'
