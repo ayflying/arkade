@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { onMounted, ref, shallowRef } from 'vue';
-import { NAlert, NButton, NCard, NInput, NModal, NSpace, NTable, NTag } from 'naive-ui';
+import { NAlert, NButton, NCard, NInput, NModal, NSpace, NTag } from 'naive-ui';
 import { listUsers, deleteUser, resetUserPassword } from '@/api/management';
 import type { ManagedUser } from '@/types/management';
 import { confirmAction } from '@/utils/confirm';
 import UserEditor from '@/components/admin/UserEditor.vue';
 import UserPermissions from '@/components/admin/UserPermissions.vue';
+import AdminListTable from '@/components/admin/AdminListTable.vue';
+import AdminRowActions from '@/components/admin/AdminRowActions.vue';
 const users = shallowRef<ManagedUser[]>([]), selected = shallowRef<ManagedUser | null>(null);
 const show = ref(false), busy = ref(false), error = ref(''), success = ref(''), permissionsId = ref<string | null>(null);
 const resetUser = shallowRef<ManagedUser | null>(null), newPassword = ref('');
@@ -68,38 +70,32 @@ onMounted(load);
     <n-alert v-if="error" type="error">{{ error }}</n-alert>
     <n-alert v-if="success" type="success">{{ success }}</n-alert>
     <n-card>
-      <div class="users-table-scroll" tabindex="0" role="region" aria-label="用户列表">
-        <n-table class="users-table" :single-line="false">
-          <thead>
-            <tr>
-              <th scope="col">用户名</th>
-              <th scope="col">显示名</th>
-              <th scope="col" class="users-table-compact">角色</th>
-              <th scope="col" class="users-table-compact">状态</th>
-              <th scope="col" class="users-table-compact">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="user in users" :key="user.id">
-              <td class="users-table-name">{{ user.username }}</td>
-              <td class="users-table-name">{{ user.display_name }}</td>
-              <td class="users-table-compact">{{ user.role === 'admin' ? '管理员' : '普通用户' }}</td>
-              <td class="users-table-compact">
-                <n-tag :type="user.disabled ? 'error' : 'success'">{{ user.disabled ? '已禁用' : '正常' }}</n-tag>
-                <span v-if="user.must_change_password"> 待修改密码</span>
-              </td>
-              <td class="users-table-compact">
-                <n-space :wrap="false">
-                  <n-button size="small" :disabled="busy" @click="edit(user)">编辑</n-button>
-                  <n-button size="small" :disabled="busy" @click="permissionsId = user.id">生效权限</n-button>
-                  <n-button size="small" :disabled="busy" @click="resetUser = user; newPassword = ''">重置密码</n-button>
-                  <n-button size="small" type="error" :disabled="busy" @click="remove(user)">删除</n-button>
-                </n-space>
-              </td>
-            </tr>
-          </tbody>
-        </n-table>
-      </div>
+      <admin-list-table label="用户列表">
+        <template #headers>
+          <th scope="col">用户名</th>
+          <th scope="col">显示名</th>
+          <th scope="col" class="admin-list-compact">角色</th>
+          <th scope="col" class="admin-list-compact">状态</th>
+          <th scope="col" class="admin-list-compact admin-list-action">操作</th>
+        </template>
+        <tr v-for="user in users" :key="user.id">
+          <td class="admin-list-text">{{ user.username }}</td>
+          <td class="admin-list-text">{{ user.display_name }}</td>
+          <td class="admin-list-compact">{{ user.role === 'admin' ? '管理员' : '普通用户' }}</td>
+          <td class="admin-list-compact">
+            <n-tag :type="user.disabled ? 'error' : 'success'">{{ user.disabled ? '已禁用' : '正常' }}</n-tag>
+            <span v-if="user.must_change_password"> 待修改密码</span>
+          </td>
+          <td class="admin-list-compact admin-list-action">
+            <admin-row-actions :row-label="user.username" :disabled="busy" :actions="[
+              { label: '编辑', run: () => edit(user) },
+              { label: '生效权限', run: () => { permissionsId = user.id } },
+              { label: '重置密码', run: () => { resetUser = user; newPassword = '' } },
+              { label: '删除', run: () => remove(user), danger: true }
+            ]" />
+          </td>
+        </tr>
+      </admin-list-table>
       <p v-if="!users.length">暂无用户</p>
     </n-card>
     <user-editor v-model:show="show" :user="selected" @saved="load" />
@@ -114,24 +110,3 @@ onMounted(load);
     </n-modal>
   </n-space>
 </template>
-
-<style scoped>
-.users-table-scroll {
-  overflow-x: auto;
-}
-
-.users-table {
-  min-width: 44rem;
-}
-
-/* Let the two name columns share the remaining space, not the action buttons. */
-.users-table .users-table-compact {
-  width: 1%;
-  white-space: nowrap;
-}
-
-.users-table-name {
-  width: 50%;
-  overflow-wrap: anywhere;
-}
-</style>

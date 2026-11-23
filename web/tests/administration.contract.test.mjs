@@ -51,6 +51,7 @@ assert.deepEqual(calls.at(-1), ['POST', '/account/identities/p%2Fa/bind', { pass
 // Compile real SFC scripts/templates, then verify key component security wiring.
 const { parse, compileScript, compileTemplate } = await import('vue/compiler-sfc')
 const components = ['views/RegisterView.vue','views/AccountView.vue','views/UsersView.vue','views/GroupsView.vue','views/SettingsView.vue','components/account/IdentitySettings.vue','components/account/PasswordForm.vue','components/admin/UserEditor.vue','components/admin/UserPermissions.vue','components/admin/GroupAccessEditor.vue','components/admin/ProviderEditor.vue','components/admin/ProviderSettings.vue','components/admin/SystemSettingsForm.vue']
+components.push('components/admin/AdminListTable.vue', 'components/admin/AdminRowActions.vue')
 for (const filename of components) {
   const source = read(filename), { descriptor, errors } = parse(source)
   assert.deepEqual(errors, [], filename)
@@ -61,6 +62,13 @@ for (const filename of components) {
 assert.match(read('views/RegisterView.vue'), /router\.replace\('\/login\?registered=1'\)/)
 assert.doesNotMatch(read('views/RegisterView.vue'), /auth\.login/)
 assert.match(read('components/account/PasswordForm.vue'), /auth\.clearLocal\(\)/)
+for (const view of ['UsersView.vue', 'GroupsView.vue']) {
+  const source = read(`views/${view}`)
+  assert.match(source, /<admin-list-table\b/)
+  assert.match(source, /<admin-row-actions\b/)
+  assert.match(source, /label: '删除'.*danger: true/)
+  assert.match(source, /await confirmAction\(/)
+}
 assert.match(read('components/admin/GroupAccessEditor.vue'), /grants\[agent.id\] \|\| 'none'/)
 assert.match(read('components/admin/GroupAccessEditor.vue'), /permission !== 'none'/)
 assert.match(read('components/admin/ProviderEditor.vue'), /callback_url/)

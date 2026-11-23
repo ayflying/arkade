@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { onMounted, ref, shallowRef } from 'vue';
-import { NAlert, NButton, NCard, NForm, NFormItem, NInput, NModal, NSpace, NTable } from 'naive-ui';
+import { NAlert, NButton, NCard, NForm, NFormItem, NInput, NModal, NSpace } from 'naive-ui';
 import { listGroups, createGroup, updateGroup, deleteGroup } from '@/api/management';
 import type { Group } from '@/types/management';
 import { confirmAction } from '@/utils/confirm';
 import GroupAccessEditor from '@/components/admin/GroupAccessEditor.vue';
+import AdminListTable from '@/components/admin/AdminListTable.vue';
+import AdminRowActions from '@/components/admin/AdminRowActions.vue';
 const groups = shallowRef<Group[]>([]), selected = shallowRef<Group | null>(null), access = shallowRef<Group | null>(null);
 const show = ref(false), name = ref(''), description = ref(''), error = ref(''), busy = ref(false);
 async function load() {
@@ -66,32 +68,28 @@ onMounted(load);
     </n-space>
     <n-alert v-if="error" type="error">{{ error }}</n-alert>
     <n-card>
-      <n-table>
-        <thead>
-          <tr>
-            <th>用户组</th>
-            <th>说明</th>
-            <th>成员数</th>
-            <th>授权数</th>
-            <th>操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="group in groups" :key="group.id">
-            <td>{{ group.name }}</td>
-            <td>{{ group.description }}</td>
-            <td>{{ group.member_count }}</td>
-            <td>{{ group.grant_count }}</td>
-            <td>
-              <n-space>
-                <n-button size="small" :disabled="busy" @click="edit(group)">编辑</n-button>
-                <n-button size="small" :disabled="busy" @click="access = group">成员与授权</n-button>
-                <n-button size="small" type="error" :disabled="busy" @click="remove(group)">删除</n-button>
-              </n-space>
-            </td>
-          </tr>
-        </tbody>
-      </n-table>
+      <admin-list-table label="用户组列表">
+        <template #headers>
+          <th scope="col">用户组</th>
+          <th scope="col">说明</th>
+          <th scope="col" class="admin-list-compact">成员数</th>
+          <th scope="col" class="admin-list-compact">授权数</th>
+          <th scope="col" class="admin-list-compact admin-list-action">操作</th>
+        </template>
+        <tr v-for="group in groups" :key="group.id">
+          <td class="admin-list-text">{{ group.name }}</td>
+          <td class="admin-list-text admin-list-description">{{ group.description }}</td>
+          <td class="admin-list-compact">{{ group.member_count }}</td>
+          <td class="admin-list-compact">{{ group.grant_count }}</td>
+          <td class="admin-list-compact admin-list-action">
+            <admin-row-actions :row-label="group.name" :disabled="busy" :actions="[
+              { label: '编辑', run: () => edit(group) },
+              { label: '成员与授权', run: () => { access = group } },
+              { label: '删除', run: () => remove(group), danger: true }
+            ]" />
+          </td>
+        </tr>
+      </admin-list-table>
       <p v-if="!groups.length">暂无用户组。普通用户未获授权时无法访问服务器。</p>
     </n-card>
     <group-access-editor :group-id="access?.id || null" :name="access?.name || ''" @close="access = null" @saved="load" />
