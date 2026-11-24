@@ -48,7 +48,7 @@ const currentPath = computed<string>(() =>
 const store = useVolumeFiles({ agentId, volume: volumeName, currentPath })
 const actions = useVolumeActions({ store, currentPath })
 
-const { downloadingName, downloadEntry } = useVolumeDownload(
+const { downloadingName, downloadEntry, downloadPath } = useVolumeDownload(
   () => agentId.value, () => volumeName.value, () => currentPath.value, () => isOnline.value
 )
 const fileBoxRef = ref<InstanceType<typeof VolumeFileBox> | null>(null)
@@ -110,7 +110,9 @@ async function handleOpen(entry: VolumeEntry): Promise<void> {
   }
   if (entry.kind === 'file') {
     if (!(await confirmLeaveDirty())) return
-    await store.readFile(path)
+    // 把列表里的字节数交给 store：超过在线查看上限的文件不必真的去读，
+    // 否则为了显示一句「太大，请下载」要先占一个 helper 并发槽位、传几 MB
+    await store.openFile(path, entry.size)
   }
 }
 
@@ -136,10 +138,15 @@ async function handleSave(content: string, expectedSha256: string): Promise<void
 }
 
 function handleDownload(): void {
-  const result = store.fileResult.value
-  if (result === null) return
-  const name = store.openFilePath.value.split('/').at(-1) ?? 'download'
-  downloadFile(name, result.data_base64 ?? '')
+  const path = store.openFilePath.value
+  if (path === '' || store.fileTooLarge.value) return
+  const name = path.split('/').at(-1) ?? 'download'
+  // 「仅下载」态手里没有内容（就没读过），现在按用户点击读一次再落盘
+  if (store.fileDownloadOnly.value) {
+    void downloadPath(path)
+    return
+  }
+  downloadFile(name, store.fileResult.value?.data_base64 ?? '')
 }
 
 /* ───────── 上传 ───────── */
@@ -217,6 +224,7 @@ const subtitle = computed(() => {
       :saving="store.fileSaving.value"
       :error-text="store.fileError.value"
       :too-large="store.fileTooLarge.value"
+      :download-only="store.fileDownloadOnly.value"
       :file-path="store.openFilePath.value"
       @save="handleSave"
       @download="handleDownload"

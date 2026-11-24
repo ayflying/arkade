@@ -31,7 +31,7 @@ import {
 } from '@/api/volumeFiles'
 import { isAborted } from '@/api/request'
 import type { VolumeEntry, VolumeFileResult } from '@/types/volumeFile'
-import { VOLUME_FILE_MAX_BYTES } from '@/types/volumeFile'
+import { VOLUME_FILE_MAX_BYTES, volumeFileViewLevel } from '@/types/volumeFile'
 import { bytesToBase64, textToBase64 } from '@/utils/base64'
 import { formatBytes } from '@/utils/formatSize'
 
@@ -84,6 +84,20 @@ export interface UseVolumeFilesReturn {
   openFilePath: Ref<string>
   /** 读到的文件是否超限（超限时**不提供下载**，因为后端 read 本身已拒绝） */
   fileTooLarge: Ref<boolean>
+  /**
+   * 当前文件是否「只允许下载」。
+   *
+   * 超过在线查看上限（2 MiB）但没超过单文件上限（4 MiB）：不读内容、
+   * 不给编辑器，只给下载入口。
+   */
+  fileDownloadOnly: Ref<boolean>
+  /**
+   * 打开文件（唯一入口）。
+   *
+   * 已知大小超过在线查看上限时**不发起读取**，直接进入「仅下载」或「超限」态；
+   * 大小未知（0/缺失）时照常读取，读回来再按实际字节数判定。
+   */
+  openFile: (path: string, knownSize?: number) => Promise<void>
   readFile: (path: string) => Promise<void>
   /** 重试读取当前文件 */
   retryRead: () => Promise<void>
@@ -150,6 +164,17 @@ export function useVolumeFiles(options: UseVolumeFilesOptions): UseVolumeFilesRe
    * 视图仍需要知道「这是超限，不是读取失败」才能给出正确提示。
    */
   const fileTooLarge = ref(false)
+  /**
+   * 仅下载标记。
+   *
+   * 文件超过**在线查看上限**（2 MiB）但仍在单文件上限（4 MiB）内时：
+   * 不读内容、不渲染编辑器，只提示并允许下载。
+   *
+   * 为什么是独立的 ref 而不是从 size 推导：这个状态决定「面板给不给编辑器」，
+   * 而 size 有两个来源（列表里可能为 0/缺失，读取结果可能被省略）。
+   * 判定集中在 `setMetaOnly` 一处，界面只读结论，不各自猜。
+   */
+  const fileDownloadOnly = ref(false)
 
   const busyName = ref('')
 
@@ -222,6 +247,21 @@ export function useVolumeFiles(options: UseVolumeFilesOptions): UseVolumeFilesRe
   })
 
   /**
+   * 把面板收敛为「只有元信息，没有内容」。
+   *
+   * @returns 是否发生了收敛；false 表示大小在可在线查看范围内，调用方应正常装载内容。
+   */
+  function setMetaOnly(path: string, size: number, sha256?: string): boolean {
+    const level = volumeFileViewLevel(size)
+    if (level === 'full') return false
+    // 只留元信息：几 MB 的 base64 没必要挂在内存里，界面也不需要它
+    fileResult.value = { path, sha256, size }
+    fileTooLarge.value = level === 'blocked'
+    fileDownloadOnly.value = level === 'download'
+    return true
+  }
+
+  /**
    * 载入目录。
    *
    * 注意即使抛错也不把错误抛给调用方：目录加载失败是页面级状态，
@@ -262,6 +302,35 @@ export function useVolumeFiles(options: UseVolumeFilesOptions): UseVolumeFilesRe
   }
 
   /**
+   * 打开文件（唯一入口）。
+   *
+   * 已知大小就够判定时**不发起请求**：超上限的文件连内容都拿不到，
+   * 超过在线查看上限的文件只需要下载入口——为了一句提示去占一个 helper
+   * 并发槽位、等一次几 MB 传输，是完全没有必要的开销。
+   *
+   * 列表里的 size 不可靠时（0、缺失、stat 失败）照常读取，
+   * 读回来在 `readFile` 里按**实际**字节数再判一次。
+   */
+  async function openFile(path: string, knownSize?: number): Promise<void> {
+    if (agentId.value === null) return
+    // 大小未知时不能凭猜测拒绝：让它去读，读回来按实际字节数再判
+    if (knownSize !== undefined && volumeFileViewLevel(knownSize) !== 'full') {
+      // 作废在途读取并递增序号：切文件的语义与 readFile 保持一致
+      readSeq += 1
+      abortRead()
+      openFilePath.value = path
+      fileError.value = ''
+      fileLoading.value = false
+      fileResult.value = null
+      fileTooLarge.value = false
+      fileDownloadOnly.value = false
+      setMetaOnly(path, knownSize)
+      return
+    }
+    await readFile(path)
+  }
+
+  /**
    * 读取文件内容。
    *
    * ## 过期响应必须丢弃
@@ -271,8 +340,8 @@ export function useVolumeFiles(options: UseVolumeFilesOptions): UseVolumeFilesRe
    * 所以每次读取自增 `readSeq`，只有最新一次的响应允许落进状态。
    * 与 `listSeq` 同一套模式，但文件读错的后果比目录显示错更严重。
    *
-   * 超过 4 MiB 时**丢掉内容**：后端 read 对超限文件直接拒绝，
-   * 没有单独流式下载端点，留着内容只会让视图给出必然失败的下载按钮。
+   * 读回来超出阈值时**立刻丢掉内容**（见 `setMetaOnly`）：无论是超过在线查看
+   * 上限还是超过单文件上限，都没有理由把几 MB base64 继续挂在内存里。
    */
   async function readFile(path: string): Promise<void> {
     if (agentId.value === null) return
@@ -286,16 +355,18 @@ export function useVolumeFiles(options: UseVolumeFilesOptions): UseVolumeFilesRe
     fileResult.value = null
     fileError.value = ''
     fileTooLarge.value = false
+    fileDownloadOnly.value = false
     fileLoading.value = true
     try {
       const result = await readVolumeFile(agentId.value, volume.value, path, controller.signal)
       // 过期响应：不写任何状态，连 loading 都不动（最新那次会负责收尾）
       if (seq !== readSeq) return
-      if (result.size !== undefined && result.size > VOLUME_FILE_MAX_BYTES) {
-        // 只保留元信息，不留内容
-        fileTooLarge.value = true
-        fileResult.value = { path: result.path, sha256: result.sha256, size: result.size }
-      } else {
+      // 列表说的大小不可信：按读回来的实际字节数再判一次
+      const limited =
+        result.size !== undefined && setMetaOnly(result.path, result.size, result.sha256)
+      if (!limited) {
+        fileTooLarge.value = false
+        fileDownloadOnly.value = false
         fileResult.value = result
       }
     } catch (err) {
@@ -325,6 +396,7 @@ export function useVolumeFiles(options: UseVolumeFilesOptions): UseVolumeFilesRe
     fileError.value = ''
     openFilePath.value = ''
     fileTooLarge.value = false
+    fileDownloadOnly.value = false
   }
 
   /**
@@ -503,6 +575,8 @@ export function useVolumeFiles(options: UseVolumeFilesOptions): UseVolumeFilesRe
     fileError,
     openFilePath,
     fileTooLarge,
+    fileDownloadOnly,
+    openFile,
     readFile,
     retryRead,
     cancelRead,

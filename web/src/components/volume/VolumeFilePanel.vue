@@ -2,10 +2,11 @@
 /**
  * 卷内文件查看 / 编辑面板
  *
- * 三种状态互斥：
+ * 四种状态互斥：
  * 1. **文本**：可预览、可编辑、可保存（必须带 expected_sha256）；
  * 2. **二进制**：拒绝编辑，只允许下载原件；
- * 3. **过大**（> 4 MiB）：拒绝在浏览器里打开，引导下载。
+ * 3. **超过在线查看上限**（> 2 MiB）：不打开编辑器，只给下载；
+ * 4. **超过单文件上限**（> 4 MiB）：内容根本进不来，连下载也不可用。
  *
  * ## 为什么二进制必须拒绝编辑而不是「显示乱码让用户自己判断」
  *
@@ -25,7 +26,11 @@ import { formatBytes } from '@/utils/formatSize'
 import { base64ToText } from '@/utils/base64'
 import { looksBinaryBase64 } from '@/utils/binaryDetect'
 import type { VolumeFileResult } from '@/types/volumeFile'
-import { VOLUME_FILE_MAX_BYTES } from '@/types/volumeFile'
+import {
+  VOLUME_FILE_MAX_BYTES,
+  VOLUME_FILE_OPEN_MAX_BYTES,
+  volumeFileViewLevel
+} from '@/types/volumeFile'
 
 interface Props {
   /** 已读到的文件结果；null 表示还没读或已关闭 */
@@ -35,16 +40,24 @@ interface Props {
   /** 读取失败的文案 */
   errorText: string
   /**
-   * 文件超过 4 MiB 上限。
+   * 文件超过单文件上限（4 MiB）。
    *
    * 重要：后端 read 对超限文件**直接拒绝**，没有单独的流式下载端点。
    * 所以这里**不提供下载**——给一个必然失败的按钮比不给更糟。
-   * 只说明「当前限制 4 MiB」并引导用户到服务器上用命令行处理。
+   * 只说明上限值并引导用户到服务器上用命令行处理。
    */
   tooLarge?: boolean
+  /**
+   * 文件超过在线查看上限（2 MiB）但没超过单文件上限：不打开编辑器，只允许下载。
+   *
+   * 此时 `result` 里只有元信息（path/size），**没有内容**——内容要等用户
+   * 真的点下载时再去读。这样点开一个 3 MB 的文件不会先占住一个 helper
+   * 并发槽位、传完几 MB 才告诉他「打不开」。
+   */
+  downloadOnly?: boolean
 }
 
-const props = withDefaults(defineProps<Props>(), { tooLarge: false })
+const props = withDefaults(defineProps<Props>(), { tooLarge: false, downloadOnly: false })
 
 const emit = defineEmits<{
   save: [content: string, expectedSha256: string]
@@ -85,12 +98,21 @@ const isBinary = computed<boolean>(() => {
   return looksBinaryBase64(contentBase64.value)
 })
 
-/** 是否超过编辑器上限 */
-const isTooLarge = computed<boolean>(() => {
-  if (props.tooLarge) return true
-  const size = props.result?.size
-  return size !== undefined && size > VOLUME_FILE_MAX_BYTES
-})
+/** 按实际字节数判定的在线查看级别（与 store 用同一个函数） */
+const viewLevel = computed(() => volumeFileViewLevel(props.result?.size))
+
+/** 是否超过单文件上限（超限时后端 read 已拒绝，没有内容可下载） */
+const isTooLarge = computed<boolean>(() => props.tooLarge || viewLevel.value === 'blocked')
+
+/**
+ * 是否只允许下载（超过在线查看上限，但没超过单文件上限）。
+ *
+ * 标记由父组件给出；这里再用 size 兜一层，避免有人只传 result 忘了标记时
+ * 把几 MB 的内容塞进编辑器。
+ */
+const isDownloadOnly = computed<boolean>(
+  () => props.downloadOnly || viewLevel.value === 'download'
+)
 
 /**
  * 可以下载。
@@ -102,7 +124,9 @@ const isTooLarge = computed<boolean>(() => {
 const canDownload = computed(() => props.result !== null && !isTooLarge.value)
 
 /** 可以展示文本编辑器 */
-const canEdit = computed(() => props.result !== null && !isBinary.value && !isTooLarge.value)
+const canEdit = computed(
+  () => props.result !== null && !isBinary.value && !isTooLarge.value && !isDownloadOnly.value
+)
 
 /** 有未保存改动 */
 const isDirty = computed(() => canEdit.value && draft.value !== original.value)
@@ -184,20 +208,34 @@ defineExpose({ isDirty, markSaved, readSha256 })
 
     <template v-else-if="result !== null">
       <!--
+        超过单文件上限：内容根本进不来，连下载也不可用。
+        先判大小再看内容——大小是最确定的信息，二进制判定要读字节。
+      -->
+      <n-alert v-if="isTooLarge" type="warning" :bordered="false" class="file-panel__notice">
+        文件大小 {{ formatBytes(result.size ?? 0) }}，超过单文件上限
+        {{ formatBytes(VOLUME_FILE_MAX_BYTES) }}。
+        这里<strong>无法打开也无法下载</strong>它——请在服务器上直接用命令行工具处理。
+      </n-alert>
+
+      <!--
+        超过在线查看上限（2 MiB）：不打开编辑器，只允许下载。
+        这类文件几乎都是日志、导出数据、数据库文件，该下载到本地用合适的工具看。
+      -->
+      <n-alert v-else-if="isDownloadOnly" type="info" :bordered="false" class="file-panel__notice">
+        文件大小 {{ formatBytes(result.size ?? 0) }}，超过在线查看上限
+        {{ formatBytes(VOLUME_FILE_OPEN_MAX_BYTES) }}，因此<strong>不在浏览器里打开</strong>。
+        点下面的<strong>下载</strong>拿到原件后用本地工具查看。
+      </n-alert>
+
+      <!--
         二进制：拒绝编辑并说明原因。
         这不是技术限制的托词，而是关键安全提示——
         卷里多半是数据库文件，用文本编辑器打开再保存会直接损坏数据。
       -->
-      <n-alert v-if="isBinary" type="warning" :bordered="false" class="file-panel__notice">
+      <n-alert v-else-if="isBinary" type="warning" :bordered="false" class="file-panel__notice">
         这是一个<strong>二进制文件</strong>（{{ formatBytes(result.size ?? 0) }}），无法在此编辑。
         卷内常见的是数据库、图片或压缩数据，用文本方式打开后再保存会<strong>直接损坏文件</strong>。
         如需修改请下载原件并用相应工具处理。
-      </n-alert>
-
-      <n-alert v-else-if="isTooLarge" type="warning" :bordered="false" class="file-panel__notice">
-        文件大小 {{ formatBytes(result.size ?? 0) }}，超过在线查看上限
-        {{ formatBytes(VOLUME_FILE_MAX_BYTES) }}（当前限制 {{ formatBytes(VOLUME_FILE_MAX_BYTES) }}）。
-        这里<strong>无法打开也无法下载</strong>它——请在服务器上直接用命令行工具处理。
       </n-alert>
 
       <!-- 文本编辑 -->
@@ -221,7 +259,8 @@ defineExpose({ isDirty, markSaved, readSha256 })
       <n-button size="small" :disabled="saving" @click="emit('close')">关闭</n-button>
       <!--
         文本与二进制都能下载：这是文件管理器，用户需要把文件拿走。
-        唯一例外是超限——后端 read 已拒绝，手里没有内容。
+        超限文件不给按钮——后端 read 已拒绝，点了必然失败。
+        「仅下载」态手里同样没有内容，父组件会在点击时按需读一次再落盘。
       -->
       <n-button v-if="canDownload" size="small" @click="emit('download')">下载</n-button>
       <template v-if="canEdit">

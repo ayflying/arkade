@@ -44,22 +44,26 @@ export function useVolumeDownload(
   watch([agentId, volumeName, currentPath, isOnline], invalidate, { flush: 'sync' })
   onScopeDispose(invalidate)
 
-  // 直接下载不切换正在编辑的文件，也不改变它的保存基线。
-  async function downloadEntry(entry: VolumeEntry): Promise<void> {
+  /**
+   * 下载某个相对路径（相对当前卷根）。
+   *
+   * 打开文件与「仅下载」态的面板都走这里：内容本地没有，只能现在读一次。
+   * 直接下载不切换正在编辑的文件，也不改变它的保存基线。
+   */
+  async function downloadPath(path: string): Promise<void> {
     const agent = agentId()
-    if (!agent || !isOnline() || downloadingName.value !== '' || entry.kind !== 'file') return
+    if (!agent || !isOnline() || downloadingName.value !== '' || path === '') return
     const volume = volumeName()
-    const directory = currentPath()
-    const path = directory === '' ? entry.name : `${directory}/${entry.name}`
+    const name = path.split('/').at(-1) ?? 'download'
     const request = ++revision
     const isCurrent = () => request === revision
     inFlight?.abort()
     const controller = new AbortController()
     inFlight = controller
-    downloadingName.value = entry.name
+    downloadingName.value = name
     try {
       const result = await readVolumeFile(agent, volume, path, controller.signal)
-      if (isCurrent()) downloadFile(entry.name, result.data_base64 ?? '')
+      if (isCurrent()) downloadFile(name, result.data_base64 ?? '')
     } catch (err) {
       // 主动放弃不是失败：不给用户弹「下载失败」，他们自己刚离开
       if (isCurrent() && !isAborted(err)) {
@@ -71,5 +75,12 @@ export function useVolumeDownload(
     }
   }
 
-  return { downloadingName, downloadEntry }
+  /** 下载目录里的某个条目（表格行内按钮） */
+  async function downloadEntry(entry: VolumeEntry): Promise<void> {
+    if (entry.kind !== 'file' || downloadingName.value !== '') return
+    const directory = currentPath()
+    await downloadPath(directory === '' ? entry.name : `${directory}/${entry.name}`)
+  }
+
+  return { downloadingName, downloadEntry, downloadPath }
 }

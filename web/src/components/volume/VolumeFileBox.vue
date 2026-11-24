@@ -5,11 +5,12 @@
  * 负责「面板外框 + 路径标题 + 超限/离线提示」，把 VolumeFilePanel 的
  * 纯编辑逻辑与页面布局隔开。
  *
- * ## 超限文件不给下载
+ * ## 大文件的两级限制
  *
- * 后端 read 对超过 4 MiB 的文件**直接拒绝**，也没有单独的流式下载端点。
- * 因此超限时界面只说明「当前限制 4 MiB」，不提供任何下载入口——
- * 给一个必然失败的按钮比不给更糟。
+ * 超过单文件上限（4 MiB）时后端 read **直接拒绝**，也没有流式下载端点，
+ * 所以界面只说明限制、不给任何下载入口——给一个必然失败的按钮比不给更糟。
+ * 超过在线查看上限（2 MiB）但没超过 4 MiB 时只给下载：内容在用户真的点
+ * 下载时才去读，不为「看一眼提示」占住 Agent 的并发槽位。
  */
 import { computed, ref } from 'vue'
 import type { VolumeFileResult } from '@/types/volumeFile'
@@ -22,6 +23,8 @@ interface Props {
   errorText: string
   /** 超限标记（后端已拒绝，没有内容） */
   tooLarge: boolean
+  /** 仅下载标记（超过在线查看上限，未超过单文件上限） */
+  downloadOnly: boolean
   /** 当前文件相对路径，用于标题 */
   filePath: string
 }
@@ -65,6 +68,7 @@ defineExpose({ isDirty, markSaved })
       :saving="saving"
       :error-text="errorText"
       :too-large="tooLarge"
+      :download-only="downloadOnly"
       @save="(content, sha) => emit('save', content, sha)"
       @download="emit('download')"
       @close="emit('close')"

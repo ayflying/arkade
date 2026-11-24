@@ -495,8 +495,9 @@ check(
   '下载按钮仍然是 (isBinary || isTooLarge)，超限会给出必然失败的按钮'
 )
 check(
-  'panel: 超限文案说明当前限制 4 MiB',
-  /当前限制/.test(panelSrc)
+  'panel: 超限文案要给出单文件上限的具体值',
+  /超过单文件上限\s*\{\{ formatBytes\(VOLUME_FILE_MAX_BYTES\) \}\}/.test(panelSrc),
+  '超限提示必须把上限值渲染出来，不能只说「太大了」'
 )
 
 // ───────────────────────── 新 SFC 的 Naive 组件 import 完整性 ─────────────────────────

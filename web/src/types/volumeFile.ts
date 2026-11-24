@@ -117,14 +117,56 @@ export interface VolumeFileResponse {
 }
 
 /**
- * 单文件上限 4 MiB。
+ * 单文件硬上限 4 MiB。
  *
  * 这是**契约硬限制**，不是前端随便定的：
  * - 内容走 base64 进 JSON，4 MiB 原文编码后约 5.4 MiB，已是单个 JSON
- *   响应能接受的量级；
+ *   响应能接受的量级（Agent 侧还有 8 MiB 的响应上限）；
  * - 更大说明这不是「文本配置」而是数据文件，应该走下载而不是在浏览器里编辑。
+ *
+ * 超过它的文件**连下载也不行**：内容根本进不了浏览器，界面只能引导用户
+ * 到服务器上用命令行处理。
  */
 export const VOLUME_FILE_MAX_BYTES = 4 * 1024 * 1024
+
+/**
+ * 在线查看上限 2 MiB。
+ *
+ * 超过它**不再在线打开**，只提供下载。理由不是"传不动"，而是：
+ * - 打开一个几 MB 的文件要占住 Agent 侧的一个并发槽位（同时最多 2 个），
+ *   并等待一次完整的 helper 容器读取，期间用户只会看到一个转圈；
+ * - 2 MiB 以上的内容基本不是"顺手改一行"的配置，而是日志、导出数据、
+ *   数据库文件——它们该被下载到本地用合适的工具看。
+ *
+ * 与 {@link VOLUME_FILE_MAX_BYTES} 的区别：这个只影响**是否渲染编辑器**，
+ * 下载照旧可用（下载本身就是一次 read，上限仍是 4 MiB）。
+ */
+export const VOLUME_FILE_OPEN_MAX_BYTES = 2 * 1024 * 1024
+
+/**
+ * 在线查看级别。
+ *
+ * - `full`：可以在线打开（编辑器 + 下载）；
+ * - `download`：不打开编辑器，只允许下载；
+ * - `blocked`：连内容都拿不到，拒绝打开也拒绝下载。
+ */
+export type VolumeFileViewLevel = 'full' | 'download' | 'blocked'
+
+/**
+ * 按字节数判定在线查看级别。
+ *
+ * store（决定读不读）与面板（决定渲染什么）都调用它：阈值只有这一处，
+ * 两处各写一份迟早会在改上限时漏掉一边，出现「面板说能编辑、
+ * store 却不读内容」或者反过来的空面板。
+ *
+ * `undefined` 视为可读：大小未知时不该凭猜测拒绝，让读取结果说话。
+ */
+export function volumeFileViewLevel(size: number | undefined): VolumeFileViewLevel {
+  if (size === undefined) return 'full'
+  if (size > VOLUME_FILE_MAX_BYTES) return 'blocked'
+  if (size > VOLUME_FILE_OPEN_MAX_BYTES) return 'download'
+  return 'full'
+}
 
 /** 单目录条目上限 2000，超过后端会截断或报错，前端要能提示 */
 export const VOLUME_DIR_MAX_ENTRIES = 2000
