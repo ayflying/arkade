@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { administrationRoutes } from './administration'
+import { installChunkLoadRecovery } from './chunkLoadRecovery'
 
 /**
  * 路由表
@@ -181,6 +182,12 @@ export const router = createRouter({
   history: createWebHistory(),
   routes
 })
+
+/*
+ * 懒加载失败兜底：升级后旧页面点菜单会「静默没反应」，
+ * 这里改成带目标地址自动刷新一次，并给出提示。详见 chunkLoadRecovery.ts。
+ */
+installChunkLoadRecovery(router)
 
 /** 登录页路径常量：守卫与退出登录后跳转共用，避免字符串写错 */
 export const LOGIN_PATH = '/login'

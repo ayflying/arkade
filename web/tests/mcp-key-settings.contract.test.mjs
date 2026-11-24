@@ -48,7 +48,7 @@ test('MCP config points to the same-origin endpoint and uses a bearer header', a
   assert.equal(mcpKeyName('🛠'.repeat(81)), null)
 })
 
-test('MCP key management is available from personal settings and the admin tab', () => {
+test('MCP key management is available from personal settings only', () => {
   const accountPath = 'views/AccountView.vue'
   const settingsPath = 'views/SettingsView.vue'
   const panelPath = 'components/admin/McpKeySettings.vue'
@@ -65,8 +65,10 @@ test('MCP key management is available from personal settings and the admin tab',
   assert.match(read('components/common/UserMenu.vue'), /key === 'account'\) void router\.push\('\/account'\)/)
   assert.match(read(accountPath), /<n-card v-if="loaded && auth\.user && !auth\.user\.must_change_password" title="MCP 接入">\s*<mcp-key-settings :key="auth\.user\.id"/)
   assert.match(routes, /name: 'settings'.*adminOnly: true/)
-  assert.match(read(settingsPath), /v-if="auth\.isAdmin" name="mcp"/)
-  assert.match(read(settingsPath), /v-if="activeTab === 'mcp'" :key="auth\.user\?\.id"/)
+  // 密钥按用户隔离，系统设置里不能再出现 MCP 入口（否则会被当成全局配置）。
+  // 注释里允许提到 MCP，这里只看有没有真的渲染入口。
+  assert.doesNotMatch(read(settingsPath), /McpKeySettings|name="mcp"|mcp-key-settings/)
+  assert.doesNotMatch(read(settingsPath), /useAuthStore/)
 })
 
 test('shared MCP settings explain effective permissions and keep the one-time reveal local', () => {

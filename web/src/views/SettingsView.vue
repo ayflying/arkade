@@ -4,11 +4,8 @@ import { NCard, NSpace, NTabPane, NTabs } from 'naive-ui';
 import MonitorSettings from '@/components/admin/monitor/MonitorSettings.vue';
 import SystemSettingsForm from '@/components/admin/SystemSettingsForm.vue';
 import ProviderSettings from '@/components/admin/ProviderSettings.vue';
-import McpKeySettings from '@/components/admin/McpKeySettings.vue';
-import { useAuthStore } from '@/stores/auth';
 
 const activeTab = ref('basic');
-const auth = useAuthStore();
 </script>
 <template>
   <n-space vertical size="large">
@@ -24,10 +21,13 @@ const auth = useAuthStore();
         <n-tab-pane name="monitor" tab="监控与通知" display-directive="if">
           <monitor-settings v-if="activeTab === 'monitor'" />
         </n-tab-pane>
-        <n-tab-pane v-if="auth.isAdmin" name="mcp" tab="MCP 接入" display-directive="if">
-          <mcp-key-settings v-if="activeTab === 'mcp'" :key="auth.user?.id" />
-        </n-tab-pane>
       </n-tabs>
     </n-card>
   </n-space>
 </template>
+
+<!--
+  MCP 接入不在这里：MCP 密钥是每个用户自己的凭据，只能按持有者本人的权限生效，
+  因此统一放在「个人设置 → MCP 接入」。系统设置里再放一份会让人误以为它是全局开关，
+  管理员也会以为配一次就对所有人生效——实际并不会。
+-->
