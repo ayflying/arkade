@@ -145,6 +145,13 @@ const viewSource = readFileSync(join(srcDir, 'views', 'VolumeFilesView.vue'), 'u
 check('视图应把 cancel 接到 cancelRead', /@cancel="store\.cancelRead"/.test(viewSource))
 check('卸载时应作废请求', /onUnmounted\(\(\) => \{[\s\S]{0,160}invalidateFileRequests\(\)/.test(viewSource))
 
+// 下载走同一条读取接口、同样占并发槽位，放弃时也必须中断
+const downloadSource = readFileSync(join(srcDir, 'composables', 'useVolumeDownload.ts'), 'utf8')
+check('下载应持有 AbortController', /let inFlight: AbortController \| null = null/.test(downloadSource))
+check('下载应把 signal 传下去', /readVolumeFile\([^)]*controller\.signal\)/.test(downloadSource))
+check('作废下载时应真正 abort', /function invalidate\(\): void \{[\s\S]{0,160}inFlight\?\.abort\(\)/.test(downloadSource))
+check('下载取消不应弹失败提示', /isAborted\(err\)/.test(downloadSource))
+
 test('存储卷放弃请求契约', () => {
   assert.deepEqual(failures, [], failures.join('\n'))
   console.log(`✓ 存储卷放弃请求契约：全部通过`)
