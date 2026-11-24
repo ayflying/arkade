@@ -178,7 +178,14 @@ func (r *Registry) Call(ctx context.Context, agentID, method string, payload any
 	timeoutCtx, cancel := timeoutContext(ctx, requestTimeoutFor(method))
 	defer cancel()
 
-	return c.waitResponse(timeoutCtx, id, ch, method)
+	raw, cerr, abandoned := c.waitResponse(timeoutCtx, id, ch, method)
+	if abandoned {
+		// Hub 不再等待，但 Agent 可能还在跑（它只按自己的超时收尾）。
+		// 不叫停的后果是真实的：占满并发槽位后，同一台服务器上后续的
+		// 文件操作全部返回「文件操作繁忙」——而占用者是被用户放弃的请求。
+		c.sendCancel(id)
+	}
+	return raw, cerr
 }
 
 // newRequestID 生成请求 ID，用于与响应配对。

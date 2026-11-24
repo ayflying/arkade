@@ -19,7 +19,7 @@
  *    **不清空用户草稿**——清掉等于把刚写的也丢了。
  */
 
-import { ref } from 'vue'
+import { onScopeDispose, ref } from 'vue'
 import type { Ref } from 'vue'
 import {
   deleteVolumeEntry,
@@ -29,6 +29,7 @@ import {
   renameVolumeEntry,
   writeVolumeFile
 } from '@/api/volumeFiles'
+import { isAborted } from '@/api/request'
 import type { VolumeEntry, VolumeFileResult } from '@/types/volumeFile'
 import { VOLUME_FILE_MAX_BYTES } from '@/types/volumeFile'
 import { bytesToBase64, textToBase64 } from '@/utils/base64'
@@ -86,11 +87,19 @@ export interface UseVolumeFilesReturn {
   readFile: (path: string) => Promise<void>
   /** 重试读取当前文件 */
   retryRead: () => Promise<void>
+  /**
+   * 放弃正在进行的读取。
+   *
+   * 面板上的「取消」按钮走这里：只 aborted 请求，不改 openFilePath——
+   * 路径保留，用户还能点重试。
+   */
+  cancelRead: () => void
   closeFile: () => void
   /**
-   * 作废进行中的文件请求。
+   * 作废进行中的文件请求（并**真正中断**它们）。
    *
-   * 路由变化与组件卸载时必须调用，否则迟到的响应会写进已换上下文的状态。
+   * 路由变化与组件卸载时必须调用，否则迟到的响应会写进已换上下文的状态；
+   * 同时中断连接是资源回收的前提（见下方 abort 说明）。
    */
   invalidateFileRequests: () => void
   /**
@@ -155,6 +164,34 @@ export function useVolumeFiles(options: UseVolumeFilesOptions): UseVolumeFilesRe
   let readSeq = 0
 
   /**
+   * 进行中的读取/列目录请求的 AbortController。
+   *
+   * ## 为什么必须真的 abort，而不只是作废响应
+   *
+   * 卷文件操作在 Agent 侧有并发闸门（同时最多 2 个 helper 容器）。
+   * 只自增序号的话，请求会继续跑到服务端超时，槽位一直被占着——
+   * 真实故障就是：打开一个大文件后马上切走页面，之后再点任何文件都提示
+   * 「文件操作繁忙（同时最多 2 个）」，而占用者正是用户已经放弃的请求。
+   *
+   * abort 会让浏览器断开连接 → Hub 请求 ctx 结束 → 通知 Agent 停止处理
+   * → helper 容器被删除、槽位立刻归还。
+   */
+  let readAbort: AbortController | null = null
+  let listAbort: AbortController | null = null
+
+  /** 中断进行中的读取（如果有），并清空引用 */
+  function abortRead(): void {
+    readAbort?.abort()
+    readAbort = null
+  }
+
+  /** 中断进行中的目录加载（如果有），并清空引用 */
+  function abortList(): void {
+    listAbort?.abort()
+    listAbort = null
+  }
+
+  /**
    * 作废所有进行中的文件请求。
    *
    * 三个时机都要调用，否则迟到的响应会写进已经换了上下文的状态：
@@ -162,13 +199,27 @@ export function useVolumeFiles(options: UseVolumeFilesOptions): UseVolumeFilesRe
    * - 路由变化（切目录/切卷）
    * - 组件卸载
    *
-   * 只自增计数器而不 abort：请求本身很小，让它自然结束即可；
-   * 关键是它的**结果不再被采用**。
+   * 同时**中断连接**：让 Agent 立刻停手、归还并发槽位
+   * （只作废响应不中断，服务端仍会跑满自己那 60 秒超时）。
    */
   function invalidateFileRequests(): void {
     readSeq += 1
+    abortRead()
     fileLoading.value = false
   }
+
+  /** 放弃当前读取：中断请求，但保留路径与错误提示，便于重试 */
+  function cancelRead(): void {
+    invalidateFileRequests()
+  }
+
+  // 组件销毁时兜底：任何情况下都不留一个还在跑的读取请求。
+  // 放在这里而不是只靠视图的 onUnmounted，是因为未来别的视图复用这个
+  // composable 时，很容易漏掉那行调用。
+  onScopeDispose(() => {
+    abortRead()
+    abortList()
+  })
 
   /**
    * 载入目录。
@@ -179,18 +230,33 @@ export function useVolumeFiles(options: UseVolumeFilesOptions): UseVolumeFilesRe
   async function loadEntries(): Promise<void> {
     if (agentId.value === null || volume.value === '') return
     const seq = ++listSeq
+    // 切目录时上一个目录的加载已经没有意义了，顺手中断，别占着资源
+    abortList()
+    const controller = new AbortController()
+    listAbort = controller
     listLoading.value = true
     listError.value = ''
     try {
-      const result = await listVolumeFiles(agentId.value, volume.value, currentPath.value)
+      const result = await listVolumeFiles(
+        agentId.value,
+        volume.value,
+        currentPath.value,
+        controller.signal
+      )
       // 过期响应直接丢弃
       if (seq !== listSeq) return
       entries.value = sortEntries(result.entries ?? [])
     } catch (err) {
       if (seq !== listSeq) return
+      // 主动中断不是错误：清空即可，不要把「请求已取消」当失败提示出去
+      if (isAborted(err)) {
+        entries.value = []
+        return
+      }
       entries.value = []
       listError.value = err instanceof Error ? err.message : '加载目录失败'
     } finally {
+      if (listAbort === controller) listAbort = null
       if (seq === listSeq) listLoading.value = false
     }
   }
@@ -211,13 +277,18 @@ export function useVolumeFiles(options: UseVolumeFilesOptions): UseVolumeFilesRe
   async function readFile(path: string): Promise<void> {
     if (agentId.value === null) return
     const seq = ++readSeq
+    // 上一次读取（可能是几 MiB 的大文件）已经没有意义：立刻中断，
+    // 让服务端停手并归还并发槽位，而不是等它自己跑完
+    abortRead()
+    const controller = new AbortController()
+    readAbort = controller
     openFilePath.value = path
     fileResult.value = null
     fileError.value = ''
     fileTooLarge.value = false
     fileLoading.value = true
     try {
-      const result = await readVolumeFile(agentId.value, volume.value, path)
+      const result = await readVolumeFile(agentId.value, volume.value, path, controller.signal)
       // 过期响应：不写任何状态，连 loading 都不动（最新那次会负责收尾）
       if (seq !== readSeq) return
       if (result.size !== undefined && result.size > VOLUME_FILE_MAX_BYTES) {
@@ -229,8 +300,12 @@ export function useVolumeFiles(options: UseVolumeFilesOptions): UseVolumeFilesRe
       }
     } catch (err) {
       if (seq !== readSeq) return
+      // 取消不是失败：路径保留，用户可以直接点重试或换一个文件。
+      // 这里**不写 fileError**，否则面板会显示「请求已取消」盖住正常内容。
+      if (isAborted(err)) return
       fileError.value = err instanceof Error ? err.message : '读取文件失败'
     } finally {
+      if (readAbort === controller) readAbort = null
       if (seq === readSeq) fileLoading.value = false
     }
   }
@@ -430,6 +505,7 @@ export function useVolumeFiles(options: UseVolumeFilesOptions): UseVolumeFilesRe
     fileTooLarge,
     readFile,
     retryRead,
+    cancelRead,
     closeFile,
     invalidateFileRequests,
     saveFile,

@@ -36,12 +36,22 @@ function volumeFilesPath(agentId: string): string {
  * 响应里缺 `result` 时抛错而不是返回空对象：
  * 空对象会让界面显示「空目录」，而真实情况是后端契约违约——
  * 让用户以为卷里没东西，比报错更糟。
+ *
+ * `signal` 是**资源回收**的关键：卷文件操作在 Agent 侧有并发闸门
+ * （同时最多 2 个 helper 容器），一次大文件读取会占住一个槽位直到读完或超时。
+ * 用户关面板/切页面时 abort 掉请求，Hub 才能感知"调用方已放弃"并通知 Agent
+ * 立刻停下——否则槽位被已放弃的请求占着，后续操作全部报「文件操作繁忙」。
  */
 async function submit(
   agentId: string,
-  payload: VolumeFileRequest
+  payload: VolumeFileRequest,
+  signal?: AbortSignal
 ): Promise<VolumeFileResult> {
-  const res = await httpPost<VolumeFileResponse>(volumeFilesPath(agentId), payload)
+  const res = await httpPost<VolumeFileResponse>(
+    volumeFilesPath(agentId),
+    payload,
+    signal === undefined ? {} : { signal }
+  )
   if (typeof res !== 'object' || res === null || typeof res.result !== 'object' || res.result === null) {
     throw new Error('服务器返回了无法解析的数据')
   }
@@ -89,9 +99,10 @@ function normalizeEntry(raw: VolumeEntry): VolumeEntry {
 export async function listVolumeFiles(
   agentId: string,
   volume: string,
-  path: string
+  path: string,
+  signal?: AbortSignal
 ): Promise<VolumeFileResult> {
-  return submit(agentId, { volume, operation: 'list', path })
+  return submit(agentId, { volume, operation: 'list', path }, signal)
 }
 
 /**
@@ -99,13 +110,17 @@ export async function listVolumeFiles(
  *
  * **必须保存返回的 sha256**：后续 write 要作为 expected_sha256 回传，
  * 否则后端无法判断「我读到之后有没有别人改过」。
+ *
+ * `signal` 用于放弃读取（关面板、切页面）。大文件读取是**服务端真正在干活**，
+ * 客户端断开只是停止等待，所以必须让 Hub 感知并通知 Agent 停下。
  */
 export async function readVolumeFile(
   agentId: string,
   volume: string,
-  path: string
+  path: string,
+  signal?: AbortSignal
 ): Promise<VolumeFileResult> {
-  return submit(agentId, { volume, operation: 'read', path })
+  return submit(agentId, { volume, operation: 'read', path }, signal)
 }
 
 /** 写入文件的参数 */

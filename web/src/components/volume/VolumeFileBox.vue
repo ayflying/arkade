@@ -33,6 +33,7 @@ const emit = defineEmits<{
   download: []
   close: []
   retry: []
+  cancel: []
 }>()
 
 /**
@@ -68,6 +69,7 @@ defineExpose({ isDirty, markSaved })
       @download="emit('download')"
       @close="emit('close')"
       @retry="emit('retry')"
+      @cancel="emit('cancel')"
     />
   </div>
 </template>

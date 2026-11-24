@@ -51,6 +51,7 @@ const emit = defineEmits<{
   download: []
   close: []
   retry: []
+  cancel: []
 }>()
 
 /** 编辑器里的当前文本 */
@@ -166,7 +167,15 @@ defineExpose({ isDirty, markSaved, readSha256 })
 
 <template>
   <div class="file-panel">
-    <n-spin v-if="loading" size="small" description="正在读取文件…" class="file-panel__spin" />
+    <!--
+      读取中给出明确出口。
+      没有取消按钮时，用户唯一的"放弃"方式是切走页面——那正是以前把
+      Agent 并发槽位占死的原因（请求还在服务端跑，界面已经没人看）。
+    -->
+    <div v-if="loading" class="file-panel__loading">
+      <n-spin size="small" description="正在读取文件…" class="file-panel__spin" />
+      <n-button size="tiny" quaternary @click="emit('cancel')">取消</n-button>
+    </div>
 
     <div v-else-if="errorText !== ''" class="file-panel__error">
       <n-alert type="error" :bordered="false">{{ errorText }}</n-alert>
@@ -233,8 +242,17 @@ defineExpose({ isDirty, markSaved, readSha256 })
   min-width: 0;
 }
 
-.file-panel__spin {
+.file-panel__loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
   padding: 24px 0;
+}
+
+.file-panel__spin {
+  /* 加载容器已经给了纵向内边距，spin 自己不再叠加，否则取消按钮离得太远 */
+  padding: 0;
 }
 
 .file-panel__error {

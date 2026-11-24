@@ -13,6 +13,7 @@ export type ApiErrorCode =
   | 'timeout'
   | 'runtime_failed'
   | 'internal'
+  | 'aborted'
   | (string & {})
 
 /** 后端错误体 */

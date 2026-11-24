@@ -109,6 +109,26 @@ func (c *connection) sendClose(reason string) {
 	}
 }
 
+// sendCancel 通知 Agent 中止某个在途请求。
+//
+// 为什么必须发这条消息：Hub 停止等待（浏览器中断、页面关闭、Hub 先超时）之后，
+// Agent 侧的处理器**仍在运行**——它会继续占用并发槽位（例如 helper 容器上限 2 个）
+// 直到自己跑完或撞上内部超时。真实故障就是"打开大文件后立刻切走页面"：
+// 用户看到的是「文件操作繁忙（同时最多 2 个）」，而占用槽位的正是他自己刚放弃的两个请求。
+//
+// 失败只记 debug：取消是尽力而为的旁路优化，发送失败不该影响原请求的错误返回。
+func (c *connection) sendCancel(requestID string) {
+	env, err := envelope.NewEvent("cancel-"+requestID, envelope.EventRequestCancel, c.agentID,
+		envelope.RequestCancelPayload{ID: requestID})
+	if err != nil {
+		c.log.Debug("构造取消通知失败", "request", requestID, "err", err)
+		return
+	}
+	if err := c.send(env); err != nil {
+		c.log.Debug("发送取消通知失败", "request", requestID, "err", err)
+	}
+}
+
 // writeLoop 是唯一的写 goroutine。WebSocket 不允许并发写，所有写入必须串行经过这里。
 func (c *connection) writeLoop() {
 	defer c.close()
@@ -264,18 +284,22 @@ func (c *connection) close() {
 type IncomingHandler func(agentID string, env *envelope.Envelope)
 
 // requestContext 是 request 的上下文辅助，保证超时与断连都能及时返回。
-func (c *connection) waitResponse(ctx context.Context, id string, ch chan result, method string) (json.RawMessage, *ConnError) {
+// waitResponse 等待某个请求的应答。
+//
+// 第三个返回值 abandoned 表示"没等到应答就放弃了"（调用方 ctx 结束或连接关闭），
+// 与"Agent 回了错误"区分开：只有放弃等待时才需要通知 Agent 停止处理。
+func (c *connection) waitResponse(ctx context.Context, id string, ch chan result, method string) (json.RawMessage, *ConnError, bool) {
 	select {
 	case res := <-ch:
 		if res.err != nil {
-			return nil, res.err
+			return nil, res.err, false
 		}
-		return res.payload, nil
+		return res.payload, nil, false
 	case <-ctx.Done():
 		c.removePending(id)
-		return nil, newTimeoutError(c.agentID, method)
+		return nil, newTimeoutError(c.agentID, method), true
 	case <-c.closeCh:
 		c.removePending(id)
-		return nil, newOfflineError(c.agentID)
+		return nil, newOfflineError(c.agentID), true
 	}
 }

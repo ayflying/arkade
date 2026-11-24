@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -55,6 +56,12 @@ type session struct {
 	// missed 记录连续未成功的心跳次数，只有心跳 goroutine 读写。
 	missed int
 
+	// cancels 记录"在途请求 ID → 取消函数"，供 Hub 的 request.cancel 精确中止
+	// 某一次处理。读循环写（入站取消）与请求 goroutine 写（登记/注销）并发，
+	// 必须用锁保护。
+	cancelsMu sync.Mutex
+	cancels   map[string]context.CancelFunc
+
 	closeOnce atomic.Bool
 }
 
@@ -65,6 +72,7 @@ func newSession(a *Agent, conn *websocket.Conn) *session {
 		conn:         conn,
 		out:          make(chan *envelope.Envelope, writeQueueSize),
 		heartbeatSec: int64(a.opts.HeartbeatSec),
+		cancels:      make(map[string]context.CancelFunc),
 	}
 	if s.heartbeatSec <= 0 {
 		s.heartbeatSec = defaultHeartbeatSec
@@ -200,11 +208,29 @@ func (s *session) handleInbound(env *envelope.Envelope) {
 		// Hub 下发的请求：交给与本地 CLI 共用的注册表处理，结果放入出站队列。
 		// 处理放在独立 goroutine 里是必要的：某些方法（日志、停止容器）
 		// 可能耗时数秒，同步处理会卡住读循环，连带心跳都发不出去。
-		go s.serveRequest(env)
+		//
+		// 取消登记必须**在这里**完成，不能延到 goroutine 内部：Hub 的取消紧跟着
+		// 请求到达，读循环可能在下一次调度之前就读到了取消——那时 goroutine
+		// 还没登记，取消就会未命中，于是"刚打开就放弃"的请求照样跑满超时。
+		ctx, cancel := context.WithCancel(s.agent.ctx)
+		s.trackRequest(env.ID, cancel)
+		go func() {
+			// cancel 由启动方负责释放：成功/失败/被取消三条路径都要收尾，
+			// 否则每个请求都会泄漏一个 ctx（父 ctx 是连接级的）。
+			defer cancel()
+			s.serveRequest(ctx, env)
+		}()
 	case envelope.TypeAck:
 		// Hub 对心跳/事件的确认，目前只用于日志与排障，不改变状态机。
 		s.agent.log.Debug("收到 Hub ack", "method", env.Method, "id", env.ID)
 	case envelope.TypeResponse, envelope.TypeEvent:
+		// 取消在途请求：必须在读循环里直接处理（不另起 goroutine）。
+		// 取消动作只是查表 + 调用 cancel，耗时可以忽略；而它最重要的性质是
+		// **尽快生效**——晚一步，被取消的 helper 可能已经把并发槽位占住。
+		if env.Method == envelope.EventRequestCancel {
+			s.handleCancel(env)
+			return
+		}
 		// 服务端主动关闭通知：必须单独处理。
 		//
 		// 为什么这条重要：Hub 会在禁用服务器时先发这个事件再断开。
@@ -223,6 +249,24 @@ func (s *session) handleInbound(env *envelope.Envelope) {
 	}
 }
 
+// handleCancel 处理 Hub 发来的请求取消通知。
+//
+// 载荷解析失败只记日志不中断连接：取消是尽力而为的旁路消息，坏一条不该
+// 让整条链路重连（重连会打断其他正在进行的请求，代价远大于丢掉一次取消）。
+func (s *session) handleCancel(env *envelope.Envelope) {
+	var p envelope.RequestCancelPayload
+	if err := envelope.DecodePayload(env, &p); err != nil {
+		s.agent.log.Warn("取消请求的载荷无法解析，已忽略", "error", err)
+		return
+	}
+	if s.cancelRequest(p.ID) {
+		s.agent.log.Debug("已取消在途请求", "id", p.ID)
+		return
+	}
+	// 正常情况：请求已经完成并注销，或超时与响应交叉。不告警。
+	s.agent.log.Debug("取消未命中在途请求", "id", p.ID)
+}
+
 // closeReason 从关闭通知里取出原因文案。
 //
 // 解析失败时给一句兜底说明而不是空串：日志里出现空的 reason
@@ -238,8 +282,18 @@ func closeReason(env *envelope.Envelope) string {
 }
 
 // serveRequest 执行请求并把响应投递回出站队列。
-func (s *session) serveRequest(req *envelope.Envelope) {
-	resp := s.agent.dispatch(s.agent.ctx, req)
+//
+// 每个请求都用**独立的、可取消的** ctx：Hub 会因为用户关页面、浏览器中断连接
+// 或自己先超时而发来 request.cancel，Agent 必须能把那一次处理（典型是启动一个
+// 文件 helper 容器读几 MB 内容）真正停掉。用 a.ctx 会让取消无处落地——那只能
+// 等整条连接断开，而单个请求的取消根本不该断开连接。
+//
+// ctx 与取消登记都由调用方（读循环）提供，这里只负责执行与注销：登记放在调用方
+// 是为了消除"请求已入循环、取消已达、goroutine 尚未登记"的竞态。
+func (s *session) serveRequest(ctx context.Context, req *envelope.Envelope) {
+	defer s.untrackRequest(req.ID)
+
+	resp := s.agent.dispatch(ctx, req)
 	if resp == nil {
 		return
 	}
@@ -253,6 +307,58 @@ func (s *session) serveRequest(req *envelope.Envelope) {
 		return
 	}
 	s.agent.log.Debug("请求处理完成", "method", req.Method)
+}
+
+// trackRequest 登记在途请求的取消函数。
+//
+// 只保留最后一次登记：请求 ID 由 Hub 生成且唯一，重复登记说明协议被破坏，
+// 覆盖即可，不需要额外报错——真正的保护是 untrackRequest 的"按 ID 删除"，
+// 它保证迟到/重复的取消不会误伤其他请求。
+func (s *session) trackRequest(id string, cancel context.CancelFunc) {
+	if id == "" {
+		return
+	}
+	s.cancelsMu.Lock()
+	// 兜底惰性初始化：session 由 newSession 构造并已建好表，但测试或未来
+	// 新增的构造路径可能直接写字面量。nil map 上赋值会 panic，而这里静默
+	// 建表比崩掉连接好得多。
+	if s.cancels == nil {
+		s.cancels = make(map[string]context.CancelFunc)
+	}
+	s.cancels[id] = cancel
+	s.cancelsMu.Unlock()
+}
+
+// untrackRequest 注销请求。找不到（已被取消、或从未登记）时静默返回。
+func (s *session) untrackRequest(id string) {
+	if id == "" {
+		return
+	}
+	s.cancelsMu.Lock()
+	delete(s.cancels, id)
+	s.cancelsMu.Unlock()
+}
+
+// cancelRequest 中止指定在途请求，返回是否命中。
+//
+// 命中为 false 是**正常情况**：请求可能刚好做完并注销，或 Hub 的超时与响应
+// 交叉到达。调用方不要把它当错误，也绝不能重试取消——取消是一次性的旁路通知，
+// 重试不会让已经结束的请求"更被取消"，只会多出一条无意义的消息。
+func (s *session) cancelRequest(id string) bool {
+	if id == "" {
+		return false
+	}
+	s.cancelsMu.Lock()
+	cancel, ok := s.cancels[id]
+	// 先删除再调用：cancel 会触发请求 goroutine 继续执行并走 untrackRequest，
+	// 若仍持有锁就会自锁；这里同时避免重复取消同一个函数。
+	delete(s.cancels, id)
+	s.cancelsMu.Unlock()
+	if !ok {
+		return false
+	}
+	cancel()
+	return true
 }
 
 // close 关闭底层连接（幂等）。

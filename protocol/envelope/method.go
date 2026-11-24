@@ -16,6 +16,24 @@ const (
 	MethodHeartbeat    = "agent.heartbeat"     // 心跳（event），携带简要状态摘要
 	MethodSnapshotPush = "agent.snapshot.push" // 重连后的全量状态快照（event），用于 Hub 对账
 
+	// EventRequestCancel 是 Hub → Agent 的取消通知：Hub 已经不再等待某个在途请求
+	// （用户关掉页面、浏览器中断连接、Hub 侧先超时），要求 Agent 立即停止对应处理
+	// 并释放它占用的资源。
+	//
+	// ============================ 为什么是 event ============================
+	//
+	// 取消是单向通知，Agent 不需要回执：回执要么落在一个已经没人等待的槽位上，
+	// 要么在连接已断时永远发不出去。用 request/response 会制造一个必然超时的
+	// 在途请求，反而占用 pending 表。
+	//
+	// ============================ 语义边界 ============================
+	//
+	// 这是"别再继续干了"，不是"回滚"。已经产生的副作用（例如写了一半的文件、
+	// 已拉取的镜像层）不会撤销；需要撤销的操作必须由业务自己记录中间状态。
+	// 同理，取消是**尽力而为**的：消息可能与请求响应交错、也可能因断连丢失，
+	// 因此每条长任务仍必须有自己的超时兜底（例如 helper 的 60 秒总时限）。
+	EventRequestCancel = "request.cancel"
+
 	// 容器操作
 	MethodContainerList    = "container.list"    // 列出容器
 	MethodContainerStart   = "container.start"   // 启动容器

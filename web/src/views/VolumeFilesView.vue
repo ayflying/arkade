@@ -222,6 +222,7 @@ const subtitle = computed(() => {
       @download="handleDownload"
       @close="closeFile"
       @retry="store.retryRead"
+      @cancel="store.cancelRead"
     />
 
     <volume-entry-table
