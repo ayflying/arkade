@@ -124,6 +124,12 @@ func newVolumeListHandler(rt runtime.Runtime) Handler {
 			if labels == nil {
 				labels = map[string]string{}
 			}
+			// 空切片而不是 nil：JSON 里给前端稳定一个数组，
+			// 免得界面到处判 undefined。
+			containers := v.Containers
+			if containers == nil {
+				containers = []string{}
+			}
 			out = append(out, envelope.VolumeSummary{
 				Name:       v.Name,
 				Driver:     v.Driver,
@@ -131,6 +137,7 @@ func newVolumeListHandler(rt runtime.Runtime) Handler {
 				Labels:     labels,
 				Created:    v.Created,
 				InUse:      v.InUse,
+				Containers: containers,
 			})
 		}
 		return envelope.VolumeListResult{Volumes: out}, nil

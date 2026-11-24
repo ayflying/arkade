@@ -64,6 +64,14 @@ export type VolumeInfo = {
    * 「卷内数据将永久丢失且不可恢复」。
    */
   in_use: boolean
+  /**
+   * 正在使用这个卷的容器名（含已停止但未删除的容器），后端已按名字排序。
+   *
+   * 为什么含已停止容器：Docker 不允许删除被引用（哪怕引用者已停止）的卷，
+   * 只列运行中的容器会让界面显示「未使用」但删除却失败。它同时也是
+   * 「清理未使用卷」的判断依据——`in_use` 与它同源，别各自另算一份。
+   */
+  containers: string[]
   labels: Record<string, string>
 }
 

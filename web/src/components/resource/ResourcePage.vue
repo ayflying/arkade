@@ -22,7 +22,7 @@
  * 服务器离线时必然拉不到数据，提前说清原因比让用户看到一句
  * 笼统的「加载失败」友好得多。
  */
-import { toRef } from 'vue'
+import { computed, toRef } from 'vue'
 import { NAlert, NButton, NDataTable, NTag } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import EmptyState from '@/components/common/EmptyState.vue'
@@ -69,18 +69,42 @@ interface Props {
    */
   page?: number
   itemCount?: number
+  /**
+   * 已勾选的行键（受控）。
+   *
+   * 传入即开启多选列。为什么受控而不是外壳自己存：页面要用选择状态
+   * 算「可删/不可删」并驱动页头的批量按钮，状态只能有一份。
+   */
+  checkedKeys?: string[]
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  unit: '条'
+  unit: '条',
+  checkedKeys: () => []
 })
 const shownColumns = useResponsiveColumns(toRef(props, 'columns'))
+
+/** 是否开启多选：只要传了 checkedKeys 就算开启（空数组也算） */
+const selectable = computed(() => props.checkedKeys !== undefined)
 
 const emit = defineEmits<{
   (e: 'refresh'): void
   /** 当前页变化：由页面自己持有页码并切片，外壳只转发事件 */
   (e: 'update:page', page: number): void
+  /** 勾选变化：外壳只转发，状态由页面持有 */
+  (e: 'update:checkedKeys', keys: string[]): void
 }>()
+
+/**
+ * 表格的勾选事件 → 行键数组。
+ *
+ * NDataTable 给的是「被勾选的行数据」，而外壳不知道页面用什么做键，
+ * 所以用 rowKey 反查。只取当前页里存在的行，避免把翻页前的旧选择
+ * 又塞回来。
+ */
+function onCheckedRowKeys(keys: Array<string | number>): void {
+  emit('update:checkedKeys', keys.map(String))
+}
 </script>
 
 <template>
@@ -127,6 +151,8 @@ const emit = defineEmits<{
         :single-line="false"
         size="medium"
         :scroll-x="scrollX"
+        :checked-row-keys="selectable ? checkedKeys : undefined"
+        @update:checked-row-keys="onCheckedRowKeys"
       />
       <empty-state v-else-if="loaded" :description="emptyDescription">
         <template #extra>

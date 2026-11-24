@@ -65,6 +65,12 @@ type VolumeSummary struct {
 	Labels     map[string]string `json:"labels"` // Compose 会打 project 标签
 	Created    int64             `json:"created"`
 	InUse      bool              `json:"in_use"` // 是否有容器正在使用，删除前提示用
+	// Containers 是正在使用这个卷的容器名（含已停止但未删除的容器），按名字排序。
+	//
+	// 含已停止容器是必须的：Docker 不允许删除被引用（哪怕引用者已停止）的卷，
+	// 若只列运行中的容器，界面会显示「未使用」但删除却失败。
+	// 它也是「清理未使用卷」的判断依据，所以不能改成计数。
+	Containers []string `json:"containers"`
 }
 
 // VolumeListResult 是存储卷列表应答。

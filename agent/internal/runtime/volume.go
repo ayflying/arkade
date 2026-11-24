@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"sort"
 	"strings"
 )
 
@@ -34,6 +35,7 @@ type volumeListResp struct {
 // 声明了一大批字段，这里只关心挂载，混用会让"为什么容器列表要读 Mounts"
 // 变得不清晰。
 type containerMountResp struct {
+	Names  []string `json:"Names"` // 容器的名字（可能不止一个，如 compose 的短名）
 	Mounts []struct {
 		Type   string `json:"Type"`
 		Name   string `json:"Name"` // 命名卷才有 Name
@@ -48,43 +50,62 @@ func (e *engine) ListVolumes(ctx context.Context) ([]Volume, error) {
 		return nil, e.translate(err)
 	}
 
-	// 一次额外请求换取全部卷的使用状态。失败不致命：拿不到就标 false，
+	// 一次额外请求换取全部卷的使用情况。失败不致命：拿不到就当没有容器在用，
 	// 界面显示"未使用"总比整个列表失败好（用户仍然可以看到卷并尝试删除，
 	// 真被占用时删除接口会给出准确错误）。
-	inUse, _ := e.volumesInUse(ctx)
+	users, _ := e.volumeUsers(ctx)
 
 	out := make([]Volume, 0, len(raw.Volumes))
 	for _, v := range raw.Volumes {
-		_, used := inUse[v.Name]
+		// 空切片而不是 nil：没人使用时也要给出「空数组」，
+		// 让上层与前端不必区分 nil。
+		names := users[v.Name]
+		if names == nil {
+			names = []string{}
+		}
 		out = append(out, Volume{
 			Name:       v.Name,
 			Driver:     v.Driver,
 			Mountpoint: v.Mountpoint,
 			Labels:     v.Labels,
 			Created:    parseRFC3339(v.CreatedAt),
-			InUse:      used,
+			InUse:      len(names) > 0,
+			Containers: names,
 		})
 	}
 	return out, nil
 }
 
-// volumesInUse 返回当前被容器（含已停止容器）使用的卷名集合。
+// volumeUsers 返回「卷名 → 使用它的容器名（已排序）」。
 //
 // 为什么要含已停止容器：Docker 不允许删除被"已停止但未删除"的容器引用的卷，
 // 如果只统计运行中的容器，界面会显示"未使用"但删除却失败，用户会认为是 bug。
-func (e *engine) volumesInUse(ctx context.Context) (map[string]struct{}, error) {
+// 同时也解释了为什么「清理未使用」不能只看运行中的容器。
+func (e *engine) volumeUsers(ctx context.Context) (map[string][]string, error) {
 	var containers []containerMountResp
 	if err := e.client.getJSON(ctx, pathContainers+"?all=1", &containers); err != nil {
 		return nil, err
 	}
-	out := make(map[string]struct{}, 16)
+	out := make(map[string][]string, 16)
 	for _, c := range containers {
+		// 一个容器可能有多个名字（Names 是数组），取第一个用于展示；
+		// 全取会让同一容器在一个卷里重复出现。
+		if len(c.Names) == 0 {
+			continue
+		}
+		name := strings.TrimPrefix(c.Names[0], "/")
 		for _, m := range c.Mounts {
 			// 只有命名卷有 Name；bind 挂载（Type=bind）没有卷名，跳过。
-			if m.Name != "" {
-				out[m.Name] = struct{}{}
+			if m.Name == "" {
+				continue
 			}
+			out[m.Name] = append(out[m.Name], name)
 		}
+	}
+	// 排序让列表稳定：daemon 返回容器顺序不保证，不排会让同一份数据
+	// 每次刷新都换一个样子。
+	for _, names := range out {
+		sort.Strings(names)
 	}
 	return out, nil
 }
