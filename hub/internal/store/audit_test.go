@@ -259,62 +259,81 @@ func TestListAuditLimitCapped(t *testing.T) {
 	}
 }
 
-// TestPruneAuditLogs 验证过期清理。
+// TestAuditRetentionPolicyIsThirtyDays 锁住"审计最多保存 30 天"这条产品约束。
 //
-// 90 天前的记录必须被删掉，否则表会无限膨胀；
-// 而 89 天前的必须留着，否则用户查三个月前的事就查不到了。
-//
-// 注意：WriteAudit 内部会顺带触发一次节流清理（见 maybePruneAudit），
-// 而首次写入时 lastPrune 是零值，间隔判断必然成立，因此那条 100 天前的
-// 记录可能在写入后就已经被异步删掉了。这样测"PruneAuditLogs 删了几条"
-// 就会依赖 goroutine 的调度顺序，是个 flaky 测试。
-//
-// 所以这里不直接 WriteAudit 写过期数据，而是用 SQL 直接插入——
-// 绕过写入路径的顺带清理，精确验证 PruneAuditLogs 本身的行为。
-func TestPruneAuditLogs(t *testing.T) {
-	db := newTestDB(t)
-	now := time.Now().UTC()
-	ctx := context.Background()
+// 它同时是**上限**与默认值：默认值写在初始迁移的种子数据里，
+// 上限由 settings 服务校验，两者必须一致，否则新实例建出来就超出上限。
+func TestAuditRetentionPolicyIsThirtyDays(t *testing.T) {
+	if AuditRetentionDays != 30 {
+		t.Fatalf("审计保留上限应为 30 天，实际 %d", AuditRetentionDays)
+	}
+	if AuditMinRetentionDays != 1 {
+		t.Fatalf("审计保留下限应为 1 天，实际 %d", AuditMinRetentionDays)
+	}
+	if AuditMinRetentionDays > AuditRetentionDays {
+		t.Fatal("保留期下限不能大于上限")
+	}
+}
 
-	insertRaw := func(id string, at time.Time) {
+// TestClampAuditRetention 验证存量超限配置在打开库时被收敛到 30 天。
+//
+// 回归背景：升级前默认 90 天、上限 3650 天，仅改常量的话旧库那一行
+// 仍是 90，管理员不会再去点一次保存，"最多 30 天"对存量实例不生效。
+// 同时必须保留管理员的合法选择（例如 7 天），不能一律改成 30。
+func TestClampAuditRetention(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	set := func(days int) {
 		t.Helper()
 		if _, err := rawDBOf(t, db).ExecContext(ctx,
-			`INSERT INTO audit_logs (id, user_id, username, action, result, created_at)
-			 VALUES ($1, $2, $3, $4, $5, $6)`,
-			id, "u1", "admin", audit.ActionUserCreate, audit.ResultSuccess, at.Unix()); err != nil {
-			t.Fatalf("直接插入审计失败: %v", err)
+			`UPDATE system_settings SET audit_retention_days = $1 WHERE id = 1`, days); err != nil {
+			t.Fatalf("改保留天数失败: %v", err)
+		}
+	}
+	get := func() int {
+		t.Helper()
+		var days int
+		if err := rawDBOf(t, db).QueryRow(`SELECT audit_retention_days FROM system_settings WHERE id = 1`).Scan(&days); err != nil {
+			t.Fatalf("读保留天数失败: %v", err)
+		}
+		return days
+	}
+
+	// 超上限的存量值（旧默认 90、旧上限内被调大的 3650）→ 收到 30。
+	for _, over := range []int{90, 3650} {
+		set(over)
+		if err := db.clampAuditRetention(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if got := get(); got != AuditRetentionDays {
+			t.Fatalf("%d 天应收敛到 %d，实际 %d", over, AuditRetentionDays, got)
 		}
 	}
 
-	insertRaw("old", now.AddDate(0, 0, -100)) // 应被清理
-	insertRaw("edge", now.AddDate(0, 0, -89)) // 应保留
-	insertRaw("today", now)                   // 应保留
-
-	n, err := db.PruneAuditLogs(ctx)
-	if err != nil {
+	// 合法值原样保留：7 天是管理员的真实选择。
+	set(7)
+	if err := db.clampAuditRetention(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if n != 1 {
-		t.Errorf("应删除 1 条过期记录，实际 %d", n)
+	if got := get(); got != 7 {
+		t.Fatalf("合法的 7 天被改成了 %d", got)
 	}
 
-	have, err := db.CountAuditLogs(ctx)
-	if err != nil {
+	// 非法的 0 天 → 抬到上限（不能继续用 0，那等于写完即删）。
+	set(0)
+	if err := db.clampAuditRetention(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if have != 2 {
-		t.Errorf("应剩 2 条，实际 %d", have)
+	if got := get(); got != AuditRetentionDays {
+		t.Fatalf("0 天应收敛到 %d，实际 %d", AuditRetentionDays, got)
 	}
 
-	// 逐条确认剩下的确实是"未过期"的那些，而不只是数量对。
-	list, _, err := db.ListAuditLogs(ctx, AuditFilters{})
-	if err != nil {
+	// 幂等：已经合规时再跑一次不改变结果。
+	if err := db.clampAuditRetention(ctx); err != nil {
 		t.Fatal(err)
 	}
-	for _, r := range list {
-		if r.ID == "old" {
-			t.Error("100 天前的记录应被清理")
-		}
+	if got := get(); got != AuditRetentionDays {
+		t.Fatalf("重复收敛改变了结果: %d", got)
 	}
 }
 

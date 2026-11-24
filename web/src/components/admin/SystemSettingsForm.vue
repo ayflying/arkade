@@ -75,7 +75,10 @@ onMounted(load);
       <n-input-number v-model:value="settings.login_window_seconds" :min="1" :disabled="busy" />
     </n-form-item>
     <n-form-item label="审计日志保留天数">
-      <n-input-number v-model:value="settings.audit_retention_days" :min="1" :disabled="busy" />
+      <n-input-number v-model:value="settings.audit_retention_days" :min="1" :max="30" :disabled="busy" />
+      <template #feedback>
+        最多保留 30 天。后台每小时清理一次，早于保留期的记录会自动删除且不可恢复；需要长期留档请自行导出。
+      </template>
     </n-form-item>
     <n-alert type="info">本地登录始终启用，避免身份提供商故障后所有管理员无法登录。开放注册不等于获得服务器访问权限。</n-alert>
     <p>

@@ -39,14 +39,19 @@ func Open(ctx context.Context, dsn string) (*DB, error) {
 		closeGDB(inst)
 		return nil, err
 	}
+	// 打开库即把保留期收敛到当前策略（审计最多 30 天）。
+	// 放在这里而不是迁移脚本里：见 audit_retention_floor.go 的说明。
+	if err = db.clampAuditRetention(ctx); err != nil {
+		closeGDB(inst)
+		return nil, err
+	}
 	return db, nil
 }
 
 // DB owns the ORM pool and background lifecycle.
 type DB struct {
-	gdb        gdb.DB
-	auditPrune auditPruneState
-	lifecycle  lifecycleGate
+	gdb       gdb.DB
+	lifecycle lifecycleGate
 }
 
 // Close waits for background work before releasing the pool. Idempotent.

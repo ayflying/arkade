@@ -44,7 +44,10 @@ func TestSettingsCASValidation(t *testing.T) {
 	if _, err := svc.Update(ctx, initial, initial.Version); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("stale CAS %v", err)
 	}
-	for _, mutate := range []func(*store.SystemSettings){func(p *store.SystemSettings) { p.SiteName = "" }, func(p *store.SystemSettings) { p.SessionTTLSeconds = 3599 }, func(p *store.SystemSettings) { p.SessionTTLSeconds = 30*86400 + 1 }, func(p *store.SystemSettings) { p.LoginMaxAttempts = 21 }, func(p *store.SystemSettings) { p.LoginWindowSeconds = 59 }, func(p *store.SystemSettings) { p.AuditRetentionDays = 3651 }} {
+	for _, mutate := range []func(*store.SystemSettings){func(p *store.SystemSettings) { p.SiteName = "" }, func(p *store.SystemSettings) { p.SessionTTLSeconds = 3599 }, func(p *store.SystemSettings) { p.SessionTTLSeconds = 30*86400 + 1 }, func(p *store.SystemSettings) { p.LoginMaxAttempts = 21 }, func(p *store.SystemSettings) { p.LoginWindowSeconds = 59 },
+		// 审计最多保留 30 天：31 天与旧的 3651 天都必须被拒绝，
+		// 而不是被悄悄截到 30 天——管理员必须知道自己的设置没生效。
+		func(p *store.SystemSettings) { p.AuditRetentionDays = 31 }, func(p *store.SystemSettings) { p.AuditRetentionDays = 3651 }} {
 		bad := updated
 		mutate(&bad)
 		if _, err := svc.Update(ctx, bad, updated.Version); err == nil {

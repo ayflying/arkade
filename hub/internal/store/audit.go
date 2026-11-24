@@ -10,7 +10,6 @@ package store
 import (
 	"context"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/gogf/gf/v2/database/gdb"
@@ -23,20 +22,18 @@ import (
 
 // 审计保留与清理相关常量集中在此，便于统一调整。
 const (
-	// AuditRetentionDays 是审计记录保留天数。
+	// AuditRetentionDays 是审计记录保留天数的**上限，也是默认值**。
 	//
-	// 90 天是运维复盘与合规审计的常见口径：足够覆盖一个季度的排查窗口，
-	// 又不至于让表无限膨胀。
-	AuditRetentionDays = 90
+	// 30 天是产品设定：审计只用于近期复盘与追责，不承担长期归档。
+	// 它是硬上限而不是默认值——设置项只能在 1..30 之间调，超出即拒绝。
+	// 需要保存更久的实例应当在 Arkade 之外归档查询结果，而不是让这张表
+	// 无限增长：审计写入是每次有副作用请求都会触发的热路径，表越大，
+	// 过期清理的 DELETE 越重，最终拖慢的是业务接口本身。
+	AuditRetentionDays = 30
 
-	// AuditPruneInterval 是两次清理尝试之间的最小间隔。
-	//
-	// 为什么不在每次写入时都跑一次 DELETE：
-	// 清理要扫 created_at 索引并删除大量行，开销随数据量增长。
-	// 审计写入是每次有副作用请求都会触发的热路径，
-	// 每次都清理会让"写一条日志"变成"可能删几万行"，
-	// 直接把接口延迟拖垮。按时间间隔触发把成本摊平到可忽略。
-	AuditPruneInterval = time.Hour
+	// AuditMinRetentionDays 是允许的最小保留期。
+	// 保留 0 天等于"写完立刻删"，审计就失去意义，所以下限是 1 天。
+	AuditMinRetentionDays = 1
 )
 
 // AuditFilters 是审计列表的筛选条件。零值表示不过滤。
@@ -64,8 +61,10 @@ const (
 //
 // 实现了 audit.Writer 接口。
 //
-// 插入和9999条硬上限裁剪在同一事务完成；裁剪失败则回滚，不能宣称满足上限。
-// 90天过期清理仍按间隔旁路执行，它失败不影响本次提交。
+// 过期清理**只由实例级保留 worker 负责**（每小时按设置里的天数删除），
+// 写入路径不做任何清理：审计写入是每个有副作用请求都会走的热路径，
+// 在这里顺手删旧记录等于让"写一条日志"变成"可能删几万行"，
+// 一旦表变大就会把接口延迟拖垮。
 func (d *DB) WriteAudit(rec audit.Record) error {
 	ctx := context.Background()
 
@@ -203,23 +202,13 @@ func buildAuditWhere(f AuditFilters) (string, []any) {
 	return " WHERE " + strings.Join(conds, " AND "), args
 }
 
-// PruneAuditLogs 立即清理过期审计，返回删除行数。
+// 审计保留期的**唯一实现**是 PruneAuditBefore(ctx, cutoff)。
 //
-// 暴露成独立方法主要是为了测试：正常路径走的是 WriteAudit 里的
-// 节流清理，测试没法等一小时。
-func (d *DB) PruneAuditLogs(ctx context.Context) (int64, error) {
-	cutoff := time.Now().UTC().AddDate(0, 0, -AuditRetentionDays).Unix()
-	res, err := d.gdb.Exec(ctx,
-		`DELETE FROM audit_logs WHERE created_at < ?`, cutoff)
-	if err != nil {
-		return 0, gerror.Wrap(err, "清理过期审计")
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return 0, gerror.Wrap(err, "清理过期审计（读取影响行数）")
-	}
-	return n, nil
-}
+// 不要再加"按固定天数清理"的等价方法：保留期由系统设置决定，任何写死
+// 天数的 DELETE 都会与可配置策略打架（用户改成 7 天后，仍有一条固定
+// 30 天的清理在跑，行为就无法解释）。历史实现曾有两个入口——
+// 一个是写入路径的节流清理，一个是 worker 按设置清理——两者并存时
+// 谁也说不清实际保留了多少天，已统一为只剩 worker 一条。
 
 // CountAuditLogs 返回审计总条数（不过滤）。
 func (d *DB) CountAuditLogs(ctx context.Context) (int, error) {
@@ -248,11 +237,5 @@ func itoa(n int) string {
 	return string(buf[i:])
 }
 
-// auditPruneState 是清理节流用的状态，挂在 DB 上。
-//
-// 定义成独立结构体而不是 DB 的两个字段，是为了让"这两个字段必须
-// 一起被锁保护"这件事在类型上就成立，减少后来人只改一半的概率。
-type auditPruneState struct {
-	mu        sync.Mutex
-	lastPrune time.Time
-}
+// 审计写入是热路径，不做任何清理；过期删除只由 auditretention worker
+// 按系统设置的天数执行（见 service/auditretention）。

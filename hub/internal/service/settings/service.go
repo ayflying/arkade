@@ -110,8 +110,10 @@ func validateSettings(p store.SystemSettings) error {
 	if p.LoginWindowSeconds < 60 || p.LoginWindowSeconds > 3600 {
 		return invalid("登录限流窗口必须在60到3600秒之间")
 	}
-	if p.AuditRetentionDays < 1 || p.AuditRetentionDays > 3650 {
-		return invalid("审计保留期必须在1到3650天之间")
+	// 上限就是硬上限：审计最多保存 30 天，超出直接拒绝而不是悄悄截断——
+	// 静默截断会让管理员以为自己设的 90 天生效了，实际只留 30 天。
+	if p.AuditRetentionDays < store.AuditMinRetentionDays || p.AuditRetentionDays > store.AuditRetentionDays {
+		return invalid("审计保留期必须在1到30天之间")
 	}
 	return nil
 }

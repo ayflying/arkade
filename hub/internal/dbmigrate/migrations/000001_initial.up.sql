@@ -74,7 +74,7 @@ CREATE TABLE system_settings (
  login_window_seconds BIGINT NOT NULL, audit_retention_days INTEGER NOT NULL, version BIGINT NOT NULL DEFAULT 1
 );
 INSERT INTO system_settings(id,site_name,session_ttl_seconds,password_min_length,login_max_attempts,login_window_seconds,audit_retention_days)
- VALUES(1,'Arkade',86400,12,5,900,90);
+ VALUES(1,'Arkade',86400,12,5,900,30);
 CREATE TABLE oidc_providers (
  id TEXT PRIMARY KEY, display_name TEXT NOT NULL, issuer TEXT NOT NULL, client_id TEXT NOT NULL,
  client_secret_cipher TEXT NOT NULL DEFAULT '', scopes TEXT NOT NULL DEFAULT 'openid profile email',

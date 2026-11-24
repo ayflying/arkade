@@ -11,7 +11,14 @@ import (
 	"github.com/gogf/gf/v2/errors/gerror"
 )
 
-const Interval = 6 * time.Hour
+// Interval 是两次清理尝试之间的间隔。
+//
+// 保留期由系统设置决定，是"最长保留 30 天"这类硬上限；1 小时的清理间隔
+// 决定了**实际保留期最多比设置多 1 小时**。为什么不做更短：
+// 清理要扫 created_at 索引并删除一批行，开销随表增长；1 小时一次既能
+// 把逾期控制在小时级，又不会把 DELETE 变成常跑的热路径。这里也是唯一
+// 的清理入口——写入路径不再顺手删旧记录。
+const Interval = time.Hour
 
 type Store interface {
 	GetSystemSettings(context.Context) (store.SystemSettings, error)
@@ -59,8 +66,10 @@ func (w *Worker) sweep(ctx context.Context) {
 		return
 	}
 	settings, err := w.store.GetSystemSettings(ctx)
-	if err == nil && (settings.AuditRetentionDays < 1 || settings.AuditRetentionDays > 3650) {
-		err = gerror.New("审计保留天数必须为1至3650")
+	if err == nil && (settings.AuditRetentionDays < store.AuditMinRetentionDays || settings.AuditRetentionDays > store.AuditRetentionDays) {
+		// 读到的值超限时不删任何东西：宁可多留一天，也不按一个
+		// 讲不通的天数去删历史（例如被手工改坏的库）。
+		err = gerror.New("审计保留天数必须在1至30天之间")
 	}
 	if err == nil {
 		_, err = w.store.PruneAuditBefore(ctx, w.now().UTC().AddDate(0, 0, -int(settings.AuditRetentionDays)))
