@@ -70,6 +70,11 @@ type InspectMount struct {
 	Source      string
 	Destination string
 	ReadOnly    bool
+	// Name 是具名卷名（只有 volume 类型有），bind/tmpfs 为空。
+	//
+	// 不能从 Source 反推：volume 的 Source 是宿主路径，卷名可能含
+	// 下划线和点，截路径段会截错。
+	Name string
 }
 
 // inspectResp 是 /containers/{id}/json 的响应。
@@ -114,6 +119,8 @@ type inspectResp struct {
 		Source      string `json:"Source"`
 		Destination string `json:"Destination"`
 		RW          bool   `json:"RW"`
+		// Name 只有 volume 类型才有；daemon 对 bind 不返回该字段。
+		Name string `json:"Name"`
 	} `json:"Mounts"`
 }
 
@@ -181,6 +188,14 @@ func toInspectDetail(r inspectResp) InspectDetail {
 			Source:      m.Source,
 			Destination: m.Destination,
 			ReadOnly:    !m.RW,
+			// 只对 volume 保留 Name：bind/tmpfs 的 Name 即使有值也没有
+			// 卷文件模块可用，留着会让前端误以为能打开。
+			Name: func() string {
+				if m.Type != "volume" {
+					return ""
+				}
+				return m.Name
+			}(),
 		})
 	}
 

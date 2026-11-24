@@ -59,9 +59,14 @@ func TestInspectHandlerMapsAllFields(t *testing.T) {
 		NetworkMode:  "bridge",
 		Command:      []string{"/entry.sh"},
 		Networks:     []runtime.InspectNetwork{{Name: "bridge", IPAddress: "172.17.0.5"}},
-		Mounts: []runtime.InspectMount{{
-			Type: "bind", Source: "/srv/data", Destination: "/data", ReadOnly: true,
-		}},
+		Mounts: []runtime.InspectMount{
+			{Type: "bind", Source: "/srv/data", Destination: "/data", ReadOnly: true},
+			// volume 带卷名：前端靠它跳到卷文件页。不能从 Source 反推。
+			{
+				Type: "volume", Source: "/var/lib/docker/volumes/my_vol/_data",
+				Destination: "/etc/conf.d", Name: "my_vol",
+			},
+		},
 		Ports: []runtime.Port{
 			{IP: "0.0.0.0", Private: 80, Public: 8080, Type: "tcp"},
 			// Public=0：仅暴露未发布，不得进 PublishedPorts。
@@ -91,8 +96,15 @@ func TestInspectHandlerMapsAllFields(t *testing.T) {
 	if len(out.Networks) != 1 || out.Networks[0].IPAddress != "172.17.0.5" {
 		t.Fatalf("网络不符: %+v", out.Networks)
 	}
-	if len(out.Mounts) != 1 || !out.Mounts[0].ReadOnly {
+	if len(out.Mounts) != 2 || !out.Mounts[0].ReadOnly {
 		t.Fatalf("挂载不符: %+v", out.Mounts)
+	}
+	// volume 挂载必须带卷名；bind 挂载的 Name 必须为空（没有卷名可用）。
+	if out.Mounts[0].Name != "" {
+		t.Fatalf("bind 挂载不应有卷名: %+v", out.Mounts[0])
+	}
+	if out.Mounts[1].Name != "my_vol" {
+		t.Fatalf("volume 挂载应带卷名: %+v", out.Mounts[1])
 	}
 
 	// 只发布真实映射的端口。

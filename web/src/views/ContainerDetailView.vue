@@ -43,7 +43,7 @@ import {
 import { useContainerMetrics } from '@/composables/useContainerMetrics'
 import { useAgentsStore } from '@/stores/agents'
 import { ApiError } from '@/types/api'
-import type { ContainerDetail } from '@/types/container'
+import type { ContainerDetail, ContainerMount } from '@/types/container'
 import {
   canRestartContainer,
   canStartContainer,
@@ -84,6 +84,21 @@ const metricContainerId = computed(() => detail.value?.id || containerId.value)
 const sample = computed(() => metrics.byId.value.get(metricContainerId.value))
 const sampleStale = computed(() => metrics.byStaleId.value.has(metricContainerId.value))
 const emptyMetricsStatus = metrics.emptyStatus
+
+/**
+ * 打开某个挂载的卷文件页。
+ *
+ * 只处理带卷名的 volume 挂载（bind/tmpfs 在表格里就没有入口）。
+ * 这里不做「卷是否还存在」的预检：卷被删掉时文件页会用同样一句
+ * 「存储卷不存在」告诉他，多一次往返并不会让提示更准。
+ */
+function openMountFiles(mount: ContainerMount): void {
+  if (mount.type !== 'volume' || (mount.name ?? '') === '') return
+  void router.push({
+    name: 'agent-volume-files',
+    params: { id: agentId.value, name: mount.name }
+  })
+}
 
 async function refresh(): Promise<void> {
   await Promise.all([load(), metrics.refresh()])
@@ -452,7 +467,11 @@ watch(
       </n-tab-pane>
 
       <n-tab-pane name="mounts" tab="挂载">
-        <container-mounts-table :mounts="detail?.mounts ?? []" :forbidden="forbidden" />
+        <container-mounts-table
+          :mounts="detail?.mounts ?? []"
+          :forbidden="forbidden"
+          @open="openMountFiles"
+        />
       </n-tab-pane>
 
       <!-- 日志：view 权限，独立于详情的 manage 权限 -->

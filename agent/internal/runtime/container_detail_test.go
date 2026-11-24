@@ -58,7 +58,8 @@ const realInspectJSON = `{
   },
   "Mounts": [
     {"Type": "bind", "Source": "/srv/demo/data", "Destination": "/data", "RW": true},
-    {"Type": "volume", "Source": "demo_cache", "Destination": "/cache", "RW": false}
+    {"Type": "volume", "Name": "demo_cache", "Source": "/var/lib/docker/volumes/demo_cache/_data", "Destination": "/cache", "RW": false},
+    {"Type": "tmpfs", "Source": "", "Destination": "/tmp", "RW": true}
   ],
   "Secrets": [{"File": "/run/secrets/x"}]
 }`
@@ -339,7 +340,7 @@ func TestInspectParsesRealDaemonShape(t *testing.T) {
 	}
 
 	// 挂载：RW=true → ReadOnly=false；RW=false → ReadOnly=true。
-	if len(d.Mounts) != 2 {
+	if len(d.Mounts) != 3 {
 		t.Fatalf("挂载数不符: %d", len(d.Mounts))
 	}
 	byDst := map[string]InspectMount{}
@@ -351,6 +352,20 @@ func TestInspectParsesRealDaemonShape(t *testing.T) {
 	}
 	if m := byDst["/cache"]; m.Type != "volume" || !m.ReadOnly {
 		t.Fatalf("只读卷挂载解析错误（RW=false 应得 ReadOnly=true）: %+v", m)
+	}
+
+	// 卷名：只有 volume 类型带 Name，bind/tmpfs 必须为空。
+	//
+	// 这条守住前端「点挂载打开卷文件」的前提：没有卷名就没有可打开的目标，
+	// 而把宿主路径（Source）当卷名去查只会打开失败。
+	if m := byDst["/cache"]; m.Name != "demo_cache" {
+		t.Fatalf("volume 挂载应带卷名: %+v", m)
+	}
+	if m := byDst["/data"]; m.Name != "" {
+		t.Fatalf("bind 挂载不应有卷名: %+v", m)
+	}
+	if m := byDst["/tmp"]; m.Name != "" {
+		t.Fatalf("tmpfs 挂载不应有卷名: %+v", m)
 	}
 
 	// 网络：按名字排序，带地址。

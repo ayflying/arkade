@@ -101,11 +101,19 @@ export interface ContainerNetwork {
 export interface ContainerMount {
   /** `bind` / `volume` / `tmpfs` 等 */
   type: string
-  /** 宿主侧路径或卷名 */
+  /** 宿主侧路径（bind）或卷在宿主机上的目录（volume）——都是绝对路径，不能当卷名用 */
   source: string
   /** 容器内路径 */
   destination: string
   read_only: boolean
+  /**
+   * 具名卷名，**只有 volume 类型才有**；bind/tmpfs 为空（协议 omitempty）。
+   *
+   * 不要从 `source` 截取反推：volume 的 source 是宿主目录，
+   * 卷名可合法含下划线和点，截路径段会截错。
+   * 这也是「点挂载打开卷文件」的唯一依据。
+   */
+  name?: string
 }
 
 /**

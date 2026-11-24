@@ -63,10 +63,19 @@ type ContainerNetwork struct {
 // Source 是宿主侧路径或卷名，属于敏感信息（能暴露目录结构），
 // 由 Hub 侧决定给谁看。
 type ContainerMount struct {
-	Type        string `json:"type"` // bind / volume / tmpfs
+	Type string `json:"type"` // bind / volume / tmpfs
+	// Source 是宿主侧路径（bind）或宿主机上的卷目录（volume）——
+	// 两者都是**绝对路径**，不能当作卷名使用。
 	Source      string `json:"source"`
 	Destination string `json:"destination"`
 	ReadOnly    bool   `json:"read_only"`
+	// Name 是**具名卷名**，只有 volume 类型才有；bind/tmpfs 为空。
+	//
+	// 必须单独给字段，不能从 Source 反推：volume 的 Source 是 daemon 给的
+	// 宿主路径（如 /var/lib/docker/volumes/<卷名>/_data），而卷名可能合法地
+	// 包含下划线和点，截取路径段既会截错也会把路径当卷名去查。
+	// 前端"点挂载打开卷文件"依赖这个字段。
+	Name string `json:"name,omitempty"`
 }
 
 // ContainerResourceLimits 是容器的资源上限。

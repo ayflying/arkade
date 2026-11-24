@@ -76,6 +76,7 @@ func toInspectResult(d runtime.InspectDetail) envelope.ContainerInspectResult {
 			Source:      m.Source,
 			Destination: m.Destination,
 			ReadOnly:    m.ReadOnly,
+			Name:        m.Name,
 		})
 	}
 	// 只有 Public>0 的才进 PublishedPorts（与列表口径一致）。
