@@ -27,7 +27,8 @@ Hub 默认 root，安装 Docker CLI 和 Compose 插件，镜像体积包含本�
 
 - 服务器状态来自当前 Agent 连接；容器引擎连通性和资源用量随心跳更新。纯 Hub 不采集控制中心自身，开启内置本机时才采集本机。旧版 Agent 仍能显示在线状态，但没有新的采样字段。
 - CPU 和内存取 Linux `/proc` 可见的系统数据，不是 Agent 容器自身的配额；Docker Desktop 等虚拟化部署显示的是 Docker 所在 Linux 环境的数据。资源未采集或已过期时，仪表盘不会显示为零。
-- Docker 部署默认不采集磁盘。需要时，在想监控的宿主分区上选一个**专用空目录**（例如先创建 `/var/lib/arkade-disk-probe`），在 Agent 或启用了本机执行面的 Hub 的 `volumes` 内添加 `- /var/lib/arkade-disk-probe:/run/arkade/host-disk:ro`。界面显示这个目录所在文件系统的用量，不统计其他分区；不要挂载整棵宿主目录或含敏感文件的目录。
+- 网络吞吐和磁盘 IO 由 `/proc/net/dev`、`/proc/diskstats` 的累计计数求差得到，**默认开启且不需要额外挂载**。它们和 CPU 一样需要至少两个采样点，因此刚连上的第一轮显示「无数据」；采样中断超过 5 分钟后同样不显示，避免给出平均值冒充的实时速率。网络不含回环网卡，容器部署下统计的是 Agent 容器自己网卡；磁盘 IO 只统计整块设备，排除分区与 loop/dm/md 等虚拟叠层设备，避免重复计数。
+- Docker 部署默认不采集磁盘**容量**。需要时，在想监控的宿主分区上选一个**专用空目录**（例如先创建 `/var/lib/arkade-disk-probe`），在 Agent 或启用了本机执行面的 Hub 的 `volumes` 内添加 `- /var/lib/arkade-disk-probe:/run/arkade/host-disk:ro`。界面显示这个目录所在文件系统的用量，不统计其他分区；不要挂载整棵宿主目录或含敏感文件的目录。
 - 用原生 Linux 进程运行 Agent 或启用了本机执行面的 Hub 时，可设置 `ARKADE_HOST_DISK_NATIVE=1` 采集根分区；该选项不适用于容器内进程。
 
 ## 普通配置与凭据

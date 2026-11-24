@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"arkade/protocol/envelope"
 )
@@ -31,6 +32,27 @@ func newCollector(nativeDisk bool) *Collector {
 			return parseMemory(f)
 		},
 		readDisk: func() *envelope.DiskUsage { return sampleDisk(nativeDisk) },
+		readNet: func(at time.Time) *counterPair {
+			f := openProcFile("/proc/net/dev")
+			if f == nil {
+				return nil
+			}
+			defer f.Close()
+			return parseNetDev(f, at)
+		},
+		readDiskIO: func(at time.Time) *counterPair {
+			// 先确定要统计的整块设备；读不到 /sys/block 时不给数据，而不是猜。
+			disks := physicalDisks()
+			if len(disks) == 0 {
+				return nil
+			}
+			f := openProcFile("/proc/diskstats")
+			if f == nil {
+				return nil
+			}
+			defer f.Close()
+			return parseDiskstats(f, disks, at)
+		},
 	}
 }
 
@@ -184,4 +206,133 @@ func diskUsage(stat syscall.Statfs_t, scope string) *envelope.DiskUsage {
 			TotalBytes: stat.Blocks * uint64(blockSize),
 		},
 	}
+}
+
+// parseNetDev 累加所有非回环网卡的收发字节累计值。
+//
+// /proc/net/dev 前两行是表头，之后每行形如
+//
+//	eth0: 12345 67 0 0 0 0 0 0 8910 11 0 0 0 0 0 0
+//
+// 冒号前是网卡名，冒号后第 1 个与第 9 个字段分别是累计收/发字节。
+// 这里只取累计值，速率由 Collector 对两次采样求差。
+func parseNetDev(r io.Reader, at time.Time) *counterPair {
+	var rx, tx uint64
+	found := false
+	s := bufio.NewScanner(r)
+	for s.Scan() {
+		name, rest, ok := strings.Cut(strings.TrimSpace(s.Text()), ":")
+		if !ok {
+			continue // 表头行没有冒号
+		}
+		if name = strings.TrimSpace(name); name == "" || name == "lo" {
+			continue // 回环流量不是「这台机器对外收发」的量
+		}
+		fields := strings.Fields(rest)
+		if len(fields) < 9 {
+			return nil
+		}
+		received, err := strconv.ParseUint(fields[0], 10, 64)
+		if err != nil {
+			return nil
+		}
+		sent, err := strconv.ParseUint(fields[8], 10, 64)
+		if err != nil {
+			return nil
+		}
+		if math.MaxUint64-rx < received || math.MaxUint64-tx < sent {
+			return nil
+		}
+		rx += received
+		tx += sent
+		found = true
+	}
+	if s.Err() != nil || !found {
+		return nil
+	}
+	return &counterPair{at: at, a: rx, b: tx}
+}
+
+// procDiskstatsSectorBytes 是 /proc/diskstats 扇区计数的固定换算单位。
+//
+// Linux 文档规定该计数始终按 512 字节计，与设备真实扇区大小无关；
+// 用设备自身的扇区大小去换算会得到偏大的读写量。
+const procDiskstatsSectorBytes = 512
+
+// parseDiskstats 累加 disks 集合内整块设备的读写字节累计值。
+//
+// 每行形如：
+//
+//	8       0 sda 1234 0 5678 90 2345 0 6789 100 0 0 0 0 0 0 0 0 0 0
+//
+// 第 3 个字段是设备名，第 6、10 个字段分别是已读/已写扇区数。
+func parseDiskstats(r io.Reader, disks map[string]struct{}, at time.Time) *counterPair {
+	var read, written uint64
+	s := bufio.NewScanner(r)
+	for s.Scan() {
+		fields := strings.Fields(s.Text())
+		if len(fields) < 10 {
+			continue
+		}
+		if _, ok := disks[fields[2]]; !ok {
+			continue
+		}
+		sectorsRead, err := strconv.ParseUint(fields[5], 10, 64)
+		if err != nil {
+			return nil
+		}
+		sectorsWritten, err := strconv.ParseUint(fields[9], 10, 64)
+		if err != nil {
+			return nil
+		}
+		if sectorsRead > math.MaxUint64/procDiskstatsSectorBytes || sectorsWritten > math.MaxUint64/procDiskstatsSectorBytes {
+			return nil
+		}
+		readBytes := sectorsRead * procDiskstatsSectorBytes
+		writtenBytes := sectorsWritten * procDiskstatsSectorBytes
+		if math.MaxUint64-read < readBytes || math.MaxUint64-written < writtenBytes {
+			return nil
+		}
+		read += readBytes
+		written += writtenBytes
+	}
+	if s.Err() != nil {
+		return nil
+	}
+	return &counterPair{at: at, a: read, b: written}
+}
+
+// virtualBlockPrefixes 是虚拟或可叠加的块设备名前缀。
+//
+// 它们要么没有真实介质（loop、ram、zram、nbd），要么与底层物理盘重复计数
+// （dm-*、md* 建在物理盘之上），因此不计入磁盘 IO。
+var virtualBlockPrefixes = []string{"loop", "ram", "fd", "sr", "dm-", "md", "zram", "nbd"}
+
+func isVirtualBlockDevice(name string) bool {
+	for _, prefix := range virtualBlockPrefixes {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// physicalDisks 返回 /sys/block 下的整块设备名。
+//
+// 用 /sys/block 而不是解析设备名：分区（sda1、nvme0n1p1）不会出现在这里，
+// 而名字带数字的整盘（nvme0n1、mmcblk0）会被「以数字结尾即分区」的启发式误伤。
+// 读不到 /sys/block 时返回空集合，宁可没有磁盘 IO，也不给猜测出来的数。
+func physicalDisks() map[string]struct{} {
+	entries, err := os.ReadDir("/sys/block")
+	if err != nil {
+		return nil
+	}
+	disks := make(map[string]struct{}, len(entries))
+	for _, entry := range entries {
+		name := entry.Name()
+		if !isVirtualBlockDevice(name) {
+			disks[name] = struct{}{}
+		}
+	}
+	return disks
 }

@@ -1,4 +1,4 @@
-import type { Agent, HostByteUsage } from '../types/agent'
+import type { Agent, HostByteUsage, HostDiskIOUsage, HostNetworkUsage } from '../types/agent'
 
 // Same validity window as the Hub. The UI also expires already-rendered samples
 // when automatic refresh is off or the list cannot be refreshed.
@@ -26,6 +26,27 @@ function validBytes(usage: HostByteUsage | undefined): HostByteUsage | undefined
   return usage
 }
 
+/** 速率只要求「有限且非负」：0 是合法的（真的没有流量），负数和 NaN 不是。 */
+function validRate(value: number | undefined): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined
+}
+
+function validNetwork(network: HostNetworkUsage | undefined) {
+  if (!network) return
+  const rx = validRate(network.rx_bytes_per_sec)
+  const tx = validRate(network.tx_bytes_per_sec)
+  if (rx === undefined || tx === undefined) return
+  return { rx, tx }
+}
+
+function validDiskIO(io: HostDiskIOUsage | undefined) {
+  if (!io) return
+  const read = validRate(io.read_bytes_per_sec)
+  const write = validRate(io.write_bytes_per_sec)
+  if (read === undefined || write === undefined) return
+  return { read, write }
+}
+
 export function sampleExpiresAt(sampledAt: number | undefined, receivedAt: number): number {
   if (typeof sampledAt !== 'number' || !Number.isFinite(sampledAt) || sampledAt <= 0) return 0
   // Allow for a Hub clock ahead of the browser without keeping the sample forever.
@@ -40,8 +61,10 @@ function getHostSample(metrics: Agent['host_metrics']) {
   const memory = validBytes(metrics.memory)
   const disk = (metrics.disk?.scope === 'host_root' || metrics.disk?.scope === 'host_filesystem') &&
     validBytes(metrics.disk) ? metrics.disk : undefined
-  if (cpuPercent === undefined && !memory && !disk) return null
-  return { cpuPercent, memory, disk }
+  const network = validNetwork(metrics.network)
+  const diskIO = validDiskIO(metrics.disk_io)
+  if (cpuPercent === undefined && !memory && !disk && !network && !diskIO) return null
+  return { cpuPercent, memory, disk, network, diskIO }
 }
 
 export function getAgentHealth(agent: Agent, now: number, receivedAt: number) {

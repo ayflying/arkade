@@ -7,6 +7,8 @@ import { loadAgentOverview } from '@/api/overview'
 import EmptyState from '@/components/common/EmptyState.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import HostUsage from '@/components/overview/HostUsage.vue'
+import HostRate from '@/components/overview/HostRate.vue'
+import type { RateReading } from '@/components/overview/HostRate.vue'
 import StatCard from '@/components/overview/StatCard.vue'
 import { usePolling } from '@/composables/usePolling'
 import type { Agent } from '@/types/agent'
@@ -139,6 +141,29 @@ function enterStacks(id: string) {
   return { name: 'agent-stacks', params: { id } }
 }
 
+/**
+ * 网络读数：主行接收、次行发送。
+ *
+ * 没有采样时返回空对象，让 HostRate 显示「无数据」——不能兜底成 0 B/s，
+ * 那会把「没采到」说成「没有流量」。
+ */
+function networkReadings(network?: { rx: number; tx: number }): { primary?: RateReading; secondary?: RateReading } {
+  if (!network) return {}
+  return {
+    primary: { caption: '↓', bytesPerSec: network.rx },
+    secondary: { caption: '↑', bytesPerSec: network.tx }
+  }
+}
+
+/** 磁盘 IO 读数：主行读、次行写；语义与网络读数一致，缺采样不造假。 */
+function diskIOReadings(io?: { read: number; write: number }): { primary?: RateReading; secondary?: RateReading } {
+  if (!io) return {}
+  return {
+    primary: { caption: '读', bytesPerSec: io.read },
+    secondary: { caption: '写', bytesPerSec: io.write }
+  }
+}
+
 function enterExternalStack(agentId: string, stackName: string) {
   return stackName ? { name: 'agent-stack-external-detail', params: { id: agentId, name: stackName } } : enterStacks(agentId)
 }
@@ -191,7 +216,9 @@ const stackHint = computed(() => {
             <div v-if="row.sample && !errorText" class="host-metrics">
               <host-usage label="CPU" :cpu-percent="row.sample.cpuPercent" />
               <host-usage label="内存" :usage="row.sample.memory" />
-              <host-usage :label="row.sample.disk?.scope === 'host_filesystem' ? '磁盘（监控分区）' : '磁盘（根分区）'" :usage="row.sample.disk" />
+              <host-rate label="网络" v-bind="networkReadings(row.sample.network)" />
+              <host-rate label="磁盘 IO" v-bind="diskIOReadings(row.sample.diskIO)" />
+              <host-usage v-if="row.sample.disk" :label="row.sample.disk.scope === 'host_filesystem' ? '磁盘（监控分区）' : '磁盘（根分区）'" :usage="row.sample.disk" />
             </div>
             <div v-else class="host-no-data">
               {{ errorText ? '当前用量未确认' : row.agent.status === 'online' && !row.agent.disabled ? '暂无有效用量采样' : '当前无可用用量' }}
@@ -257,12 +284,12 @@ const stackHint = computed(() => {
 .fleet__summary, .fleet__list { list-style: none; margin: 0; padding: 0; }
 .fleet__summary { display: flex; gap: 6px; flex-wrap: wrap; padding: 0 20px 16px; }
 .fleet__summary b { margin-inline-start: 4px; }
-.fleet__row { display: grid; grid-template-columns: minmax(155px, 1.1fr) minmax(0, 3fr) 140px; align-items: start; gap: 12px 20px; border-top: 1px solid var(--arkade-border-color); border-inline-start: 3px solid transparent; padding: 15px 20px 15px 17px; }
+.fleet__row { display: grid; grid-template-columns: minmax(145px, 1fr) minmax(0, 3.4fr) 132px; align-items: start; gap: 12px 20px; border-top: 1px solid var(--arkade-border-color); border-inline-start: 3px solid transparent; padding: 15px 20px 15px 17px; }
 .fleet__row:last-child { border-end-start-radius: 9px; border-end-end-radius: 9px; }
 .fleet__row[data-state='offline'], .fleet__row[data-state='engine-error'] { border-inline-start-color: var(--arkade-danger); background: var(--arkade-surface-bg-subtle); }
 .host-identity { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; min-width: 0; }
 .host-identity__name { font-weight: 600; overflow-wrap: anywhere; }
-.host-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 16px; }
+.host-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); gap: 8px 16px; }
 .host-time, .host-no-data { color: var(--arkade-text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
 .host-time span, .host-no-data span { display: block; }
 .server-detail { margin-top: 26px; }
@@ -284,7 +311,7 @@ const stackHint = computed(() => {
   .fleet__row { grid-template-columns: minmax(0, 1fr); padding-inline: 9px 12px; }
   .host-time { text-align: start; }
   .host-time span { display: inline; margin-inline-end: 6px; }
-  .host-metrics { gap: 8px; }
+  .host-metrics { gap: 8px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 </style>

@@ -36,10 +36,18 @@ export type RuntimeKind = 'docker' | 'podman' | 'none'
 
 export type HostByteUsage = { used_bytes: number; total_bytes: number }
 
+/** 两次采样之间的网络吞吐速率（字节/秒）。 */
+export type HostNetworkUsage = { rx_bytes_per_sec: number; tx_bytes_per_sec: number }
+
+/** 两次采样之间的块设备读写速率（字节/秒）。 */
+export type HostDiskIOUsage = { read_bytes_per_sec: number; write_bytes_per_sec: number }
+
 export type HostMetrics = {
   cpu_percent?: number
   memory?: HostByteUsage
   disk?: HostByteUsage & { scope: 'host_root' | 'host_filesystem' }
+  network?: HostNetworkUsage
+  disk_io?: HostDiskIOUsage
 }
 
 export type Agent = {

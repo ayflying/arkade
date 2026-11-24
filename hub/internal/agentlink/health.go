@@ -48,7 +48,15 @@ func validHostMetrics(metrics *envelope.HostMetrics) *envelope.HostMetrics {
 		(d.Scope == envelope.DiskScopeHostRoot || d.Scope == envelope.DiskScopeHostFilesystem) {
 		out.Disk = d
 	}
-	if out.CPUPercent == nil && out.Memory == nil && out.Disk == nil {
+	// 速率是从累计计数器求差得到的非负值，没有固定上限，无法按范围校验；
+	// 只要字段存在就采信，字段缺失仍保持「没有采样」而不是 0。
+	if n := metrics.Network; n != nil {
+		out.Network = n
+	}
+	if io := metrics.DiskIO; io != nil {
+		out.DiskIO = io
+	}
+	if out.CPUPercent == nil && out.Memory == nil && out.Disk == nil && out.Network == nil && out.DiskIO == nil {
 		return nil
 	}
 	return &out

@@ -53,7 +53,27 @@ type HeartbeatPayload struct {
 type HostMetrics struct {
 	CPUPercent *float64       `json:"cpu_percent,omitempty"` // 0–100，两个采样点之间的 CPU 忙碌比例
 	Memory     *ResourceUsage `json:"memory,omitempty"`      // 使用量按 MemTotal - MemAvailable 计算
-	Disk       *DiskUsage     `json:"disk,omitempty"`
+	Disk       *DiskUsage     `json:"disk,omitempty"`        // 需要显式挂载或原生开关才有值
+	Network    *NetworkUsage  `json:"network,omitempty"`     // 两个采样点之间的收发速率
+	DiskIO     *DiskIOUsage   `json:"disk_io,omitempty"`     // 两个采样点之间的块设备读写速率
+}
+
+// NetworkUsage 是两次采样之间的网络吞吐速率（字节/秒）。
+//
+// 由累计计数器求差得到，因此至少要两个采样点才有值；首轮或计数器回绕时省略。
+// 容器部署下统计的是该容器网络命名空间内的网卡（不含 lo），不是宿主全部网卡。
+type NetworkUsage struct {
+	RxBytesPerSec uint64 `json:"rx_bytes_per_sec"`
+	TxBytesPerSec uint64 `json:"tx_bytes_per_sec"`
+}
+
+// DiskIOUsage 是两次采样之间的块设备读写速率（字节/秒）。
+//
+// 只统计整块设备（不含分区），并排除 loop/ram/dm/md 等虚拟设备，避免同一份
+// IO 在物理盘与叠层设备上被重复计算。同样需要两个采样点。
+type DiskIOUsage struct {
+	ReadBytesPerSec  uint64 `json:"read_bytes_per_sec"`
+	WriteBytesPerSec uint64 `json:"write_bytes_per_sec"`
 }
 
 // ResourceUsage 以字节表示容量。

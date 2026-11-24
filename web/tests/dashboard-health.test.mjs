@@ -6,7 +6,13 @@ import { getAgentHealth, sampleExpiresAt } from '../src/utils/dashboardHealth.ts
 const now = 1_800_000_000_000
 const current = {
   id: 'one', status: 'online', runtime_ok: true, sampled_at: now / 1000 - 15,
-  host_metrics: { cpu_percent: 0, memory: { used_bytes: 512, total_bytes: 1024 }, disk: { used_bytes: 256, total_bytes: 1024, scope: 'host_root' } }
+  host_metrics: {
+    cpu_percent: 0,
+    memory: { used_bytes: 512, total_bytes: 1024 },
+    disk: { used_bytes: 256, total_bytes: 1024, scope: 'host_root' },
+    network: { rx_bytes_per_sec: 2048, tx_bytes_per_sec: 0 },
+    disk_io: { read_bytes_per_sec: 0, write_bytes_per_sec: 4096 }
+  }
 }
 const row = (agent = current, time = now) => getAgentHealth(agent, time, now)
 
@@ -44,6 +50,39 @@ test('legacy, engine-only and partial samples never fabricate health or usage', 
   assert.equal(partial.sample.disk.scope, 'host_filesystem')
   assert.equal(partial.sample.disk.used_bytes, 0)
   assert.equal(row({ ...current, host_metrics: { disk: { used_bytes: 0, total_bytes: 100, scope: 'overlay' } } }).sample, null)
+})
+
+test('network and disk IO rates accept zero but never invent or invert a value', () => {
+  // 0 B/s 是真实的「没有流量」，必须与「没采到」区分开，不能变成 undefined。
+  assert.deepEqual(row().sample.network, { rx: 2048, tx: 0 })
+  assert.deepEqual(row().sample.diskIO, { read: 0, write: 4096 })
+
+  const bad = row({ ...current, host_metrics: {
+    cpu_percent: 10,
+    network: { rx_bytes_per_sec: -1, tx_bytes_per_sec: 10 },
+    disk_io: { read_bytes_per_sec: Infinity, write_bytes_per_sec: 10 }
+  } })
+  assert.equal(bad.sample.network, undefined, 'a negative rate must not be shown as usage')
+  assert.equal(bad.sample.diskIO, undefined, 'an infinite rate must not be shown as usage')
+
+  const nan = row({ ...current, host_metrics: { network: { rx_bytes_per_sec: NaN, tx_bytes_per_sec: 1 } } })
+  assert.equal(nan.sample, null)
+
+  // 只有速率也构成有效采样：老的 Admin 后端没有 disk 挂载，但网络/IO 照样有值。
+  const rateOnly = row({ ...current, host_metrics: { network: { rx_bytes_per_sec: 1, tx_bytes_per_sec: 2 } } })
+  assert.equal(rateOnly.state.key, 'ready')
+  assert.deepEqual(rateOnly.sample.network, { rx: 1, tx: 2 })
+  assert.equal(rateOnly.sample.memory, undefined)
+})
+
+test('rate fields stay hidden for legacy agents and after a sample expires', () => {
+  const legacy = row({ id: 'old', status: 'online', runtime_ok: true, sampled_at: current.sampled_at,
+    host_metrics: { cpu_percent: 5 } })
+  assert.equal(legacy.sample.network, undefined)
+  assert.equal(legacy.sample.diskIO, undefined)
+
+  const expiry = current.sampled_at * 1000 + 60_000
+  assert.equal(row(current, expiry).sample, null, 'expired rates must not be presented as current')
 })
 
 test('metrics and engine state expire, including timestamps ahead of the browser clock', () => {
