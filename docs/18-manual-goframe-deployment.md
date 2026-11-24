@@ -64,12 +64,20 @@ docker compose --env-file .env -f compose.yml exec -T postgres \
 
 真实数据库回归通过 `ARKADE_TEST_PG_DSN` 指定隔离 PostgreSQL。测试每例创建独立库并清理，缺环境变量或连接失败应明确失败，不跳过。
 
+**团队约定：容器与数据库级后端测试一律在 243 测试服执行，不使用开发机本地的 WSL / Docker。** 开发机资源紧张，且本地容器生命周期不稳定（VM 空闲回收会把测试库一起带走），测试结果不可靠。
+
+243 上已有专用测试库容器 `arkade-pgtest`（`postgres:17-alpine`，宿主 `127.0.0.1:55432`，库 `postgres`，角色 `arkade_test` 具备 `CREATEDB`），仓库检出在 `/root/arkade-test`（`git clone` 自远端，不需要从开发机拷贝源码）：
+
 ```sh
 # 仅隔离测试环境，禁止指向业务数据库账号。
-export ARKADE_TEST_PG_DSN='postgres://arkade_test:测试密码@127.0.0.1:15432/postgres?sslmode=disable'
-cd hub
-go test ./... -count=1
-go vet ./...
+# 密码取 `docker inspect arkade-pgtest` 的 POSTGRES_PASSWORD。
+ssh root@192.168.50.243
+cd /root/arkade-test && git fetch origin master && git checkout -f FETCH_HEAD
+export ARKADE_TEST_PG_DSN='postgres://arkade_test:<密码>@127.0.0.1:55432/postgres?sslmode=disable'
+cd hub && go test ./... -count=1 && go vet ./... && cd ..
+cd agent && go test ./... -count=1 && cd ..
 ```
+
+243 可直连 GitHub，无需代理；镜像构建与容器级验证同样在这台机器上进行。
 
 CI 启动 PG 服务执行真实数据库测试。镜像为纯 Go 构建，不需要 CGO。本说明不证明任何服务器已完成部署。
