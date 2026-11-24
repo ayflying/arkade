@@ -176,3 +176,48 @@ export interface ContainerDetail {
 export interface ContainerDetailResponse {
   container: ContainerDetail
 }
+
+/**
+ * 容器内一次性执行命令的结果（`POST .../exec` 的载荷）。
+ *
+ * ## 与协议逐字段对齐
+ *
+ * 见 `protocol/envelope/payload_container_exec.go`。三个语义点必须记住：
+ *
+ * 1. `exit_code` 为 **-1 表示无法确定**（超时或查询失败），不是"命令以 -1 退出"；
+ * 2. `timed_out` 为真时我们只是**停止等待**，容器内的进程可能仍在运行；
+ * 3. `truncated` 为真表示输出被上限截断，用户看到的不是全部输出。
+ *
+ * 这三条都不能在前端"猜测兜底"：把 -1 显示成 0 会让用户以为命令成功。
+ */
+export interface ContainerExecResult {
+  exit_code: number
+  stdout: string
+  stderr: string
+  truncated: boolean
+  timed_out: boolean
+  /** 实际耗时（毫秒），用于识别慢命令 */
+  duration_ms: number
+}
+
+/** `POST .../exec` 的原始响应包装 */
+export interface ContainerExecResponse {
+  result: ContainerExecResult
+}
+
+/**
+ * 执行命令的入参。
+ *
+ * `command` 是**命令向量**，不经过 shell 解析：
+ * 要跑 `ps aux | head -5` 必须写成 `['/bin/sh', '-c', 'ps aux | head -5']`。
+ * 直接给单个字符串会被当成可执行文件名，得到"文件不存在"。
+ */
+export interface ContainerExecInput {
+  command: string[]
+  /** 空表示镜像默认用户；不要在前端硬编码 root */
+  user?: string
+  /** 空表示镜像默认工作目录 */
+  workdir?: string
+  /** 秒；后端会夹到 1..120，0 表示用默认 30 秒 */
+  timeout_sec?: number
+}

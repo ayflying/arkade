@@ -42,6 +42,11 @@ const (
 	actionKill    = "/kill"    // force 停止走 kill
 	actionRemove  = "/delete"  // 实为 DELETE 方法，路径为容器自身
 	actionLogs    = "/logs"
+	actionExec    = "/exec" // POST 创建 exec 会话（容器内执行命令）
+
+	// exec 会话的后续端点。注意它们**不在** /containers/ 前缀下：
+	// Docker 把 exec 当成独立资源，只能凭 exec id 访问。
+	pathExecPrefix = "/exec/" // POST {id}/start、GET {id}/json
 )
 
 // 日志拉取参数：必须"按行尾取"，并允许 ANSI 控制字符原样返回。

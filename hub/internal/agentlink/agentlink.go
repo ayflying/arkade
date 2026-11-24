@@ -62,6 +62,10 @@ var slowMethodTimeouts = map[string]time.Duration{
 	envelope.MethodImageLoadCommit: 2 * time.Minute,
 	envelope.MethodVolumeFiles:     75 * time.Second,
 	envelope.MethodComposeSource:   75 * time.Second,
+	// 容器内执行命令：Agent 侧把单次执行夹到最多 120 秒，
+	// Hub 必须比它更宽——否则会出现"Hub 已超时、Agent 还在跑"，
+	// 用户看到失败而命令其实执行完了（正是本注释上方警告的那种尴尬）。
+	envelope.MethodContainerExec: 150 * time.Second,
 }
 
 // requestTimeoutFor 返回某个方法的等待上限。

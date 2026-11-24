@@ -73,3 +73,17 @@ type ContainerLogsRes struct {
 	Lines     []string `json:"lines"`
 	Truncated bool     `json:"truncated"`
 }
+
+// ContainerExecReq 在容器内执行一条命令（一次性，非交互）。
+//
+// 为什么用请求体而不是 query：命令向量里可能有空格、引号、分号，
+// 塞进 URL 既要多次编码，又会把命令全文写进访问日志。
+// 用 JSON 体是唯一能把"参数边界"表达清楚的方式。
+type ContainerExecReq struct {
+	g.Meta      `path:"/api/agents/{agentID}/containers/{containerID}/exec" method:"post" tags:"Resources"`
+	AgentID     string `json:"-" in:"path"`
+	ContainerID string `json:"-" in:"path"`
+}
+type ContainerExecRes struct {
+	Result envelope.ContainerExecResult `json:"result"`
+}

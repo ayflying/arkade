@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -183,18 +184,39 @@ func (c *client) openStream(ctx context.Context, method, path string) (io.ReadCl
 
 // postStream 发起 POST 并流式返回响应体（用于 /images/create 的 NDJSON 进度流）。
 func (c *client) postStream(ctx context.Context, path string) (io.ReadCloser, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url(path), nil)
+	return c.postStreamJSON(ctx, path, nil)
+}
+
+// postStreamJSON 发起带 JSON 请求体的 POST，并把响应体交给调用方流式消费。
+//
+// 为什么需要它：容器的 exec/start 用 200 响应 + 原始流（多路复用帧）返回命令输出，
+// 这条流会一直开到这个进程退出。若走 do() 的 io.ReadAll，就必须等进程结束
+// 才拿到第一个字节，而且会被 16 MiB 上限截断——表现为"命令一直转圈"然后
+// 突然给出一段残缺输出。调用方必须关闭返回的 ReadCloser。
+func (c *client) postStreamJSON(ctx context.Context, path string, body any) (io.ReadCloser, error) {
+	var reader io.Reader
+	if body != nil {
+		raw, err := json.Marshal(body)
+		if err != nil {
+			return nil, fmt.Errorf("序列化运行时请求失败(%s): %w", path, err)
+		}
+		reader = bytes.NewReader(raw)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url(path), reader)
 	if err != nil {
 		return nil, fmt.Errorf("构造运行时请求失败: %w", err)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
 	resp, err := c.httpc.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("连接运行时失败(%s): %w", path, err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 		_ = resp.Body.Close()
-		return nil, &statusError{Status: resp.StatusCode, Body: strings.TrimSpace(string(body)), Path: path}
+		return nil, &statusError{Status: resp.StatusCode, Body: strings.TrimSpace(string(errBody)), Path: path}
 	}
 	return resp.Body, nil
 }

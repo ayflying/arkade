@@ -29,6 +29,13 @@ const (
 	// 单列一条审计动作而不是复用 remove+start，是因为它的实际影响
 	// （镜像可能已更新、容器 ID 变化、日志断开）无法从 remove+start 的组合看出来。
 	ActionContainerRecreate = "container.recreate"
+	// ActionContainerExec 在容器内执行命令。
+	//
+	// 单列一条：这是"能直接改动容器内数据/进程"的能力，与启停的后果不在一个量级。
+	// **命令正文绝不进审计**——命令里可能带口令（`mysql -p...`）、
+	// 内网地址或临时 token，而审计表会被导出与备份带走。
+	// target 只记容器 ID，谁在什么时候执行过命令已经足够追溯。
+	ActionContainerExec = "container.exec"
 
 	// 编排
 	ActionStackCreate  = "stack.create"
@@ -122,6 +129,7 @@ var labels = map[string]string{
 	ActionContainerRestart:  "重启容器",
 	ActionContainerRemove:   "删除容器",
 	ActionContainerRecreate: "重建容器",
+	ActionContainerExec:     "在容器内执行命令",
 
 	ActionStackCreate:     "创建编排",
 	ActionStackUpdate:     "修改编排",

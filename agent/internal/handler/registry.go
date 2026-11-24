@@ -228,6 +228,9 @@ func registerAll(reg *Registry, rt runtime.Runtime, composeMgr *compose.Manager,
 	reg.Register(envelope.LocalMethodContainerLogs, newLogsHandler(rt))
 	// 容器详情：只读，能力由可选接口决定；引擎不支持时处理器内返回 unsupported。
 	reg.Register(envelope.MethodContainerInspect, newInspectHandler(rt))
+	// 容器内执行命令：与详情同样由可选接口决定能力，
+	// 注册本身不判断支持性（旧引擎在调用时才得到 unsupported）。
+	reg.Register(envelope.LocalMethodContainerExec, newExecHandler(rt))
 	// 只公布实际支持的监控能力；旧 fake 和不支持的运行时保持原有方法集合。
 	if _, ok := rt.(runtime.ContainerMonitorRuntime); ok {
 		reg.Register(envelope.MethodContainerMonitorSnapshot, newMonitorSnapshotHandler(rt))

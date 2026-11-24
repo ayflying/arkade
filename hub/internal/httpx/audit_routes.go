@@ -67,6 +67,13 @@ var auditRoutes = map[string]auditRoute{
 		Action:      audit.ActionContainerRecreate,
 		TargetParam: "containerID",
 	},
+	// 容器内执行命令：高影响操作，必须留痕。
+	// **命令正文不进审计**（可能是口令/内网地址）：中间件只写路由与 target，
+	// 这里也不要补 detail。
+	"/api/agents/{agentID}/containers/{containerID}/exec": {
+		Action:      audit.ActionContainerExec,
+		TargetParam: "containerID",
+	},
 	"/api/agents/{agentID}/containers/{containerID}": {
 		Action:      audit.ActionContainerRemove,
 		TargetParam: "containerID",

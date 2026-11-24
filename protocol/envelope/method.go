@@ -24,6 +24,19 @@ const (
 	MethodContainerRemove  = "container.remove"  // 删除容器（危险操作）
 	MethodContainerLogs    = "container.logs"    // 拉取日志（有限行数，避免撑爆连接）
 	MethodContainerInspect = "container.inspect" // 容器详情（只读，白名单字段）
+	// MethodContainerExec 在容器内执行一条命令（一次性，非交互）。
+	//
+	// ============================ 为什么不是交互式终端 ============================
+	//
+	// 控制通道是信令通道（单条消息 8 MiB、出站队列 32 条、写超时 10 秒），
+	// 把 stdin/stdout 逐键搬运会稳定撞上队列上限，还会让"打开一个终端"
+	// 变成"长期占用一条请求槽位"。这里只做**一次性执行**：调用方给完整命令，
+	// 应答给退出码与截断后的输出。交互式远程终端如果要上，应当是另一条流式通道，
+	// 而不是把 exec 改造成半吊子终端。
+	//
+	// 一次性语义的代价必须说清楚：cd / export 不跨命令保留，
+	// 需要多条语句时用 `sh -c 'a && b'` 形式串联。
+	MethodContainerExec = "container.exec"
 	// MethodContainerRecreate 按原配置重建容器（删除旧容器、建同名新容器）。
 	//
 	// 与 restart 的区别：restart 保留容器对象（ID 不变、日志连续）；recreate 换掉容器对象，
@@ -176,7 +189,10 @@ const (
 	// 重建同样是"本地 CLI 与在线通道共用一套处理器"的能力，
 	// 因此必须给本地别名，否则离线模式会报方法不存在。
 	LocalMethodContainerRecreate = MethodContainerRecreate
-	LocalMethodRuntimeInfo       = MethodRuntimeInfo
+	// 容器内执行命令同样是"本地 CLI 与在线通道共用一套处理器"。
+	// 不给别名的话，离线 CLI 会报方法不存在，而它恰恰是排障时最需要的能力之一。
+	LocalMethodContainerExec = MethodContainerExec
+	LocalMethodRuntimeInfo   = MethodRuntimeInfo
 
 	LocalMethodImageList     = MethodImageList
 	LocalMethodImageRemove   = MethodImageRemove

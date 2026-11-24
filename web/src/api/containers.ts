@@ -3,6 +3,9 @@ import type {
   ContainerActionResponse,
   ContainerDetail,
   ContainerDetailResponse,
+  ContainerExecInput,
+  ContainerExecResponse,
+  ContainerExecResult,
   ContainerListResponse,
   ContainerLogsResponse,
   ContainerMount,
@@ -24,6 +27,7 @@ import { httpDelete, httpGet, httpPost } from './request'
  * - POST   /api/agents/{id}/containers/{cid}/recreate?pull=   （重建，需 manage）
  * - DELETE /api/agents/{id}/containers/{cid}?force=&remove_volumes=
  * - GET    /api/agents/{id}/containers/{cid}/logs?tail=N  （需 view）
+ * - POST   /api/agents/{id}/containers/{cid}/exec         （执行命令，需 manage）
  */
 
 /** 拼出单个容器的路径 */
@@ -248,4 +252,48 @@ export async function fetchContainerLogs(
     lines: Array.isArray(res.lines) ? res.lines : [],
     truncated: res.truncated === true
   }
+}
+
+/**
+ * 归一化一次命令执行的结果。
+ *
+ * 缺字段时保守取值，但**绝不改写语义**：
+ * - `exit_code` 缺失给 -1（未知），不是 0；
+ * - `timed_out` / `truncated` 只有明确 true 才算真；
+ * - stdout/stderr 保持字符串，不 trim（尾随换行是输出的一部分）。
+ */
+function normalizeExecResult(raw: ContainerExecResult | undefined): ContainerExecResult {
+  return {
+    exit_code: typeof raw?.exit_code === 'number' ? raw.exit_code : -1,
+    stdout: typeof raw?.stdout === 'string' ? raw.stdout : '',
+    stderr: typeof raw?.stderr === 'string' ? raw.stderr : '',
+    truncated: raw?.truncated === true,
+    timed_out: raw?.timed_out === true,
+    duration_ms: typeof raw?.duration_ms === 'number' ? raw.duration_ms : 0
+  }
+}
+
+/**
+ * 在容器内执行一条命令（**一次性**，非交互）。
+ *
+ * 需要 **manage**：执行命令能读写容器内数据，权限高于启停（operate）。
+ *
+ * 每条命令都是独立进程——`cd`、`export` 不会保留到下一次调用。
+ * 需要多条语句时把它们写成一条 `sh -c 'a && b'`。
+ */
+export async function execContainer(
+  agentId: string,
+  containerId: string,
+  input: ContainerExecInput
+): Promise<ContainerExecResult> {
+  const body: ContainerExecInput = { command: input.command }
+  // 只提交真正有值的可选字段：空串会被后端当作"显式设置为空"，
+  // 而这里想表达的是"沿用镜像默认值"。
+  if (input.user !== undefined && input.user !== '') body.user = input.user
+  if (input.workdir !== undefined && input.workdir !== '') body.workdir = input.workdir
+  if (input.timeout_sec !== undefined && input.timeout_sec > 0) body.timeout_sec = input.timeout_sec
+  const res = await httpPost<ContainerExecResponse>(
+    `${containerPath(agentId, containerId)}/exec`, body
+  )
+  return normalizeExecResult(res?.result)
 }

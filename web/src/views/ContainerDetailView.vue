@@ -30,6 +30,8 @@ import ContainerDetailMetrics from '@/components/container/ContainerDetailMetric
 import ContainerMetricHistory from '@/components/container/ContainerMetricHistory.vue'
 import ContainerMountsTable from '@/components/container/ContainerMountsTable.vue'
 import ContainerDetailLogs from '@/components/container/ContainerDetailLogs.vue'
+import ContainerInspectPanel from '@/components/container/ContainerInspectPanel.vue'
+import ContainerConsole from '@/components/container/ContainerConsole.vue'
 import {
   deleteContainer,
   getContainer,
@@ -47,6 +49,7 @@ import {
   canStartContainer,
   canStopContainer,
   containerActionBlockReason,
+  isAgentOnline,
   needsForceDelete
 } from '@/utils/agentAction'
 import { confirmWithOption } from '@/utils/confirm'
@@ -70,9 +73,11 @@ const forbidden = ref(false)
 /** 有容器操作正在执行（批量按钮与单个操作共用，避免并发下发） */
 const acting = ref(false)
 
-const activeTab = ref<'overview' | 'metrics' | 'mounts' | 'logs'>('overview')
+const activeTab = ref<'overview' | 'inspect' | 'metrics' | 'mounts' | 'logs' | 'console'>('overview')
 const metricsEnabled = computed(() => activeTab.value === 'overview' && containerId.value !== '')
 const metrics = useContainerMetrics(agentId, metricsEnabled)
+/** 控制台只在服务器在线时可执行（离线请求会 503） */
+const agentOnline = computed(() => isAgentOnline(agent.value))
 // Links from container tables use full IDs. For legacy short links, only the
 // inspect response can safely resolve the canonical ID; the cache may omit rows.
 const metricContainerId = computed(() => detail.value?.id || containerId.value)
@@ -438,6 +443,14 @@ watch(
         <container-metric-history :agent-id="agentId" :container-id="metricContainerId" />
       </n-tab-pane>
 
+      <!--
+        检查：完整清单一页看完，供复制给同事或贴进工单。
+        与概览同权限（manage）——清单里含挂载源路径与启动命令。
+      -->
+      <n-tab-pane name="inspect" tab="检查">
+        <container-inspect-panel :detail="detail" :forbidden="forbidden" />
+      </n-tab-pane>
+
       <n-tab-pane name="mounts" tab="挂载">
         <container-mounts-table :mounts="detail?.mounts ?? []" :forbidden="forbidden" />
       </n-tab-pane>
@@ -445,6 +458,19 @@ watch(
       <!-- 日志：view 权限，独立于详情的 manage 权限 -->
       <n-tab-pane name="logs" tab="日志">
         <container-detail-logs :agent-id="agentId" :container-id="containerId" :name="pageTitle" />
+      </n-tab-pane>
+
+      <!--
+        控制台：在容器内执行命令（需要 manage）。
+        这是"一次性执行"而不是远程终端，交互限制写在面板里，不在这里重复。
+      -->
+      <n-tab-pane name="console" tab="控制台">
+        <container-console
+          :agent-id="agentId"
+          :container-id="containerId"
+          :name="pageTitle"
+          :online="agentOnline"
+        />
       </n-tab-pane>
     </n-tabs>
   </div>

@@ -396,11 +396,12 @@ func TestRegistryMethodsSorted(t *testing.T) {
 	reg := newTestRegistry(&fakeRuntime{})
 	methods := reg.Methods()
 	// 本测试的注册表不挂编排（composeMgr 为 nil），因此只应包含
-	// 容器 8 个 + 资源 6 个 + 卷文件 1 个 + 编排来源 1 个 + 自更新 1 个 = 17 个方法。
+	// 容器 9 个（含 container.inspect / container.exec）+ 资源 6 个 +
+	// 卷文件 1 个 + 编排来源 1 个 + 自更新 1 个。
 	// 编排方法数由 compose 专项测试验证，这里固定数字是为了让
 	// "悄悄多注册/漏注册一个方法"能被立刻发现。
-	// 不传 composeMgr 时编排方法整组不注册，因此这里是 18。
-	const wantCount = 18
+	// 不传 composeMgr 时编排方法整组不注册，因此这里是 19。
+	const wantCount = 19
 	if len(methods) != wantCount {
 		t.Fatalf("注册方法数 = %d，期望 %d: %v", len(methods), wantCount, methods)
 	}
@@ -418,6 +419,10 @@ func TestRegistryMethodsSorted(t *testing.T) {
 		envelope.LocalMethodContainerRemove,
 		envelope.LocalMethodContainerRecreate,
 		envelope.LocalMethodContainerLogs,
+		// 容器详情与容器内执行：能力由可选接口决定，但方法本身必须注册，
+		// 否则离线 CLI 会得到"方法不存在"而不是明确的 unsupported。
+		envelope.MethodContainerInspect,
+		envelope.LocalMethodContainerExec,
 		envelope.MethodImageList,
 		envelope.MethodImageRemove,
 		envelope.MethodNetworkList,
