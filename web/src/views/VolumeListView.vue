@@ -196,10 +196,35 @@ function togglePageSelection(): void {
  * 卷名旁边直接列出容器名，而不是只给一句「使用中」：
  * 用户要回答的问题永远是「到底谁在占着它」，判断能不能清掉。
  * 容器名多的折成「+N」，完整清单在 title 里。
+ *
+ * ## 为什么这里必须容忍 containers 缺失
+ *
+ * `containers` 是 0.1.40 才加的字段。滚动升级期间（Hub 已升、某些 Agent
+ * 还没升）旧 Agent 不会返回它，Hub 会据此序列化成 `null`。
+ * 若直接 `row.containers.length`，一次属性访问就把整个卷列表渲染打断——
+ * 而这一页恰恰是升级后第一件要去确认的事。
+ *
+ * 更关键的是**不能把「使用中」显示成「未使用」**：`in_use` 是旧字段、
+ * 一直可信。拿不到名字时如实说「使用中」，而不是兜底成空数组后
+ * 谎称未使用——那会让人以为可以清理，而清理会真的删掉数据。
  */
 function renderContainers(row: VolumeInfo): ReturnType<typeof h> {
-  const names = row.containers
+  // null 与 undefined 都要挡：协议里没有 omitempty，跨版本时是 null
+  const names = row.containers ?? []
   if (names.length === 0) {
+    // in_use 为真但拿不到名字 = 旧版 Agent 未上报，不能据此说未使用
+    if (row.in_use) {
+      return h(
+        NTag,
+        {
+          size: 'small',
+          bordered: false,
+          type: 'warning',
+          title: '该服务器组件版本较旧，未上报具体容器名；升级组件后可看到容器列表'
+        },
+        { default: () => '使用中' }
+      )
+    }
     return h(
       NTag,
       { size: 'small', bordered: false, type: 'default' },

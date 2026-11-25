@@ -70,8 +70,14 @@ export type VolumeInfo = {
    * 为什么含已停止容器：Docker 不允许删除被引用（哪怕引用者已停止）的卷，
    * 只列运行中的容器会让界面显示「未使用」但删除却失败。它同时也是
    * 「清理未使用卷」的判断依据——`in_use` 与它同源，别各自另算一份。
+   *
+   * **为什么是可空**：这个字段 0.1.40 才加入。滚动升级期间（Hub 已升、
+   * 该服务器的 Agent 尚未升）旧 Agent 不返回它，Hub 会序列化成 `null`。
+   * 类型里保留 `null` 是为了让编译期强制每个使用方处理这种版本错配，
+   * 而不是等运行时在渲染里炸掉。判断「能不能清理」要用 `in_use`，
+   * 它在所有版本都可信。
    */
-  containers: string[]
+  containers: string[] | null
   labels: Record<string, string>
 }
 

@@ -32,10 +32,23 @@ const resourceTypes = read('src/types/resource.ts')
 
 test('存储卷类型带上使用它的容器名，且明确禁止从 in_use 反推', () => {
   // in_use 是布尔，无法回答「谁在占着」；containers 才是用户要的信息
-  assert.match(resourceTypes, /containers:\s*string\[\]/)
+  assert.match(resourceTypes, /containers:\s*string\[\] \| null/)
   assert.match(resourceTypes, /含已停止但未删除的容器/)
   // 与 in_use 同源，不能各算一份
   assert.match(resourceTypes, /与\s*`in_use`\s*与它同源|`in_use`\s*与它同源|同源/)
+})
+
+/*
+ * 滚动升级期间 containers 会是 null（旧版 Agent 不上报）。
+ *
+ * 这一条守的是「升级后第一件要去确认的事」不会自己先崩：
+ * null.length 一次属性访问就能把整张卷列表渲染打断。
+ */
+test('存储卷页容忍 containers 缺失/为 null，且不把使用中说成未使用', () => {
+  assert.match(volumeView, /const names = row\.containers \?\? \[\]/)
+  // 拿不到名字时必须仍然显示「使用中」（in_use 在旧版本也可信）
+  assert.match(volumeView, /if \(row\.in_use\) \{/)
+  assert.match(volumeView, /未上报具体容器名/)
 })
 
 test('存储卷页有「挂载到的容器」列并渲染具体容器名', () => {
