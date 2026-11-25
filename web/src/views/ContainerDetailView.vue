@@ -407,14 +407,12 @@ watch(
           删除容器不可恢复，确认继续？
         </n-popconfirm>
 
-        <n-button
-          v-if="activeTab !== 'logs'"
-          size="small"
-          quaternary
-          @click="activeTab = 'logs'"
-        >
-          查看日志
-        </n-button>
+        <!--
+          这里刻意没有「查看日志」按钮。
+          日志是下方页签之一（概览/监控/检查/挂载/日志/控制台），
+          顶部再放一个跳转按钮只是重复入口，还占掉了操作区最右侧的
+          位置——那一排在窄屏上本来就很挤。
+        -->
       </n-space>
       <!-- 不可操作时把原因直接写在按钮旁边，而不是只放在 tooltip 里 -->
       <span v-if="blockReason !== null" class="container-detail__block-reason">
