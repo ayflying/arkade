@@ -16,7 +16,9 @@ func stackPublicFields(tool string) []string {
 	case "arkade_get_stack":
 		return stackViewFields(stackContainerFields(nil), "stack")
 	case "arkade_get_stack_config":
-		return []string{"version"}
+		return []string{"version", "content"}
+	case "arkade_patch_stack_env":
+		return []string{"version", "changed_keys.[]"}
 	case "arkade_list_stack_containers":
 		return stackContainerFields([]string{"agent_id"})
 	case "arkade_create_stack", "arkade_update_stack":

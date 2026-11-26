@@ -109,6 +109,7 @@ var auditRoutes = map[string]auditRoute{
 	},
 
 	// 编排任务仅记录受理，不把202当作实际执行成功；输出不入审计。
+	"/api/agents/{agentID}/stacks/{name}/env":             {Action: audit.ActionStackUpdate, TargetParam: "name"},
 	"/api/agents/{agentID}/stacks/{name}/operation-tasks": {Action: audit.ActionStackAction, TargetParam: "name", SubAction: true},
 
 	// 外部项目只记录操作标识，不记录配置草稿或敏感正文。

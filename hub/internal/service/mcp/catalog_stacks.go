@@ -15,7 +15,10 @@ func catalogStacks() []Tool {
 	return []Tool{
 		catalogTool("list_stacks", "列出指定服务器的已纳管编排和发现的外部 Compose 项目。", http.MethodGet, catalogStackList, true, false, nil, nil, catalogAgentID()),
 		catalogTool("get_stack", "查看已纳管编排的状态、版本、配置哈希及关联容器。", http.MethodGet, catalogStack, true, false, nil, nil, stack()...),
-		catalogTool("get_stack_config", "查看编排配置的版本；项目校验值可通过 arkade_get_stack 查询，不返回 YAML 或环境文件正文。", http.MethodGet, catalogStack+"/config", true, false, nil, nil, stack()...),
+		catalogTool("get_stack_config", "读取已纳管编排保存的原始 Compose YAML 和版本，不展开变量，不返回 .env。", http.MethodGet, catalogStack+"/config", true, false, nil, nil, stack()...),
+		catalogTool("patch_stack_env", "按键新增或替换 .env 变量，保留未指定项；只保存，不部署。传入当前编排版本，返回新版本和变更键名，不返回值。请勿提交真实凭据。", http.MethodPatch, catalogStack+"/env", false, false, nil, nil, stack(
+			catalogInteger("version", "当前编排版本。", true, 1, 0),
+			catalogField{"updates", map[string]any{"type": "object", "minProperties": 1, "maxProperties": 128, "propertyNames": map[string]any{"pattern": "^[A-Za-z_][A-Za-z0-9_]*$"}, "additionalProperties": map[string]any{"type": "string"}}, true})...),
 		catalogTool("list_stack_containers", "列出当前编排的服务容器状态。", http.MethodGet, catalogStack+"/ps", true, false, nil, nil, stack()...),
 		catalogTool("create_stack", "创建编排并立即尝试部署；可能拉取镜像、创建容器、挂载卷和暴露端口。检查 sync_ok；Hub 保存成功不代表部署成功。", http.MethodPost, catalogStackList, false, false, nil, nil,
 			catalogAgentID(), catalogStackName("name"), catalogComposeContent(), catalogEnvContent("可选的 .env 文件正文，最多 1 MiB。")),

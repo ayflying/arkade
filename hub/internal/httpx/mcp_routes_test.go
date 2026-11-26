@@ -67,14 +67,25 @@ func TestMCPAdminKeyAndTools(t *testing.T) {
 	const marker = "privacy-fixture-not-a-real-secret"
 	if err := e.db.CreateComposeStack(t.Context(), store.ComposeStack{
 		ID: "mcp-privacy-stack", AgentID: "mcp-source", Name: "private-demo", Version: 7,
-		Content: "services: {} # " + marker, EnvContent: "PASSWORD=" + marker,
+		Content: "services: {} # ${TAG}", EnvContent: "PASSWORD=" + marker + "\nLOG_LEVEL=info\n",
 		ConfigHash: "0123456789abcdef", CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	const configCall = `{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"arkade_get_stack_config","arguments":{"agentID":"mcp-source","name":"private-demo"}}}`
-	if r := mcpTestRequest(e.router, "POST", "/mcp", created.Token, configCall); r.Code != 200 || strings.Contains(r.Body.String(), marker) || strings.Contains(r.Body.String(), `"isError":true`) || !strings.Contains(r.Body.String(), `\"version\":7`) {
-		t.Fatalf("MCP 未仅返回配置元数据：HTTP %d", r.Code)
+	if r := mcpTestRequest(e.router, "POST", "/mcp", created.Token, configCall); r.Code != 200 || strings.Contains(r.Body.String(), marker) || strings.Contains(r.Body.String(), `"isError":true`) || !strings.Contains(r.Body.String(), `\"version\":7`) || !strings.Contains(r.Body.String(), "services: {} # ${TAG}") {
+		t.Fatalf("MCP 未原样返回 YAML 或泄露了环境文件：HTTP %d", r.Code)
+	}
+	const patch = `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"arkade_patch_stack_env","arguments":{"agentID":"mcp-source","name":"private-demo","version":7,"updates":{"LOG_LEVEL":"debug-fixture","TZ":"Asia/Shanghai"}}}}`
+	if r := mcpTestRequest(e.router, "POST", "/mcp", created.Token, patch); r.Code != 200 || strings.Contains(r.Body.String(), `"isError":true`) || !strings.Contains(r.Body.String(), `\"version\":8`) || !strings.Contains(r.Body.String(), `changed_keys`) || strings.Contains(r.Body.String(), "debug-fixture") || strings.Contains(r.Body.String(), marker) {
+		t.Fatalf("MCP 未按键保存环境变量或回显了值：HTTP %d", r.Code)
+	}
+	if r := mcpTestRequest(e.router, "POST", "/mcp", created.Token, patch); !strings.Contains(r.Body.String(), `\"code\":\"conflict\"`) {
+		t.Fatalf("旧版本更新应被拒绝：HTTP %d", r.Code)
+	}
+	rec, err := e.db.GetComposeStack(t.Context(), "mcp-source", "private-demo")
+	if err != nil || rec.Version != 8 || rec.Content != "services: {} # ${TAG}" || !strings.HasPrefix(rec.EnvContent, "PASSWORD="+marker+"\n") || !strings.Contains(rec.EnvContent, "debug-fixture") || !strings.Contains(rec.EnvContent, "Asia/Shanghai") || !rec.SyncedAt.IsZero() {
+		t.Fatal("仅保存环境变量失败或变更了其他配置")
 	}
 	const migrate = `{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"arkade_migrate_stack","arguments":{"agentID":"mcp-source","name":"demo","target_agent_id":"mcp-target","confirmation":"demo","request_id":"mcp-migrate-test"}}}`
 	if r := mcpTestRequest(e.router, "POST", "/mcp", created.Token, migrate); r.Code != 200 || strings.Contains(r.Body.String(), `"isError":true`) || !strings.Contains(r.Body.String(), `task_id`) {

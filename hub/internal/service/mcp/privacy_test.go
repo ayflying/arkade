@@ -26,7 +26,7 @@ func TestMCPPrivacyResponses(t *testing.T) {
 		status            int
 		failed            bool
 	}{
-		{"arkade_get_stack_config", `{"version":9007199254740993,"content":"PRIVATE","env_content":"PRIVATE"}`, `{"version":9007199254740993}`, 200, false},
+		{"arkade_get_stack_config", `{"version":9007199254740993,"content":"services: {} # ${TAG}","env_content":"PRIVATE"}`, `{"content":"services: {} # ${TAG}","version":9007199254740993}`, 200, false},
 		{"arkade_get_external_stack_config", `{"readable":true,"config_hash":"0123456789abcdef","content":"PRIVATE","draft":{"version":1,"content":"PRIVATE"}}`, `{"config_hash":"0123456789abcdef","draft":{"version":1},"readable":true}`, 200, false},
 		{"arkade_save_external_stack_draft", `{"draft":{"version":2,"content":"PRIVATE"}}`, `{"draft":{"version":2}}`, 200, false},
 		{"arkade_update_stack", `{"sync_ok":false,"sync_hint":"PRIVATE","stack":{"name":"demo","version":2,"env_content":"PRIVATE"}}`, `{"stack":{"name":"demo","version":2},"sync_ok":false}`, 200, true},
