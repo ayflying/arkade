@@ -42,16 +42,12 @@ type psEntry struct {
 	State   string `json:"State"`
 	Status  string `json:"Status"`
 	Health  string `json:"Health"`
-	// Image / ImageID / RepoDigests 用于「更新部署」判断容器是否已是最新。
-	//
-	// 为什么读 ps 而不是逐个 inspect：一次 ps 就能拿到本项目所有容器的
-	// 镜像 ID 与摘要，而 inspect 要按容器数发请求；判断"要不要重建"
-	// 本来就是对整份编排做的，一次读全更简单也更快。
-	// 老版本 compose 可能不输出这些字段，此时对应值为空，
-	// 调用方按"无法判定"处理，不会因此误判成"已是最新"。
-	Image       string   `json:"Image"`
-	ImageID     string   `json:"ImageID"`
-	RepoDigests []string `json:"RepoDigests"`
+	ID      string `json:"ID"`
+	Image   string `json:"Image"`
+
+	// 镜像身份由更新部署单独向引擎查询；标准 Compose ps 不提供这些字段。
+	ImageID     string   `json:"-"`
+	RepoDigests []string `json:"-"`
 }
 
 // parsePSJson 解析 compose ps 的 JSON 输出。

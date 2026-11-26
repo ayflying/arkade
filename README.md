@@ -78,6 +78,8 @@ arkade/
 
 配置样例及创建 Agent 专属密钥的步骤见 [容器部署说明](<deploy/docker/README.md>)。容器无需 TOML，生产固定镜像版本，更新前备份数据库与数据卷。架构见 [GoFrame 分层](<docs/17-goframe-migration.md>)，安装与恢复演练见 [PostgreSQL 部署与备份](<docs/18-manual-goframe-deployment.md>)。
 
+Hub 新建登录会话默认有效 **30 天（2,592,000 秒）**。本地密码和 OIDC 登录都以管理后台的系统设置为准；TOML 的 `auth.session_ttl` 与环境变量 `SESSION_TTL` 只配置回退值，不覆盖数据库。升级仅将从未保存过系统设置的旧 24 小时默认值调至 30 天；已保存的设置（包括明确设为 24 小时）会保留。设置变更无需重启，只影响新登录，已有会话仍按原时间到期。
+
 ## 源码快速开始
 
 前置：Go 1.24+、Node 20+、pnpm。

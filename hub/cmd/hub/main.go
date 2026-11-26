@@ -154,8 +154,8 @@ timeout = "30s"
 dsn = "host=localhost port=5432 user=arkade dbname=arkade sslmode=disable"
 
 [auth]
-# 登录会话有效期
-session_ttl = "72h"
+# 会话有效期的回退值（30 天）；运行时以管理后台的系统设置为准。
+session_ttl = "720h"
 # 本机不需要Token。远程推荐使用后台生成的专属凭据；共享准入默认关闭。
 agent_token = ""
 # 首次启动管理员密码不能为空，允许短密码；登录后请尽快修改，也可用 INITIAL_PASS

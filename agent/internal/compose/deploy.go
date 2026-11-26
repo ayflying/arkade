@@ -11,11 +11,10 @@ package compose
 // 必须自己判定，因此它是一段编排流程，而不是一条 compose 子命令：
 //
 //	第 1 步  docker compose config --format json  解析有效服务和镜像（输出不展示）
-//	         docker compose ps --format json      读本机容器及其镜像 ID / 摘要（输出不展示）
+//	         docker compose ps + docker inspect   读取容器实际镜像（输出不展示）
 //	第 2 步  docker manifest inspect <引用>    只查远端元数据，不在本机产生镜像（输出不展示）
 //	第 3 步  docker compose pull <服务名>      只拉候选镜像对应的服务
 //	第 4 步  docker compose up -d <该服务>     只重建有更新的
-//	第 5 步  docker compose up -d --force-recreate 仅当拉取确实引入了新内容却没被重建
 //
 // ============================ 安全边界 ============================
 //
@@ -24,7 +23,6 @@ package compose
 //  3. 没有新版本时**不执行 pull / up**，也就不会重启任何容器；
 //  4. 第 3 步任一服务拉取失败就停在这里，绝不继续重建——
 //     「拉取失败却用旧镜像重建」会让服务白停一次，而用户以为已经更新；
-//  5. 第 4/5 步失败时尝试用本机原有镜像回滚，回滚也失败则如实报失败。
 
 import (
 	"context"
@@ -123,7 +121,9 @@ func (m *Manager) deployLocked(ctx context.Context, n string) (deployOutcome, er
 	if ps.ExitCode != 0 {
 		return deployOutcome{}, safeErr("读取本机容器状态失败（退出码 %d），未做任何改动", ps.ExitCode)
 	}
-	running := runningLocalImages(parsePSJson(ps.Stdout))
+	entries := parsePSJson(ps.Stdout)
+	m.inspectDeployImages(ctx, n, entries)
+	running := runningLocalImages(entries)
 
 	// ============================ 第 2 步：对比远端 ============================
 	hunks, unknown := m.planDeploy(ctx, n, images, running)
@@ -150,62 +150,43 @@ func (m *Manager) deployLocked(ctx context.Context, n string) (deployOutcome, er
 	}
 
 	// ============================ 第 4 步：只重建确实换了内容的 ============================
-	changed := make([]deployHunk, 0, len(toPull))
+	wanted := make(map[string]struct{}, len(toPull))
 	for _, h := range toPull {
-		local, hasContainer := running[h.ref]
-		isNew := false
-		if hasContainer {
-			isNew = m.imageChanged(ctx, n, h, local)
-		}
-		if isNew {
-			out.ChangedImages = append(out.ChangedImages, h.ref)
-			changed = append(changed, h)
+		wanted[h.ref] = struct{}{}
+	}
+	pulled := make(map[string]string, len(wanted))
+	for ref := range wanted {
+		pulled[ref] = m.localImageID(ctx, n, ref)
+	}
+	var names, unverified []string
+	for _, d := range decls {
+		if _, ok := wanted[d.image]; !ok {
 			continue
 		}
-		if hasContainer {
-			m.deployNote(ctx, fmt.Sprintf("%s：拉取后镜像与本机一致，无需重建", strings.Join(servicesOf(decls, []deployHunk{h}), "、")))
-			continue
+		changed, verified := deployServiceChange(entries, d.service, pulled[d.image])
+		if !verified {
+			unverified = append(unverified, d.service)
+		} else if changed {
+			names = append(names, d.service)
+			out.ChangedImages = append(out.ChangedImages, d.image)
 		}
-		// 没有容器的引用在退化路径里只把镜像拉到最新，不在这里创建容器。
-		out.ChangedImages = append(out.ChangedImages, h.ref)
 	}
 	out.ChangedImages = dedupeSorted(out.ChangedImages)
-
-	names := servicesOf(decls, changed)
+	if len(unverified) > 0 {
+		m.deployNote(ctx, fmt.Sprintf("%s：无法核实实际镜像身份，未重建。", strings.Join(unverified, "、")))
+	}
 	if len(names) == 0 {
-		m.deployNote(ctx, "拉取到的镜像与本机一致；未重建任何容器。")
+		if len(unverified) == 0 {
+			m.deployNote(ctx, "拉取到的镜像与本机一致；未重建任何容器。")
+		}
 		return out, nil
 	}
 
-	upArgs := append([]string{"up", "-d", "--"}, names...)
-	up := m.runStream(ctx, n, TimeoutLong, quietSink(), upArgs...)
-	if up.ExitCode != 0 {
-		// ============================ 失败必须回滚 ============================
-		//
-		// compose up 失败时容器可能停在半创建状态。本机原有镜像仍在，
-		// 再 up 一次会让 compose 用它重建，尽量把服务拉起来。
-		// 回滚也失败就如实报：这时服务确实不可用，不能假装成功。
-		m.deployNote(ctx, "启动新镜像失败，正在尝试用本机原有镜像回滚：")
-		rollback := m.runStream(ctx, n, TimeoutLong, quietSink(), upArgs...)
-		if rollback.ExitCode != 0 {
-			return out, safeErr("用新镜像重建 %s 失败，回滚也未成功；服务可能不可用，请立即查看容器日志",
-				strings.Join(names, "、"))
-		}
-		return out, safeErr("用新镜像重建 %s 失败，已用本机原有镜像回滚；服务仍运行在旧镜像上",
-			strings.Join(names, "、"))
-	}
-
-	// ============================ 第 5 步：按实际内容兜底 ============================
-	//
-	// 只在"清单查不到、但拉取确实拿到了新内容"时才会走到这里。
-	// 目的是不把服务落成"半更新"：镜像已新、容器仍是旧的。
-	if needForceRecreate(changed) {
-		force := append([]string{"up", "-d", "--force-recreate", "--"}, names...)
-		res := m.runStream(ctx, n, TimeoutLong, quietSink(), force...)
-		if res.ExitCode != 0 {
-			return out, safeErr("镜像已更新，但重建 %s 失败；容器可能仍在运行旧版本",
-				strings.Join(names, "、"))
-		}
+	// 已验证镜像 ID 变更，让 Compose 正常替换一次，不连带启动依赖，
+	// 不再拉取或构建，以免执行对象偏离刚核验的本机镜像。
+	upArgs := append([]string{"up", "-d", "--no-deps", "--no-build", "--pull", "never", "--"}, names...)
+	if up := m.runStream(ctx, n, TimeoutLong, quietSink(), upArgs...); up.ExitCode != 0 {
+		return out, safeErr("用新镜像重建 %s 失败，请查看任务输出和容器状态", strings.Join(names, "、"))
 	}
 
 	out.UpdatedServices = names
@@ -301,52 +282,6 @@ func (m *Manager) deployPull(ctx context.Context, n string, decls []serviceTag, 
 	return true
 }
 
-// imageChanged 判断拉取之后，该引用指向的内容与本机容器是否已经不同。
-//
-// 这是"第 4 步只重建真正变了的"的唯一依据：
-// 拉取成功不等于有新内容（镜像仓库代理重打标签、拉到的就是同一份）。
-func (m *Manager) imageChanged(ctx context.Context, n string, h deployHunk, local localImage) bool {
-	current := ""
-	if !h.id.known() {
-		// 退化路径才需要现查：ps 只给容器当前镜像 ID，
-		// "这个引用现在指向哪份内容"要再查一次本机镜像列表才能回答。
-		current = m.localImageID(ctx, n, h.ref)
-	}
-	return changedAfterPull(h, local, current)
-}
-
-// changedAfterPull 是"拉取后内容有没有变"的纯判定。
-//
-// current 只在远端身份未知时才会被用到；其它情况传空串即可。
-func changedAfterPull(h deployHunk, local localImage, current string) bool {
-	switch {
-	case h.id.digest != "":
-		// 有远端摘要：与本机 RepoDigests 比对（按仓库+摘要，不是只比摘要）。
-		return !hasRepoDigest(local.digests, h.ref, h.id.digest)
-	case h.id.imageID != "":
-		// 只有镜像 ID（本地构建/导入的镜像）：直接与容器镜像 ID 比。
-		return h.id.imageID != local.imageID
-	default:
-		// 查不到引用当前指向什么时按"变了"处理：
-		// 宁可多重建一次，也不要落成"镜像已新、容器仍旧"的半更新状态。
-		return current == "" || current != local.imageID
-	}
-}
-
-// localImageID 读本机某引用当前对应的镜像 ID（读不到返回空串）。
-func (m *Manager) localImageID(ctx context.Context, n, ref string) string {
-	// docker images 也是 docker 本体命令：写成 compose images 会按服务名过滤，
-	// 而我们手里是镜像引用。
-	res := m.probeDocker(ctx, n, TimeoutShort, "images", "--format", "{{.ID}}", ref)
-	if res.ExitCode != 0 {
-		return ""
-	}
-	if lines := splitLines(res.Stdout); len(lines) > 0 {
-		return strings.TrimSpace(lines[0])
-	}
-	return ""
-}
-
 // selfHunks 把引用列表转成只有引用的条目（用于"全部无法判定"的退化路径）。
 func selfHunks(images []string) []deployHunk {
 	out := make([]deployHunk, 0, len(images))
@@ -354,19 +289,6 @@ func selfHunks(images []string) []deployHunk {
 		out = append(out, deployHunk{ref: ref})
 	}
 	return out
-}
-
-// needForceRecreate 判断是否需要额外一次强制重建。
-//
-// 只有"远端身份未知却拉到了新内容"才需要：此时 compose 可能认为镜像没变，
-// 只跑 up 不会换掉容器。
-func needForceRecreate(hunks []deployHunk) bool {
-	for _, h := range hunks {
-		if !h.id.known() {
-			return true
-		}
-	}
-	return false
 }
 
 // servicesOf 反查这些镜像引用对应的服务名（去重、排序）。

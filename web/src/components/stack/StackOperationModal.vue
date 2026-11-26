@@ -243,7 +243,7 @@ const updatedServices = computed<string[] | null>(() => {
 const updatedText = computed(() => {
   const list = updatedServices.value
   if (list === null) return ''
-  if (list.length === 0) return '本次没有更新任何服务：镜像已是最新，容器没有被重建。'
+  if (list.length === 0) return '本次没有更新任何服务，容器未重建。具体原因见执行日志。'
   return `本次已更新 ${String(list.length)} 个服务：${list.join('、')}`
 })
 

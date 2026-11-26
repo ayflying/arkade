@@ -12,7 +12,7 @@ func TestSettingsCASAndRegistrationTransaction(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	s, err := db.GetSystemSettings(ctx)
-	if err != nil || s.Version != 1 || s.RegistrationEnabled {
+	if err != nil || s.SessionTTLSeconds != 30*24*60*60 || s.RegistrationEnabled {
 		t.Fatal(s, err)
 	}
 	u := mkUser("new", "new", user.RoleAdmin)
@@ -27,10 +27,10 @@ func TestSettingsCASAndRegistrationTransaction(t *testing.T) {
 	if err := db.UpdateSystemSettings(ctx, s, s.Version); !errors.Is(err, ErrConflict) {
 		t.Fatal("stale settings", err)
 	}
-	if err := db.RegisterLocalUser(ctx, u, 1); !errors.Is(err, ErrRegistrationSettingsChanged) {
+	if err := db.RegisterLocalUser(ctx, u, s.Version); !errors.Is(err, ErrRegistrationSettingsChanged) {
 		t.Fatal(err)
 	}
-	if err := db.RegisterLocalUser(ctx, u, 2); err != nil {
+	if err := db.RegisterLocalUser(ctx, u, s.Version+1); err != nil {
 		t.Fatal(err)
 	}
 	got, err := db.GetUserByID(ctx, u.ID)

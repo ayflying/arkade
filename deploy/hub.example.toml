@@ -21,8 +21,9 @@ dsn = "host=localhost port=5432 user=arkade dbname=arkade sslmode=disable"
 [auth]
 # 与数据库地址解耦；备份数据库时同时备份此文件。
 settings_key_file = "./data/settings.key"
-# 登录会话有效期，支持 30m / 24h / 72h 这类写法
-session_ttl = "72h"
+# 会话有效期的回退值（30 天）；运行时以管理后台的系统设置为准。
+# 可用 SESSION_TTL 覆盖此回退值，使用 Go 时长格式，例如 24h 或 720h。
+session_ttl = "720h"
 # Agent 反向连接使用的预共享 Token，至少 16 位。
 #
 # 【安全约定】必须留空，用环境变量 AGENT_TOKEN 注入。

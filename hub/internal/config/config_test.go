@@ -316,7 +316,7 @@ func TestSessionTTLUsesCanonicalEnvironmentOnly(t *testing.T) {
 	t.Setenv("SESSION_TTL", "")
 	cfg = Default()
 	applyEnv(&cfg)
-	if cfg.Auth.SessionTTL != 72*time.Hour {
+	if cfg.Auth.SessionTTL != 30*24*time.Hour {
 		t.Fatalf("非标准环境变量不应生效: %v", cfg.Auth.SessionTTL)
 	}
 }

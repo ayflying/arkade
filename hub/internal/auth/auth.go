@@ -27,8 +27,8 @@ import (
 const (
 	CookieName = "arkade_session"
 	CookiePath = "/"
-	// 会话有效期由配置注入，这里只定义默认值。
-	defaultSessionTTL = 72 * time.Hour
+	// 未装配数据库认证策略时使用配置或此默认值。
+	defaultSessionTTL = 30 * 24 * time.Hour
 )
 
 // ErrInvalidCredentials 表示用户名或密码错误。
@@ -145,7 +145,7 @@ func (s *Service) Logout(ctx context.Context, token string) error {
 	return s.db.DeleteSession(ctx, hashToken(token))
 }
 
-// SessionTTL 返回会话有效期，供 HTTP 层设置 Cookie MaxAge。
+// SessionTTL 返回回退会话有效期，不读取数据库认证策略。
 func (s *Service) SessionTTL() time.Duration { return s.sessionTTL }
 
 // newToken 生成 32 字节随机令牌并做 base64url 编码。

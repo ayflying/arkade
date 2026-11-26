@@ -16,6 +16,9 @@ package compose
 // 这两条一旦退化，功能表面上"仍然能用"，危害却最大。
 
 import (
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
 	"runtime"
 	"slices"
 	"strings"
@@ -199,25 +202,6 @@ func TestRunningLocalImages(t *testing.T) {
 	}
 }
 
-// TestNeedForceRecreate 验证只有"远端未知"才需要额外强制重建。
-func TestNeedForceRecreate(t *testing.T) {
-	if needForceRecreate(nil) {
-		t.Error("空列表不需要强制重建")
-	}
-	known := deployHunk{ref: "a", id: manifestIdentity{digest: "sha256:1"}}
-	if needForceRecreate([]deployHunk{known}) {
-		t.Error("有远端身份时不需要强制重建")
-	}
-	// 只有镜像 ID 也算"已知"：那种情况 compose 也能识别镜像变了。
-	byID := deployHunk{ref: "b", id: manifestIdentity{imageID: "sha256:2"}}
-	if needForceRecreate([]deployHunk{byID}) {
-		t.Error("只有镜像 ID 时不需要强制重建")
-	}
-	if !needForceRecreate([]deployHunk{{ref: "a"}, known}) {
-		t.Error("含未知身份的条目时需要强制重建")
-	}
-}
-
 // TestServicesOf 验证按镜像引用反查服务名。
 func TestServicesOf(t *testing.T) {
 	decls := []serviceTag{{"web", "nginx:1.25"}, {"sidecar", "nginx:1.25"}, {"db", "postgres:16"}}
@@ -340,78 +324,6 @@ func TestPlanDeployWith(t *testing.T) {
 	}
 }
 
-// TestChangedAfterPull 验证"拉取后内容有没有变"的判定。
-//
-// 拉取成功不等于有新内容：镜像仓库可能重打了同一个标签。
-// 若这里判错，就会出现"每次都重建"（白停服务）或"从不重建"（镜像新、容器旧）。
-func TestChangedAfterPull(t *testing.T) {
-	cases := []struct {
-		name    string
-		hunk    deployHunk
-		local   localImage
-		current string
-		want    bool
-		reason  string
-	}{
-		{
-			name:   "远端摘要已在本机 → 没变",
-			hunk:   deployHunk{ref: "nginx:1", id: manifestIdentity{digest: "sha256:new"}},
-			local:  localImage{imageID: "sha256:c", digests: []string{"nginx@sha256:new"}},
-			want:   false,
-			reason: "拉到的是同一份内容，重建一次纯属浪费",
-		},
-		{
-			name:   "远端摘要不在本机 → 变了",
-			hunk:   deployHunk{ref: "nginx:1", id: manifestIdentity{digest: "sha256:new"}},
-			local:  localImage{imageID: "sha256:c", digests: []string{"nginx@sha256:old"}},
-			want:   true,
-			reason: "不重建就会让镜像新、容器旧",
-		},
-		{
-			name:    "远端未知且引用已指向新 ID → 变了",
-			hunk:    deployHunk{ref: "app:local"},
-			local:   localImage{imageID: "sha256:old"},
-			current: "sha256:new",
-			want:    true,
-		},
-		{
-			name:    "远端未知且引用仍指向旧 ID → 没变",
-			hunk:    deployHunk{ref: "app:local"},
-			local:   localImage{imageID: "sha256:old"},
-			current: "sha256:old",
-			want:    false,
-		},
-		{
-			name:    "远端未知且查不到引用 → 按变了处理",
-			hunk:    deployHunk{ref: "app:local"},
-			local:   localImage{imageID: "sha256:old"},
-			current: "",
-			want:    true,
-			reason:  "宁可多重建一次，也不要落成半更新状态",
-		},
-		{
-			name:  "远端只给镜像 ID 且不同 → 变了",
-			hunk:  deployHunk{ref: "app:local", id: manifestIdentity{imageID: "sha256:new"}},
-			local: localImage{imageID: "sha256:old"},
-			want:  true,
-		},
-		{
-			name:  "远端只给镜像 ID 且相同 → 没变",
-			hunk:  deployHunk{ref: "app:local", id: manifestIdentity{imageID: "sha256:old"}},
-			local: localImage{imageID: "sha256:old"},
-			want:  false,
-		},
-	}
-
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := changedAfterPull(c.hunk, c.local, c.current); got != c.want {
-				t.Errorf("期望 %v 实际 %v（%s）", c.want, got, c.reason)
-			}
-		})
-	}
-}
-
 /* ───────────────────────── 6. 端到端（假 docker，仅 Linux） ───────────────────────── */
 
 // deployScript 生成假 docker：按 argv 分派，并可控制每条命令的结果。
@@ -433,6 +345,32 @@ func TestChangedAfterPull(t *testing.T) {
 //   - localIDs：「查本机某引用当前指向哪份内容」时用（docker images <ref>）。
 //   - pullExit：pull 的退出码。
 func deployScript(configCommand, psJSON string, remote, localIDs map[string]string, pullExit int) string {
+	var fixture []struct {
+		psEntry
+		TestID      string   `json:"ImageID"`
+		TestDigests []string `json:"RepoDigests"`
+	}
+	if err := json.Unmarshal([]byte(psJSON), &fixture); err != nil {
+		panic(err)
+	}
+	entries := make([]psEntry, 0, len(fixture))
+	var probes strings.Builder
+	for i, f := range fixture {
+		f.ID = fmt.Sprintf("container-%d", i)
+		entries = append(entries, f.psEntry)
+		id := f.TestID
+		if id == "" {
+			id = "old:" + f.Image
+		}
+		if id != "unavailable" {
+			full := testDeployID(id)
+			fmt.Fprintf(&probes, "if [ \"$1 $6\" = 'container %s' ]; then printf '%%s' '%s'; exit 0; fi\n", f.ID, full)
+			ds, _ := json.Marshal(f.TestDigests)
+			fmt.Fprintf(&probes, "if [ \"$1 $6\" = 'image %s' ]; then printf '%%s' '%s'; exit 0; fi\n", full, ds)
+		}
+	}
+	encoded, _ := json.Marshal(entries)
+	psJSON = string(encoded)
 	script := `
 if [ "$1" = "manifest" ]; then
   ref="$3"
@@ -441,12 +379,13 @@ if [ "$1" = "manifest" ]; then
   esac
   exit 1
 fi
-if [ "$1" = "images" ]; then
-  ref="$4"
+` + probes.String() + `
+if [ "$1" = "image" ] && [ "$2" = "inspect" ]; then
+  ref="$6"
   case "$ref" in
 ` + manifestCases(localIDs, "__LOCAL_") + `
   esac
-  exit 0
+  exit 1
 fi
 if [ "$1" = "compose" ]; then
   case "$*" in
@@ -477,7 +416,8 @@ if [ "$1" = "compose" ]; then
       shift
       [ "$1" = "-d" ] || exit 1
       shift
-      if [ "$1" = "--force-recreate" ]; then shift; fi
+      [ "$1 $2 $3 $4" = "--no-deps --no-build --pull never" ] || exit 1
+       shift 4
       [ "$1" = "--" ] || exit 1
       shift
       [ "$#" -gt 0 ] || exit 1
@@ -500,7 +440,7 @@ exit 1
 		script = strings.ReplaceAll(script, "sha256:__REMOTE_"+repo, digest)
 	}
 	for repo, id := range localIDs {
-		script = strings.ReplaceAll(script, "__LOCAL_"+repo, id)
+		script = strings.ReplaceAll(script, "__LOCAL_"+repo, testDeployID(id))
 	}
 	return script
 }
@@ -509,6 +449,8 @@ exit 1
 //
 // 单清单形态：config.digest 就是比对目标，因此直接把它设成该引用的远端摘要。
 // 两个分支（单清单 / 清单列表）都给，避免"只有一种形态被测到"。
+func testDeployID(id string) string { return fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(id))) }
+
 func manifestCases(table map[string]string, marker string) string {
 	var b strings.Builder
 	for repo := range table {
@@ -612,7 +554,7 @@ func TestDeployPullsOnlyChangedService(t *testing.T) {
 	         "RepoDigests":["postgres@sha256:same"]}]`
 	remote := map[string]string{"nginx:1.25": "sha256:new", "postgres:16": "sha256:same"}
 
-	final := startDeploy(t, composeContent, "", deployScript(twoServiceConfig, ps, remote, nil, 0), "deploy-up-1")
+	final := startDeploy(t, composeContent, "", deployScript(twoServiceConfig, ps, remote, map[string]string{"nginx:1.25": "new"}, 0), "deploy-up-1")
 
 	if final.Status != PullSucceeded {
 		t.Fatalf("应成功，实际 %s: %s", final.Status, final.Error)
@@ -719,8 +661,32 @@ func TestDeployUnknownManifestDegradesToPull(t *testing.T) {
 	if !sawPull {
 		t.Fatal("退化路径应执行拉取")
 	}
-	if !sawUp {
+	if !sawUp || len(cmdEvents(final)) != 2 {
 		t.Fatal("拉到了新内容时应重建（否则镜像新、容器旧）")
+	}
+}
+
+// A successful pull is not proof of an image change, even without a remote manifest.
+func TestDeployPullDoesNotRecreateUnchangedOrUnverified(t *testing.T) {
+	requireLinux(t)
+	const config = `printf '%s' '{"services":{"web":{"image":"nginx:1.25"}}}'`
+	for _, tc := range []struct{ name, running, pulled string }{
+		{"same image", "old", "old"},
+		{"container identity unavailable", "unavailable", "new"},
+		{"pulled identity unavailable", "old", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ps := fmt.Sprintf(`[{"Service":"web","State":"running","Image":"nginx:1.25","ImageID":%q}]`, tc.running)
+			var ids map[string]string
+			if tc.pulled != "" {
+				ids = map[string]string{"nginx:1.25": tc.pulled}
+			}
+			final := startDeploy(t, composeContent, "", deployScript(config, ps, nil, ids, 0), "deploy-unknown-no-recreate")
+			cmds := cmdEvents(final)
+			if final.Status != PullSucceeded || len(cmds) != 1 || !strings.HasSuffix(cmds[0], " pull -- web") || len(final.UpdatedServices) != 0 {
+				t.Fatalf("expected only pull, got status=%s commands=%v services=%v error=%s", final.Status, cmds, final.UpdatedServices, final.Error)
+			}
+		})
 	}
 }
 
@@ -766,12 +732,12 @@ func TestDeployComposeConfigRegression(t *testing.T) {
       IFS= read -r assignment < "$5"
       [ "$assignment" = "ARK_TEST_TAG=from-dotenv" ] || exit 26
       printf '%s' '{"services":{"web":{"restart":"unless-stopped","image":"example.invalid/team/web:1","environment":{"NORMALIZED_CONFIG_PROBE":"` + secret + `"}},"db":{"image":"example.invalid/team/db:from-dotenv"}}}'`
-	final := startDeploy(t, content, "ARK_TEST_TAG=from-dotenv\n", deployScript(config, ps, remote, nil, 0), "deploy-real-config")
+	final := startDeploy(t, content, "ARK_TEST_TAG=from-dotenv\n", deployScript(config, ps, remote, map[string]string{"example.invalid/team/web:1": "new"}, 0), "deploy-real-config")
 	if final.Status != PullSucceeded || !slices.Equal(final.UpdatedServices, []string{"web"}) {
 		t.Fatalf("应只更新 web，实际状态 %s，更新服务 %v，错误 %q", final.Status, final.UpdatedServices, final.Error)
 	}
 	cmds := cmdEvents(final)
-	if len(cmds) != 2 || !strings.HasSuffix(cmds[0], " pull -- web") || !strings.HasSuffix(cmds[1], " up -d -- web") {
+	if len(cmds) != 2 || !strings.HasSuffix(cmds[0], " pull -- web") || !strings.HasSuffix(cmds[1], " up -d --no-deps --no-build --pull never -- web") {
 		t.Fatalf("应只拉取并重建 web，实际命令 %v", cmds)
 	}
 	if !slices.Contains(streamEvents(final, "stdout"), "pulling...") {

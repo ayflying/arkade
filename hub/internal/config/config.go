@@ -42,7 +42,7 @@ type DatabaseConfig struct {
 
 // AuthConfig 是登录与会话配置。
 type AuthConfig struct {
-	SessionTTL                time.Duration `toml:"session_ttl"`                  // 登录会话有效期
+	SessionTTL                time.Duration `toml:"session_ttl"`                  // 回退会话有效期；运行时以数据库系统设置为准
 	AgentToken                string        `toml:"agent_token"`                  // 首期 Agent 接入的预共享 Token（简化版）
 	InitialUser               string        `toml:"initial_user"`                 // 首次启动时创建的管理员用户名
 	InitialPass               string        `toml:"initial_pass"`                 // 首次启动时创建的管理员密码
@@ -66,7 +66,7 @@ func Default() Config {
 		Database: DatabaseConfig{DSN: "host=localhost port=5432 user=arkade dbname=arkade sslmode=disable"},
 		Auth: AuthConfig{
 			SettingsKeyFile: "/data/settings.key",
-			SessionTTL:      72 * time.Hour,
+			SessionTTL:      30 * 24 * time.Hour,
 			AgentToken:      "",
 			InitialUser:     "admin",
 			InitialPass:     "",
@@ -134,7 +134,7 @@ func applyEnv(cfg *Config) {
 	if v, ok := os.LookupEnv("AGENT_CONNECT_PREFIX"); ok {
 		cfg.Server.AgentConnectPrefix = v
 	}
-	// 会话有效期仅使用标准 duration，例如 SESSION_TTL=72h。
+	// 回退会话有效期仅使用标准 duration，例如 SESSION_TTL=720h。
 	if v := os.Getenv("SESSION_TTL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d > 0 {
 			cfg.Auth.SessionTTL = d

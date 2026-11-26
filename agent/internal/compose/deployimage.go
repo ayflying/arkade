@@ -81,9 +81,8 @@ type localImage struct {
 
 // runningLocalImages 把 compose ps 的结果整理成 引用 → 本机镜像。
 //
-// 同一条引用跑着多个副本时取第一个：它们应当指向同一份内容；
-// 真不一致（部分副本已更新）时"至少有一个是旧的"，
-// 取第一个正好会判为"需要更新"，方向是安全的。
+// 同一引用的容器必须全都使用同一份镜像，远端身份才可用于提前跳过。
+// 副本不一致或身份缺失时，保留空身份，拉取后按服务逐个核对。
 func runningLocalImages(entries []psEntry) map[string]localImage {
 	out := make(map[string]localImage, len(entries))
 	for _, e := range entries {
@@ -91,10 +90,18 @@ func runningLocalImages(entries []psEntry) map[string]localImage {
 		if ref == "" {
 			continue
 		}
-		if _, dup := out[ref]; dup {
+		id := strings.TrimSpace(e.ImageID)
+		if previous, dup := out[ref]; dup {
+			if previous.imageID != id || id == "" {
+				out[ref] = localImage{}
+			}
 			continue
 		}
-		out[ref] = localImage{imageID: strings.TrimSpace(e.ImageID), digests: e.RepoDigests}
+		if id != "" {
+			out[ref] = localImage{imageID: id, digests: e.RepoDigests}
+		} else {
+			out[ref] = localImage{}
+		}
 	}
 	return out
 }
