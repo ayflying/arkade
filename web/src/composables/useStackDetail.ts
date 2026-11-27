@@ -1,4 +1,4 @@
-import { onUnmounted, ref, shallowRef, watch } from 'vue'
+import { onScopeDispose, ref, shallowRef, watch } from 'vue'
 import { getUnifiedStack } from '@/api/stacks'
 import type { UnifiedStack } from '@/types/stack'
 import type { Container } from '@/types/container'
@@ -9,20 +9,49 @@ export function useStackDetail(target: () => readonly [string, string]) {
   const containers = shallowRef<Container[]>([])
   const loading = ref(false), error = ref(''), containersError = ref('')
   let seq = 0
-  async function load() {
+  let refreshTimer: ReturnType<typeof setTimeout> | undefined
+
+  function stopRefresh() {
+    clearTimeout(refreshTimer)
+    refreshTimer = undefined
+  }
+
+  async function fetchDetail(background: boolean) {
+    stopRefresh()
     const snapshot = target(), mine = ++seq
+    loading.value = !background && Boolean(snapshot[0] && snapshot[1])
     if (!snapshot[0] || !snapshot[1]) return
-    loading.value = true; error.value = ''
+    if (!background) error.value = ''
     try {
       const res = await getUnifiedStack(...snapshot)
       if (mine !== seq || !sameStackTarget(snapshot, target())) return
-      stack.value = res.stack; containers.value = res.containers; containersError.value = res.containers_error ?? ''
+      stack.value = res.stack
+      containers.value = res.containers
+      containersError.value = res.containers_error ?? ''
+      error.value = ''
     } catch (err) {
       if (mine !== seq || !sameStackTarget(snapshot, target())) return
       error.value = err instanceof Error ? err.message : '加载编排详情失败'
-    } finally { if (mine === seq) loading.value = false }
+    } finally {
+      if (mine === seq && sameStackTarget(snapshot, target())) {
+        loading.value = false
+        // 页面可能在任务进行中打开，此时没有操作弹窗通知它何时刷新。
+        // 上次读取结束后才安排下一次，避免请求重叠；忙碌状态解除后停止。
+        if (stack.value?.status === 'busy') {
+          refreshTimer = setTimeout(() => { void fetchDetail(true) }, 5000)
+        }
+      }
+    }
   }
-  watch(target, () => { seq++; stack.value = null; containers.value = []; error.value = ''; void load() }, { immediate: true })
-  onUnmounted(() => { seq++; stack.value = null; containers.value = [] })
+
+  const load = () => fetchDetail(false)
+  watch(target, () => {
+    stack.value = null
+    containers.value = []
+    containersError.value = ''
+    error.value = ''
+    void load()
+  }, { immediate: true })
+  onScopeDispose(() => { seq++; stopRefresh() })
   return { stack, containers, containersError, loading, error, load }
 }

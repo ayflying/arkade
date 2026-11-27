@@ -9,6 +9,7 @@ import ManagedStackConfigPanel from '@/components/stack/ManagedStackConfigPanel.
 import ExternalStackConfigSection from '@/components/stack/ExternalStackConfigSection.vue'
 import ManagedStackActions from '@/components/stack/ManagedStackActions.vue'
 import StackStateTag from '@/components/stack/StackStateTag.vue'
+import { stackContainerCounts } from '@/components/stack/stackDetailModel'
 import { useCurrentAgent } from '@/composables/useCurrentAgent'
 import { useStackDetail } from '@/composables/useStackDetail'
 import { useAutoAdoptRetry } from '@/composables/useAutoAdoptRetry'
@@ -27,6 +28,9 @@ const state = computed<StackState>(() => {
   return ['running', 'stopped', 'partial', 'offline', 'busy'].includes(value ?? '') ? value as StackState : 'unknown'
 })
 const managed = computed(() => stack.value?.managed === true ? stack.value : null)
+const counts = computed(() => stack.value
+  ? stackContainerCounts(stack.value, detail.containers.value, detail.containersError.value)
+  : null)
 watch(projectKey, () => { activeTab.value = 'containers' })
 // 重试只清掉"已暂停自动扫描"的结论，真正的扫描由后台下一轮完成。
 const adoptRetry = useAutoAdoptRetry(
@@ -51,7 +55,7 @@ function back() { void router.push({ name: 'agent-stacks', params: { id: agentId
         <div class="stack-detail__identity">
           <stack-state-tag :state="state" />
           <n-tag size="small" :bordered="false">{{ stack.managed ? '已纳管' : '外部项目' }}</n-tag>
-          <span class="stack-detail__counts">{{ stack.running ?? '—' }} / {{ stack.total ?? '—' }} 个容器运行中</span>
+          <span class="stack-detail__counts">{{ counts?.running ?? '—' }} / {{ counts?.total ?? '—' }} 个容器运行中</span>
         </div>
         <n-alert v-if="!isOnline" type="warning" :bordered="false">服务器离线，无法获取实时容器与日志，执行操作暂不可用。</n-alert>
         <n-alert v-if="managed?.drift" type="warning" :bordered="false" title="配置漂移">服务器上的 compose.yml 与 Hub 记录不一致。保存并部署会覆盖服务器配置，请先确认线上改动。</n-alert>

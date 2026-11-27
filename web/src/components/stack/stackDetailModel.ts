@@ -1,4 +1,16 @@
 import type { Container } from '@/types/container'
+import type { UnifiedStack } from '@/types/stack'
+
+/** 忙碌时汇总未采样，优先用独立查询得到的实际容器列表。 */
+export function stackContainerCounts(
+  stack: Pick<UnifiedStack, 'status' | 'running' | 'total'>,
+  containers: readonly Pick<Container, 'state'>[],
+  containersError: string
+) {
+  if (stack.status !== 'busy') return { running: stack.running, total: stack.total }
+  if (containersError) return { running: null, total: null }
+  return { running: containers.filter(({ state }) => state === 'running').length, total: containers.length }
+}
 
 /**
  * 容器网络信息的一行：网络名与地址分开。

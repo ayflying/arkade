@@ -95,16 +95,13 @@ test('metrics and engine state expire, including timestamps ahead of the browser
   assert.equal(row(ahead, now + 60_000).sample, null)
 })
 
-test('dashboard owns exactly one server list reader; resource reads are single-server only', () => {
+test('dashboard owns exactly one server list reader and has no single-server resource section', () => {
   const readSource = (path) => readFileSync(new URL(`../src/${path}`, import.meta.url), 'utf8')
   const page = readSource('views/OverviewView.vue')
   const sync = readSource('composables/useAgentStatusSync.ts')
-  const detail = readSource('api/overview.ts')
   assert.equal([...page.matchAll(/await listAgents\(/g)].length, 1)
   assert.match(page, /usePolling\(refresh,/)
-  assert.match(page, /if \(selected\) void loadDetails\(selected\.id\)/)
-  assert.match(page, /if \(id && selectedAgent\.value\) void loadDetails\(id\)/)
-  assert.match(page, /detailController\?\.abort\(/)
+  assert.match(page, /aria-labelledby="fleet-heading"/)
+  assert.doesNotMatch(page, /单台服务器资源|<n-select\b|<stat-card\b|loadAgentOverview|selectedAgentId/)
   assert.match(sync, /route\.name !== 'overview'/)
-  assert.doesNotMatch(detail, /listAgents|\.map\(.*loadAgentOverview/)
 })

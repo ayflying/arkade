@@ -32,6 +32,10 @@ assert.equal(model.networkAddressText({ name: 'x', ipv4: '', ipv6: 'fd00::9' }),
 assert.equal(model.sameStackTarget(['a', 'one'], ['a', 'two']), false)
 assert.equal(model.sameStackTarget(['a', 'one'], ['b', 'one']), false)
 assert.equal(model.sameStackTarget(['a', 'one'], ['a', 'one']), true)
+const busy = { status: 'busy', running: 0, total: 0 }
+assert.deepEqual(model.stackContainerCounts(busy, [{ state: 'running' }, { state: 'running' }], ''), { running: 2, total: 2 })
+assert.deepEqual(model.stackContainerCounts(busy, [], '查询失败'), { running: null, total: null })
+assert.deepEqual(model.stackContainerCounts({ ...busy, status: 'stopped' }, [], ''), { running: 0, total: 0 })
 
 // Compile every new SFC, including the real templates (not regex-only source tests).
 const components = ['views/StackDetailView.vue', 'components/stack/ManagedStackConfigPanel.vue', 'components/stack/ManagedStackActions.vue', 'components/stack/ExternalStackConfigSection.vue', 'components/stack/StackContainersTable.vue', 'components/stack/StackContainerLogs.vue']
@@ -82,6 +86,56 @@ assert.equal(owned.stack.total, null)
 assert.equal(owned.containers_error, 'offline')
 assert.deepEqual(owned.containers, [])
 apiHook.deregister()
+
+// 用真实 Vue 生命周期验证：进入忙碌详情后自动刷新，恢复后停止，离开也清掉计时器。
+const detailHook = registerHooks({ resolve(specifier, context, next) {
+  if (context.parentURL?.includes('/composables/useStackDetail.ts')) {
+    if (specifier === '@/api/stacks') return { url: new URL('../src/api/stacks.ts', import.meta.url).href, shortCircuit: true }
+    if (specifier === '@/components/stack/stackDetailModel') return { url: new URL('../src/components/stack/stackDetailModel.ts', import.meta.url).href, shortCircuit: true }
+  }
+  return next(specifier, context)
+} })
+const { useStackDetail } = await import('../src/composables/useStackDetail.ts')
+detailHook.deregister()
+const { effectScope, ref, nextTick } = await import('vue')
+const actualSetTimeout = globalThis.setTimeout, actualClearTimeout = globalThis.clearTimeout
+const timers = new Map()
+let timerID = 0
+const scope = effectScope()
+try {
+  globalThis.setTimeout = (fn, delay) => {
+    assert.equal(delay, 5000)
+    timers.set(++timerID, fn)
+    return timerID
+  }
+  globalThis.clearTimeout = id => timers.delete(id)
+  const project = ref('managed')
+  const settle = () => new Promise(resolve => setImmediate(resolve))
+  response = { stack: { name: 'managed', managed: true, status: 'busy' }, containers: [] }
+  const detail = scope.run(() => useStackDetail(() => ['a', project.value]))
+  await settle()
+  assert.equal(detail.stack.value.status, 'busy')
+  assert.equal(timers.size, 1)
+  const [id, tick] = timers.entries().next().value
+  timers.delete(id)
+  response = { stack: { name: 'managed', managed: true, status: 'running' }, containers: [] }
+  tick()
+  await settle()
+  assert.equal(detail.stack.value.status, 'running')
+  assert.equal(timers.size, 0)
+  response = { stack: { name: 'another', managed: true, status: 'busy' }, containers: [] }
+  project.value = 'another'
+  await nextTick()
+  await settle()
+  assert.equal(called, '/agents/a/stacks/another')
+  assert.equal(timers.size, 1)
+  scope.stop()
+  assert.equal(timers.size, 0)
+} finally {
+  scope.stop()
+  globalThis.setTimeout = actualSetTimeout
+  globalThis.clearTimeout = actualClearTimeout
+}
 delete globalThis.__UNIFIED_CALL__
 delete globalThis.__UNIFIED_RESPONSE__
 const view = source('src/views/StackDetailView.vue')

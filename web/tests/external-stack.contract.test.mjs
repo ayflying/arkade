@@ -569,34 +569,6 @@ check(
 )
 check('容器表: 视图在概览下方接入', /<stack-containers-table/.test(detailSrc))
 
-/* ───────── 总览页未纳管告警的措辞与跳转 ───────── */
-
-/*
- * 旧的「未登记因此无法通过 Arkade 管理」在外部项目详情上线后就不成立了：
- * 现在能看容器、日志与配置草稿。文案错了会让用户以为那些项目完全没法看。
- */
-const overviewSrc = readFileSync(join(here, '..', 'src', 'views', 'OverviewView.vue'), 'utf8')
-
-check(
-  '总览: 不再宣称未纳管项目无法通过 Arkade 管理',
-  !/因此无法通过 Arkade 管理/.test(overviewSrc),
-  '旧文案仍会说未纳管项目完全无法管理'
-)
-check(
-  '总览: 说明可进入外部项目查看容器/日志/配置草稿',
-  /可进入外部项目查看容器、日志与配置草稿/.test(overviewSrc)
-)
-check(
-  '总览: 未纳管项直达外部详情',
-  /:to="enterExternalStack\(selection\.agentId, stack\)"/.test(overviewSrc) &&
-    /agent-stack-external-detail/.test(overviewSrc)
-)
-// 漂移项仍然只跳列表：它不是外部项目，没有 external 详情页
-check(
-  '总览: 漂移项仍跳编排列表，不被误改',
-  /:to="enterStacks\(selection\.agentId\)"/.test(overviewSrc)
-)
-
 /* ───────── 路由与视图接线（源码级） ───────── */
 
 const routerSrc = readFileSync(join(here, '..', 'src', 'router', 'index.ts'), 'utf8')
@@ -666,7 +638,7 @@ check('API: 没有 external/logs 端点', !/\/logs/.test(readFileSync(join(here,
 // 统一详情仅按 managed 分流配置，复用容器和日志。
 check('统一详情: 配置能力按 managed 分支装配', /<managed-stack-config-panel v-if="managed"/.test(detailSrc) && /<external-stack-config-section v-else/.test(detailSrc))
 check('统一详情: 配置不重复请求旧 external 详情', /configOnly: true/.test(viewSrc) && /if \(!options.configOnly\) void loadDetail\(\)/.test(storeSrc))
-check('统一详情: 请求有序号和目标快照双重 async guard', /mine !== seq \|\| !sameStackTarget\(snapshot, target\(\)\)/.test(unifiedStoreSrc) && /onUnmounted/.test(unifiedStoreSrc))
+check('统一详情: 请求有序号和目标快照双重 async guard', /mine !== seq \|\| !sameStackTarget\(snapshot, target\(\)\)/.test(unifiedStoreSrc) && /onScopeDispose/.test(unifiedStoreSrc))
 check('登记: 预检阻塞时不可到达确认和登记', /if \(!pre.can_import\) \{[^]*?return[^]*?confirmAction[^]*?applyExternalStack/.test(viewSrc))
 check('登记: 显式确认并带预检哈希', /await confirmAction/.test(viewSrc) && /expected_content_hash: pre.config_hash/.test(viewSrc) && /confirmation: true/.test(viewSrc))
 check('配置动作: 已卸载组件不得接受迟到回执', /onUnmounted\(\(\) => \{ alive = false \}\)/.test(viewSrc) && (viewSrc.match(/if \(!alive\) return/g) ?? []).length >= 6)
