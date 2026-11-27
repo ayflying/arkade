@@ -197,20 +197,33 @@ func (c *Controller) GetOperation(ctx context.Context, r *api.GetOperationReq) (
 	return c.operationResponse(ctx, op, task, 200)
 }
 func (c *Controller) operationResponse(ctx context.Context, op store.ComposeOperation, task envelope.ComposeOperationResult, status int) (*api.OperationRes, error) {
+	syncWarning := ""
 	if task.Status == "succeeded" || task.Status == "failed" {
 		done, e := c.d.DB.FinalizeComposeOperation(ctx, op, task.Status == "succeeded")
 		if e != nil {
 			return nil, c.storeError(e, "执行结束但Hub状态尚未确认，请重试读取")
 		}
 		op = done
+		// Agent 真的执行完了，状态就必须如实保留 succeeded。
+		//
+		// 以前这里把"Hub 没能记下这次同步"一律改写成 failed + 退出码 -1，
+		// 日志里明明容器都 Started 了，界面却报"执行失败"，
+		// 用户自然会以为保存没生效、配置被回滚了。真正发生的事是：
+		// 执行成功，但配置在这期间又被改过，所以不能把新记录标记为已同步。
+		//
+		// 删除是例外：记录没删掉就是真的没完成，必须如实报失败。
 		if done.FinalError != "" && task.Status == "succeeded" {
-			code := -1
-			task.Status = "failed"
-			task.Error = "服务器执行已结束，但编排配置已被修改或移除，Hub未覆盖新记录；请刷新确认"
-			task.ExitCode = &code
+			if op.Action == "remove" {
+				code := -1
+				task.Status = "failed"
+				task.Error = "服务器执行已结束，但编排在这期间被改过，Hub 没有删除记录；请刷新确认后再重试"
+				task.ExitCode = &code
+			} else {
+				syncWarning = "本次执行已完成，但编排配置在这期间又被保存或删除过，因此没有把它标记为「已同步」。请确认当前配置是否需要再部署一次。"
+			}
 		}
 	}
 	secret(ctx)
 	controller.Status(ctx, status)
-	return &api.OperationRes{Task: &api.OperationTask{ComposeOperationResult: task, StackVersion: op.StackVersion, RecordRemoved: op.RecordRemoved}}, nil
+	return &api.OperationRes{Task: &api.OperationTask{ComposeOperationResult: task, StackVersion: op.StackVersion, RecordRemoved: op.RecordRemoved, SyncWarning: syncWarning}}, nil
 }

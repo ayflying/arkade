@@ -85,6 +85,66 @@ func TestComposeOperationSaveIsIdempotentAndStreamed(t *testing.T) {
 		t.Fatalf("large body expected task-binding conflict, got %d %s", resp.StatusCode, body)
 	}
 }
+
+// TestComposeOperationStaleFinalizeStaysSucceeded 验证「部署期间配置又被改过」时
+// 任务仍然是 succeeded + 明确警告，而不是伪装成执行失败。
+//
+// 回归背景：以前这里会把任务改写成 failed + 退出码 -1，
+// 日志里容器明明 Started，界面却报"执行失败"，用户只能以为保存没生效、
+// 配置被回滚了。真相是执行成功，只是库里的配置已经不是它部署的那份。
+func TestComposeOperationStaleFinalizeStaysSucceeded(t *testing.T) {
+	e := newTestEnv(t)
+	var finish atomic.Bool
+	a := startImportAgent(t, e, func(req envelope.Envelope, _ int) any {
+		zero := 0
+		if req.Method == envelope.MethodComposeOperationStart {
+			return envelope.ComposeOperationResult{TaskID: "stale-task-01", Name: "demo", Action: "up", Status: "running"}
+		}
+		if finish.Load() {
+			return envelope.ComposeOperationResult{TaskID: "stale-task-01", Name: "demo", Action: "up", Status: "succeeded", ExitCode: &zero}
+		}
+		return envelope.ComposeOperationResult{TaskID: "stale-task-01", Name: "demo", Action: "up", Status: "running"}
+	})
+	now := time.Now()
+	if err := e.db.CreateComposeStack(context.Background(), store.ComposeStack{ID: "stale-stack", AgentID: a.id, Name: "demo", Content: sampleCompose, EnvContent: "SECRET=keptsecret", ConfigHash: "old", Version: 1, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	cookies := e.loginAsFor(t, a.url, "admin", testPassword)
+	body, _ := json.Marshal(map[string]any{"request_id": "stale-request-01", "action": "up", "content": "services:\n  web:\n    image: new:1\n", "env_content": "SECRET=fresh", "version": 1})
+	base := a.url + "/api/agents/" + a.id + "/stacks/demo/operation-tasks"
+	if resp, started := doHTTP(t, http.MethodPost, base, string(body), cookies); resp.StatusCode != 202 {
+		t.Fatalf("start: %d %s", resp.StatusCode, started)
+	}
+	// 部署期间另一个会话把配置改成完全不同的内容：旧任务不能再把它标记为已同步。
+	if _, ok, err := e.db.UpdateComposeProject(context.Background(), a.id, "demo", "services:\n  web:\n    image: other:2\n", "SECRET=other", "other-hash", 2, now); err != nil || !ok {
+		t.Fatalf("concurrent save: %v %v", ok, err)
+	}
+	finish.Store(true)
+	deadline := time.Now().Add(4 * time.Second)
+	var raw string
+	for time.Now().Before(deadline) {
+		resp, taskBody := doHTTP(t, http.MethodGet, base+"/stale-task-01?after=0", "", cookies)
+		raw = string(taskBody)
+		if resp.StatusCode == 200 && strings.Contains(raw, "sync_warning") {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !strings.Contains(raw, `"status":"succeeded"`) {
+		t.Fatalf("部署成功就必须如实报告成功：%s", raw)
+	}
+	if strings.Contains(raw, `"status":"failed"`) || strings.Contains(raw, `"exit_code":-1`) {
+		t.Fatalf("不能把成功执行改写成失败：%s", raw)
+	}
+	if !strings.Contains(raw, "sync_warning") || !strings.Contains(raw, "没有把它标记为") {
+		t.Fatalf("缺少未同步警告：%s", raw)
+	}
+	saved, err := e.db.GetComposeStack(context.Background(), a.id, "demo")
+	if err != nil || !saved.SyncedAt.IsZero() || saved.Content != "services:\n  web:\n    image: other:2\n" {
+		t.Fatalf("别人的新配置被覆盖或误标记：%+v %v", saved, err)
+	}
+}
+
 func TestComposeOperationRequiresManageForSaveAndRemove(t *testing.T) {
 	e := newTestEnv(t)
 	admin := e.login(t)

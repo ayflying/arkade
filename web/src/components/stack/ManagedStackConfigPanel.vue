@@ -21,10 +21,19 @@ onMounted(() => { void config.load() })
  * 避免拿旧版本重复保存一直撞锁。
  */
 function handleDeployFinished(task: unknown): void {
-  const t = task as { status?: string; stack_version?: number | null } | null
+  const t = task as {
+    status?: string
+    stack_version?: number | null
+    sync_warning?: string
+  } | null
   const succeeded = t?.status === 'succeeded'
   const version = typeof t?.stack_version === 'number' ? t.stack_version : null
-  config.handleDeployed(succeeded, version)
+  /*
+   * sync_warning：执行成功，但库里的配置在部署期间又被改过，
+   * 所以没有标记成"已同步"。按警告处理，不能报告成"已保存并部署"。
+   */
+  const notSynced = typeof t?.sync_warning === 'string' ? t.sync_warning : ''
+  void config.handleDeployed(succeeded, version, notSynced)
 }
 
 /**
@@ -75,7 +84,15 @@ function openDeployModal(): void {
     </n-alert>
     <template v-else-if="config.loaded.value">
       <div class="config-panel__meta">
-        {{ config.dirty.value ? '有未保存的修改' : config.savedPendingDeploy.value ? '配置已保存到 Hub · 待确认部署' : '内容与 Hub 一致' }}
+        {{
+          config.deployInFlight.value
+            ? '正在保存并部署…'
+            : config.dirty.value
+              ? '有未保存的修改'
+              : config.savedPendingDeploy.value
+                ? '配置已保存到 Hub · 待确认部署'
+                : '内容与 Hub 一致'
+        }}
         <template v-if="!config.savedPendingDeploy.value"> · 版本 v{{ config.version.value }}</template>
       </div>
       <n-alert v-if="config.saveError.value" type="error">{{ config.saveError.value }}</n-alert>

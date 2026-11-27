@@ -162,6 +162,18 @@ function read(rel) {
   check('归一化: 缺 stack_version → null', minimal.stack_version === null)
   check('归一化: 缺 action → unknown', minimal.action === 'unknown')
   check('归一化: 缺 record_removed → false', minimal.record_removed === false)
+  check('归一化: 缺 sync_warning → 空串（旧 Hub 兼容）', minimal.sync_warning === '')
+
+  const stale = types.normalizeOperationTask({
+    task_id: 'T4',
+    action: 'up',
+    status: 'succeeded',
+    exit_code: 0,
+    sync_warning: '本次执行已完成，但编排配置在这期间又被保存或删除过'
+  })
+  check('归一化: sync_warning 保留', stale.sync_warning !== '')
+  // 同步告警不是失败：容器确实跑起来了，不能因此判成失败。
+  check('归一化: 带同步告警仍算成功', types.isConfirmedOperationSuccess(stale) === true)
 
   check('归一化: 无 task_id 返回 null', types.normalizeOperationTask({}) === null)
   check('归一化: 非对象返回 null', types.normalizeOperationTask(null) === null)

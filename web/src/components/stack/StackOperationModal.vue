@@ -253,6 +253,9 @@ const updatedText = computed(() => {
  * 只在**真实终态**出现：执行中、连接中断、状态未知都不显示——
  * 那些时候说"完成"就是误报，而用户会直接关窗口，问题就被掩盖了。
  */
+/** Hub 给出的"执行成功但未标记为已同步"说明；空串表示没有这种情况 */
+const syncWarning = computed(() => task.value?.sync_warning ?? '')
+
 const completion = computed<{ text: string; ok: boolean } | null>(() => {
   if (phase.value === 'done') {
     const done = props.action === 'deploy' ? '更新完成' : '执行完成'
@@ -554,6 +557,20 @@ const logLabel = computed(() => `「${props.stackName}」${meta.value.label}的�
       class="op-modal__alert"
     >
       {{ task.error }}
+    </n-alert>
+
+    <!--
+      执行成功但没标记为已同步：容器确实按这次提交跑起来了，
+      只是库里的配置在这期间又被改过。用警告而不是错误，
+      否则用户会以为这次部署失败了。
+    -->
+    <n-alert
+      v-if="syncWarning !== ''"
+      type="warning"
+      :bordered="false"
+      class="op-modal__alert"
+    >
+      {{ syncWarning }}
     </n-alert>
 
     <div v-if="dropped" class="op-modal__truncated">

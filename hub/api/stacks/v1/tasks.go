@@ -34,6 +34,9 @@ type OperationTask struct {
 	envelope.ComposeOperationResult
 	StackVersion  int64 `json:"stack_version"`
 	RecordRemoved bool  `json:"record_removed"`
+	// SyncWarning 非空表示"执行成功，但配置期间被改过，没标记为已同步"。
+	// 它不是执行失败：容器确实跑起来了，只是 Hub 的同步标记要用户确认。
+	SyncWarning string `json:"sync_warning,omitempty"`
 }
 
 // OperationRes holds exactly one native typed task variant.

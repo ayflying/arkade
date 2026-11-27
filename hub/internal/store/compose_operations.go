@@ -358,20 +358,28 @@ func (d *DB) FinalizeComposeOperation(ctx context.Context, metadata ComposeOpera
 		if !succeeded {
 			op.FinalError = "compose operation failed"
 		} else {
-			// 条件更新：只有 stack 仍停在被这次操作绑定的版本上才生效。
-			// 用 id + version + config_hash 三重条件挡住"期间被人改过"的情况。
+			// 条件更新：只有 stack 仍是这次操作真正部署的那份配置才生效。
+			//
+			// up 只看 config_hash，不看 version：synced_at 的含义是
+			// "库里存的配置就是刚刚部署成功的那份"。version 会因为"再保存一次
+			// 同样的内容"而前进（例如部署失败后原样重试），此时内容并没有变，
+			// 用 version 当条件会把明明部署成功的任务误判成"配置已被修改"。
+			// 内容真被改过时 config_hash 必然不同，照样挡得住。
+			// 老记录没有 hash（历史行为）时才退回按 version 比较。
 			sc := dao.ComposeStacks.Columns()
 			var result sql.Result
 			switch op.Action {
 			case "up":
-				r, uerr := tx.Model(dao.ComposeStacks.Table()).Ctx(ctx).
+				q := tx.Model(dao.ComposeStacks.Table()).Ctx(ctx).
 					Where(sc.AgentId, op.AgentID).
 					Where(sc.Name, op.Name).
-					Where(sc.Id, op.StackID).
-					Where(sc.Version, op.StackVersion).
-					Where(sc.ConfigHash, op.ConfigHash).
-					Data(do.ComposeStacks{SyncedAt: time.Now().UTC().Unix()}).
-					Update()
+					Where(sc.Id, op.StackID)
+				if op.ConfigHash != "" {
+					q = q.Where(sc.ConfigHash, op.ConfigHash)
+				} else {
+					q = q.Where(sc.Version, op.StackVersion)
+				}
+				r, uerr := q.Data(do.ComposeStacks{SyncedAt: time.Now().UTC().Unix()}).Update()
 				result, e = r, uerr
 			case "remove":
 				r, derr := tx.Model(dao.ComposeStacks.Table()).Ctx(ctx).

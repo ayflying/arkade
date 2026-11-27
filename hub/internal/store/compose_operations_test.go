@@ -165,7 +165,10 @@ func TestComposeOperationFinalizeConditions(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					synced := mutation == "none" && action == "up"
+					// up 的同步标记只看"库里存的配置是不是这次真正部署的那份"：
+					// 内容没变、只是版本号被"再保存一次同样的内容"推进，仍然算已同步；
+					// 内容（hash）变了、记录删了重建、或者任务本身失败，都不算。
+					synced := action == "up" && (mutation == "none" || mutation == "version")
 					if s.SyncedAt.IsZero() == synced || final.RecordRemoved {
 						t.Fatalf("invalid effect: %+v %+v", s, final)
 					}

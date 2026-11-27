@@ -57,13 +57,21 @@ export function useManagedStackConfig(agentId: string, name: string, changed: ()
   let seq = 0, alive = true
   const dirty = computed(() => content.value !== originalContent.value || envContent.value !== originalEnv.value)
 
-  function handleSavedPendingDeploy(): void {
+  async function handleSavedPendingDeploy(): Promise<void> {
     const submitted = pendingDeploy.value
     if (submitted === null || savedPendingDeploy.value) return
     // 只对齐已保存的快照，保留新编辑，并继续用原 request_id 确认部署。
     originalContent.value = submitted.content
     originalEnv.value = submitted.savedEnv
     savedPendingDeploy.value = true
+    /*
+     * Hub 已经落库（版本号已前进），但这次响应没有任务、拿不到新版本。
+     * 不把它读回来，之后用户再改内容点保存就会拿旧版本提交，
+     * 被乐观锁拒绝成「配置已被他人修改」——明明是他自己刚保存的。
+     */
+    if (await reloadVersionOnly()) {
+      if (pendingDeploy.value !== null) pendingDeploy.value.version = version.value
+    }
     changed()
   }
   async function load() {
@@ -157,7 +165,8 @@ export function useManagedStackConfig(agentId: string, name: string, changed: ()
    */
   async function handleDeployed(
     succeeded: boolean,
-    stackVersion: number | null
+    stackVersion: number | null,
+    notSynced = ''
   ): Promise<void> {
     const submitted = pendingDeploy.value
     if (submitted === null) return
@@ -168,6 +177,31 @@ export function useManagedStackConfig(agentId: string, name: string, changed: ()
     deploySettled.value = true
     savedPendingDeploy.value = false
 
+    /*
+     * 版本号先对齐，两个快照都要改。
+     *
+     * `pendingDeploy.version` 是弹窗"重新执行"时会提交的版本号：
+     * 它停在保存前的旧值，重试就会被 Hub 判成乐观锁冲突
+     * （"配置已被他人修改"），而实际上改的就是用户自己刚保存的那次。
+     */
+    if (stackVersion !== null) {
+      version.value = stackVersion
+      if (pendingDeploy.value !== null) pendingDeploy.value.version = stackVersion
+    }
+
+    if (succeeded && notSynced !== '') {
+      /*
+       * 执行成功，但 Hub 没能把库里那份配置标记为"已同步"
+       * （部署期间配置又被保存/删除过）。这不是失败：
+       * 提交的那份确实跑起来了，只是库里的最新内容不是它。
+       * 草稿必须保留——用户要拿它决定是否再部署一次。
+       */
+      syncWarning.value = notSynced
+      toastWarning(notSynced)
+      changed()
+      return
+    }
+
     if (succeeded) {
       /*
        * 部署成功：把本地基准对齐到刚提交的内容，清掉"未保存"标记。
@@ -175,7 +209,6 @@ export function useManagedStackConfig(agentId: string, name: string, changed: ()
        */
       originalContent.value = submitted.content
       if (submitted.envContent !== undefined) originalEnv.value = submitted.envContent
-      if (stackVersion !== null) version.value = stackVersion
       syncWarning.value = ''
       toastSuccess('配置已保存并部署')
       changed()
@@ -196,9 +229,7 @@ export function useManagedStackConfig(agentId: string, name: string, changed: ()
      * 优先用任务回报的 stack_version：Hub 保存成功后会带上新版本号，
      * 直接拿来更新即可，不需要额外请求。
      */
-    if (stackVersion !== null) {
-      version.value = stackVersion
-    } else {
+    if (stackVersion === null) {
       /*
        * 任务已到终态但没回报版本号（例如执行失败且 Hub 未更新版本）：
        * 重新读一次对齐版本号。
@@ -211,6 +242,8 @@ export function useManagedStackConfig(agentId: string, name: string, changed: ()
       const reloaded = await reloadVersionOnly()
       if (!reloaded) {
         syncWarning.value = '无法确认最新配置版本，建议重新加载配置后再修改，避免保存冲突。'
+      } else if (pendingDeploy.value !== null) {
+        pendingDeploy.value.version = version.value
       }
     }
     toastWarning('配置可能已保存但尚未执行。版本号已同步，可重试执行（编辑内容已保留）。')

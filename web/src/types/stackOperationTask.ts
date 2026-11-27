@@ -179,6 +179,13 @@ export interface StackOperationTask {
    * Hub **不**在任务里回传配置正文或密钥，前端要重新 GET 才能看到新内容。
    */
   stack_version: number | null
+  /**
+   * 非空表示「执行成功，但配置在这期间又被改过，因此没有标记为已同步」。
+   *
+   * 它不是失败：容器确实按这次提交跑起来了。只是 Hub 不能把后来的新配置
+   * 记成"已同步"，需要用户确认是否还要再部署一次。
+   */
+  sync_warning: string
   started_at: string
   finished_at: string
   /** Migration interruption can leave mutations whose outcome is not confirmed. */
@@ -342,6 +349,7 @@ export function normalizeOperationTask(raw: unknown): StackOperationTask | null 
       typeof r.stack_version === 'number' && Number.isFinite(r.stack_version)
         ? r.stack_version
         : null,
+    sync_warning: typeof r.sync_warning === 'string' ? r.sync_warning : '',
     started_at: typeof r.started_at === 'string' ? r.started_at : '',
     finished_at: typeof r.finished_at === 'string' ? r.finished_at : '',
     residual: r.residual !== null && typeof r.residual === 'object'
