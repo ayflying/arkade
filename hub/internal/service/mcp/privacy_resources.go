@@ -23,6 +23,13 @@ func resourcePublicFields(tool string) []string {
 		}
 	case "arkade_get_container_logs":
 		return []string{"lines.[]", "truncated"}
+	case "arkade_exec_container":
+		// 只回传执行结果本身。命令正文由调用方提交、不需要回显；
+		// 容器 ID / 执行身份等元数据可从请求与清单里查到，避免二次泄露。
+		return []string{
+			"result.exit_code", "result.stdout", "result.stderr",
+			"result.truncated", "result.timed_out", "result.duration_ms",
+		}
 	case "arkade_list_container_metrics":
 		return []string{
 			"agent_id", "stale_after_seconds", "containers.container_id", "containers.at",

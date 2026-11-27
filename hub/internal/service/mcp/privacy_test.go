@@ -34,6 +34,7 @@ func TestMCPPrivacyResponses(t *testing.T) {
 		{"arkade_inspect_container", `{"container":{"id":"demo","command":"PRIVATE","env":["PRIVATE"],"networks":[{"name":"internal","address":"PRIVATE"}],"mounts":[{"type":"volume","source":"PRIVATE"}]}}`, `{"container":{"id":"demo","mounts":[{"type":"volume"}],"networks":[{"name":"internal"}]}}`, 200, false},
 		{"arkade_get_container_logs", `{"lines":["started",{"secret":"PRIVATE"},"failed"],"truncated":true,"detail":"PRIVATE"}`, `{"lines":["started","failed"],"truncated":true}`, 200, false},
 		{"arkade_get_container_logs", `{"lines":[],"truncated":false}`, `{"lines":[],"truncated":false}`, 200, false},
+		{"arkade_exec_container", `{"result":{"exit_code":0,"stdout":"ok","stderr":"","truncated":false,"timed_out":true,"duration_ms":12,"command":["PRIVATE"],"user":"PRIVATE","env":{"PRIVATE":true}}}`, `{"result":{"duration_ms":12,"exit_code":0,"stderr":"","stdout":"ok","timed_out":true,"truncated":false}}`, 200, false},
 		{"arkade_get_container_logs", `{"error":{"message":"PRIVATE"}}`, `"code":"not_found"`, 404, true},
 		{"arkade_read_volume_file", `{"result":{"size":5,"sha256":"test-hash","data_base64":"PRIVATE"}}`, `{"result":{"sha256":"test-hash","size":5}}`, 200, false},
 		{"arkade_list_images", `{"images":[{"id":"sha256:demo","tags":["demo:latest",{"unexpected":"PRIVATE"}]}]}`, `{"images":[{"id":"sha256:demo","tags":["demo:latest"]}]}`, 200, false},

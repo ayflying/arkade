@@ -54,6 +54,26 @@ func catalogString(name, description string, required bool, min, max int) catalo
 	return catalogField{name, s, required}
 }
 
+// catalogStringArray 是字符串数组字段（例如容器内的命令向量）。
+//
+// 单独一个 helper 而不是让调用方手写 schema：命令向量必须有
+// minItems/maxItems 与单项长度上限，否则 AI 客户端可能传进来
+// 几百个参数或一个几 MB 的"参数"，白占控制通道的请求槽位。
+func catalogStringArray(name, description string, required bool, minItems, maxItems, maxItemLen int) catalogField {
+	item := map[string]any{"type": "string"}
+	if maxItemLen > 0 {
+		item["maxLength"] = maxItemLen
+	}
+	s := map[string]any{
+		"type":        "array",
+		"description": description,
+		"items":       item,
+		"minItems":    minItems,
+		"maxItems":    maxItems,
+	}
+	return catalogField{name, s, required}
+}
+
 func catalogPattern(name, description, pattern string, required bool, min, max int) catalogField {
 	f := catalogString(name, description, required, min, max)
 	f.schema["pattern"] = pattern

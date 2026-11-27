@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"arkade/hub/internal/audit"
+	"arkade/hub/internal/store"
 	"arkade/hub/internal/user"
 	"arkade/protocol/envelope"
 )
@@ -36,8 +38,17 @@ func TestMCPPersonalKeyFollowsLiveGrants(t *testing.T) {
 		}
 	}
 	grant("mcp-allowed", user.PermView)
-	var logCalls int
+	var logCalls, execCalls int
 	if err := e.registry.RegisterLocal("mcp-allowed", mcpLogsExecutor(func(_ context.Context, method string, payload []byte) ([]byte, *envelope.Error) {
+		if method == envelope.MethodContainerExec {
+			execCalls++
+			var p envelope.ContainerExecPayload
+			if err := json.Unmarshal(payload, &p); err != nil || p.ContainerID != "example" || len(p.Command) != 2 || p.Command[0] != "echo" || p.Command[1] != "exec audit fixture" || p.User != "1000" || p.WorkDir != "/tmp" || p.TimeoutSec != 7 {
+				t.Errorf("Agent 收到了错误的 exec 参数：%+v %v", p, err)
+				return nil, envelope.NewError(envelope.CodeBadRequest, "unexpected exec")
+			}
+			return []byte(`{"exit_code":3,"stdout":"demo-out","stderr":"demo-err","truncated":false,"timed_out":false,"duration_ms":12}`), nil
+		}
 		logCalls++
 		var p envelope.ContainerLogsPayload
 		if err := json.Unmarshal(payload, &p); err != nil || method != envelope.MethodContainerLogs || p.ContainerID != "example" || p.TailLines != 17 {
@@ -97,7 +108,22 @@ func TestMCPPersonalKeyFollowsLiveGrants(t *testing.T) {
 		t.Fatalf("查看权限应能读取容器日志：%t %s", failed, text)
 	}
 	checkDenied("arkade_delete_container", map[string]any{"agentID": "mcp-allowed", "containerID": "example"})
+	execArgs := map[string]any{"agentID": "mcp-allowed", "containerID": "example", "command": []string{"echo", "exec audit fixture"}, "user": "1000", "workdir": "/tmp", "timeout_sec": 7}
+	checkDenied("arkade_exec_container", execArgs)
+	grant("mcp-allowed", user.PermOperate)
+	checkDenied("arkade_exec_container", execArgs)
 	grant("mcp-allowed", user.PermManage)
+	if failed, text := call("arkade_exec_container", execArgs); failed || text != `{"result":{"duration_ms":12,"exit_code":3,"stderr":"demo-err","stdout":"demo-out","timed_out":false,"truncated":false}}` {
+		t.Fatalf("管理权限应能执行命令并取得进程退出码：%t %s", failed, text)
+	}
+	rows, _, err := e.db.ListAuditLogs(ctx, store.AuditFilters{AgentID: "mcp-allowed", Action: audit.ActionContainerExec, Result: audit.ResultSuccess})
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("未取得唯一一条已执行的命令审计：%d 条，%v", len(rows), err)
+	}
+	row := rows[0]
+	if row.UserID != uid || row.Target != "example" || !strings.Contains(row.Detail, created.Key.ID) || !strings.Contains(row.Detail, "arkade_exec_container") || strings.Contains(row.Detail, "exec audit fixture") || strings.Contains(row.Detail, "demo-out") || strings.Contains(row.Detail, "demo-err") {
+		t.Fatal("执行审计应记录身份和操作目标，不应记录命令正文或输出")
+	}
 	migrate := map[string]any{"agentID": "mcp-allowed", "name": "demo", "target_agent_id": "mcp-hidden", "confirmation": "demo", "request_id": "mcp-personal-migrate"}
 	checkDenied("arkade_migrate_stack", migrate)
 	grant("mcp-hidden", user.PermManage)
@@ -110,6 +136,10 @@ func TestMCPPersonalKeyFollowsLiveGrants(t *testing.T) {
 	checkDenied("arkade_migrate_stack", migrate)
 	checkDenied("arkade_list_containers", map[string]any{"agentID": "mcp-allowed"})
 	checkDenied("arkade_get_container_logs", logs)
+	checkDenied("arkade_exec_container", execArgs)
+	if execCalls != 1 {
+		t.Fatalf("只有获管理授权的执行请求应到达 Agent，实际调用 %d 次", execCalls)
+	}
 	if logCalls != 1 {
 		t.Fatalf("只有获授权的日志读取应到达 Agent，实际调用 %d 次", logCalls)
 	}

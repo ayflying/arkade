@@ -25,7 +25,7 @@ func TestCatalogContracts(t *testing.T) {
 		stacks.ListReq{}, stacks.DetailReq{}, stacks.ConfigReq{}, stacks.PatchEnvReq{}, stacks.PSReq{},
 		stacks.CreateReq{}, stacks.UpdateReq{}, stacks.DeleteReq{}, stacks.StartOperationReq{}, stacks.GetOperationReq{}, stacks.MigrateReq{},
 		external.DetailReq{}, external.ConfigReq{}, external.DraftReq{}, external.RetryAdoptReq{}, external.ImportPreviewReq{}, external.ImportReq{}, external.ApplyPreviewReq{}, external.ApplyReq{}, external.CopyReq{},
-		resources.ListContainersReq{}, resources.ContainerDetailReq{}, resources.ContainerLogsReq{}, resources.ContainerMetricsReq{},
+		resources.ListContainersReq{}, resources.ContainerDetailReq{}, resources.ContainerLogsReq{}, resources.ContainerMetricsReq{}, resources.ContainerExecReq{},
 		resources.ContainerStartReq{}, resources.ContainerStopReq{}, resources.ContainerRestartReq{}, resources.ContainerRemoveReq{},
 		resources.ListNetworksReq{}, resources.RemoveNetworkReq{}, resources.ListVolumesReq{}, resources.RemoveVolumeReq{}, resources.VolumeFilesReq{},
 		resources.ListImagesReq{}, resources.RemoveImageReq{}, images.PullReq{}, images.ExportReq{}, images.MigrateReq{}, images.ListReq{}, images.GetReq{}, images.CancelReq{},
