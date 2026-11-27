@@ -16,7 +16,12 @@
 
 ## 本地版本号
 
-根目录 [VERSION](<../VERSION>) 是 Hub、Agent 的统一发布版本，首次为 `0.0.1`。每轮发布改动提交前执行一次 `python scripts/bump-version.py`，仅补丁号加一；同轮修正或 CI 重试不再次加号。使用 `python scripts/bump-version.py --check` 只检查版本，不修改文件。规则记录在 [AGENTS.md](<../AGENTS.md>)，CI 不回写版本。
+根目录 [VERSION](<../VERSION>) 是 Hub、Agent 的统一发布版本，格式为 `主版本.次版本.补丁版本`，初始值为 `0.0.1`。发布提交前按本轮改动类型更新一次：
+
+- **新增功能**：次版本号加 1，补丁号归零，例如 `0.1.46 → 0.2.0`。同一轮既有新功能又有修复，也只递增一次次版本号。
+- **仅修复**：执行 `python scripts/bump-version.py`，补丁号加 1，例如 `0.2.0 → 0.2.1`。
+
+同一轮修正、重跑测试或重试 CI 不重复递增。使用 `python scripts/bump-version.py --check` 只检查版本，不修改文件。规则记录在 [AGENTS.md](<../AGENTS.md>)，CI 不回写版本。
 
 CI 将该版本注入两个二进制；从仓库根目录执行 Docker 构建时，未传 `VERSION` 构建参数也会读取版本文件。默认分支还会发布同名版本镜像标签。直接 `go run` 的开发版本不代表发布镜像版本。
 
