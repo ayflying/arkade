@@ -29,12 +29,14 @@ func newImageListHandler(rt runtime.Runtime) Handler {
 				tags = []string{}
 			}
 			out = append(out, envelope.ImageSummary{
-				ID:         img.ID,
-				Tags:       tags,
-				Size:       img.Size,
-				Created:    img.Created,
-				Containers: 0, // 运行时列表接口不返回使用计数，界面如需可另查
-				Dangling:   img.Dangling,
+				ID:             img.ID,
+				Tags:           tags,
+				Size:           img.Size,
+				Created:        img.Created,
+				Containers:     len(img.ContainerNames),
+				ContainerNames: img.ContainerNames,
+				Repositories:   img.Repositories,
+				Dangling:       img.Dangling,
 			})
 		}
 		return envelope.ImageListResult{Images: out}, nil

@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 )
 
@@ -43,32 +44,68 @@ func (e *engine) ListImages(ctx context.Context) ([]Image, error) {
 	if err := e.client.getJSON(ctx, pathImages, &raw); err != nil {
 		return nil, e.translate(err)
 	}
+	// 一次读取全部容器（包括已停止），按实际内容 ID 关联，不能按可变标签关联。
+	byID := make(map[string][]string)
+	containers, err := e.List(ctx, true)
+	usageKnown := err == nil
+	for _, c := range containers {
+		if c.ImageID == "" {
+			usageKnown = false
+			break
+		}
+		name := c.Name
+		if name == "" {
+			name = c.ID
+		}
+		if name == "" {
+			usageKnown = false
+			break
+		}
+		id := strings.TrimPrefix(c.ImageID, "sha256:")
+		byID[id] = append(byID[id], name)
+	}
 	out := make([]Image, 0, len(raw))
 	for _, r := range raw {
-		out = append(out, toImage(r))
+		img := toImage(r)
+		if usageKnown {
+			names := byID[strings.TrimPrefix(img.ID, "sha256:")]
+			slices.Sort(names)
+			img.ContainerNames = append([]string{}, slices.Compact(names)...)
+			img.Dangling = len(img.Tags) == 0 && len(img.ContainerNames) == 0
+		}
+		out = append(out, img)
 	}
 	return out, nil
 }
 
 // toImage 把运行时结构转成抽象层 Image。
 //
-// RepoTags 为空或仅含 <none>:<none> 时视为悬空镜像。
-// Docker 用 "<none>:<none>" 表示无标签，直接透给前端会让界面出现一片
-// 莫名其妙的 "<none>:<none>" 条目。
+// 无标签不代表无引用；已知仓库名保留用于展示，不把它冒充可用标签。
 func toImage(r imageListResp) Image {
 	tags := make([]string, 0, len(r.RepoTags))
+	var repos []string
 	for _, t := range r.RepoTags {
-		if strings.HasPrefix(t, "<none>") {
+		if t == "" || strings.HasPrefix(t, "<none>") {
+			continue
+		}
+		if repo, ok := strings.CutSuffix(t, ":<none>"); ok {
+			repos = append(repos, repo)
 			continue
 		}
 		tags = append(tags, t)
 	}
+	for _, digest := range r.RepoDigests {
+		if repo, _, ok := strings.Cut(digest, "@"); ok && repo != "" && repo != "<none>" {
+			repos = append(repos, repo)
+		}
+	}
+	slices.Sort(repos)
 	return Image{
-		ID:       r.ID,
-		Tags:     tags,
-		Size:     r.Size,
-		Created:  r.Created.unix(),
-		Dangling: len(tags) == 0,
+		ID:           r.ID,
+		Tags:         tags,
+		Size:         r.Size,
+		Created:      r.Created.unix(),
+		Repositories: slices.Compact(repos),
 	}
 }
 

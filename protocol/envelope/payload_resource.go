@@ -9,12 +9,14 @@ package envelope
 
 // ImageSummary 是镜像列表项。只保留界面需要的信息。
 type ImageSummary struct {
-	ID         string   `json:"id"`         // 短 ID（sha256 前缀）
-	Tags       []string `json:"tags"`       // 可能为多个 tag；无 tag 时为空（悬空镜像）
-	Size       int64    `json:"size"`       // 字节数
-	Created    int64    `json:"created"`    // Unix 秒
-	Containers int      `json:"containers"` // 引用该镜像的容器数，删除前提示用
-	Dangling   bool     `json:"dangling"`   // 悬空镜像（无 tag 无人引用）
+	ID             string   `json:"id"`                     // 短 ID（sha256 前缀）
+	Tags           []string `json:"tags"`                   // 可能为多个 tag；无 tag 时为空（悬空镜像）
+	Size           int64    `json:"size"`                   // 字节数
+	Created        int64    `json:"created"`                // Unix 秒
+	Containers     int      `json:"containers"`             // 引用该镜像的容器数，删除前提示用
+	Dangling       bool     `json:"dangling"`               // 悬空镜像（无 tag 无人引用）
+	Repositories   []string `json:"repositories,omitempty"` // 已知仓库名，不是标签
+	ContainerNames []string `json:"container_names"`        // null：引用未知；[]：无引用
 }
 
 // ImageListResult 是镜像列表应答。

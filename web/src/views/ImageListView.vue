@@ -126,7 +126,7 @@ watch(agentId, () => {
  * 除了占磁盘没有别的用途。
  */
 const cleanableImages = computed(() =>
-  items.value.filter((i) => i.tags.length === 0 && i.containers === 0)
+  items.value.filter((i) => i.tags.length === 0 && i.container_names?.length === 0)
 )
 
 /** 当前页所有镜像都可勾选（镜像删除对单个而言总能做，是否强制由勾选项决定） */
@@ -338,7 +338,7 @@ function handleMigrate(row: ImageInfo): void {
 const subtitle = computed(() => {
   if (!loaded.value) return '正在加载镜像…'
   const total = items.value.length
-  const dangling = items.value.filter((i) => i.tags.length === 0).length
+  const dangling = cleanableImages.value.length
   const danglingText = dangling > 0 ? `，其中悬空镜像 ${dangling} 个` : ''
   return `共 ${total} 个镜像${danglingText}`
 })
@@ -349,21 +349,13 @@ const columns = computed<DataTableColumns<ImageInfo>>(() => [
     width: 40
   },
   {
-    title: '标签',
+    title: '镜像名称 / 标签',
     key: 'tags',
     minWidth: 220,
     render: (row) => {
-      // 悬空镜像（无标签）：docker 里显示 <none>，这里明确标注，避免看起来像数据缺失
-      if (row.tags.length === 0) {
-        return h(
-          NTag,
-          { size: 'small', bordered: false, type: 'default' },
-          { default: () => '悬空镜像' }
-        )
-      }
-      // 一个镜像可能有多个标签：全部列出，最多显示 3 个，其余折叠
-      const shown = row.tags.slice(0, 3)
-      const hidden = row.tags.length - shown.length
+      const labels = row.tags.length > 0 ? row.tags : (row.repositories ?? [])
+      const shown = labels.slice(0, 3)
+      const hidden = labels.length - shown.length
       const tagNodes = shown.map((tag) =>
         h(
           NTag,
@@ -383,10 +375,14 @@ const columns = computed<DataTableColumns<ImageInfo>>(() => [
                   { size: 'small', bordered: false },
                   { default: () => `+${hidden}` }
                 ),
-              default: () => row.tags.slice(3).join('，')
+              default: () => labels.slice(3).join('，')
             }
           )
         )
+      }
+      if (row.tags.length === 0) {
+        if (labels.length === 0) tagNodes.push(h(NTag, { size: 'small' }, { default: () => shortImageId(row.id) }))
+        tagNodes.push(h(NTag, { size: 'small', bordered: false }, { default: () => '无标签' }))
       }
       return h('div', { class: 'arkade-tag-group' }, tagNodes)
     }
@@ -419,18 +415,19 @@ const columns = computed<DataTableColumns<ImageInfo>>(() => [
   {
     title: '引用容器',
     key: 'containers',
-    minWidth: 100,
-    render: (row) =>
-      // 被引用时用警告色，提示用户删了会影响这些容器
-      h(
-        NTag,
-        {
-          size: 'small',
-          bordered: false,
-          type: row.containers > 0 ? 'warning' : 'default'
-        },
-        { default: () => `${row.containers} 个` }
+    minWidth: 180,
+    render: (row) => {
+      const names = row.container_names
+      if (names == null) return '引用状态未知'
+      if (names.length === 0) return '未被引用'
+      const nodes = names.slice(0, 2).map((name) =>
+        h(NTag, { key: name, size: 'small', bordered: false, type: 'warning' }, { default: () => name })
       )
+      if (names.length > 2) {
+        nodes.push(h(NTag, { size: 'small', bordered: false }, { default: () => `+${names.length - 2}` }))
+      }
+      return h('div', { class: 'arkade-tag-group', title: names.join('、') }, nodes)
+    }
   },
   {
     title: '操作',

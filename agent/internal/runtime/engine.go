@@ -58,6 +58,7 @@ type listResp struct {
 	ID      string            `json:"Id"`
 	Names   []string          `json:"Names"`
 	Image   string            `json:"Image"`
+	ImageID string            `json:"ImageID"`
 	Created int64             `json:"Created"`
 	State   string            `json:"State"`
 	Status  string            `json:"Status"`
@@ -113,6 +114,7 @@ func toContainer(r listResp) Container {
 		ID:          r.ID,
 		Name:        firstContainerName(r.Names),
 		Image:       r.Image,
+		ImageID:     r.ImageID,
 		State:       r.State,
 		Status:      r.Status,
 		Labels:      r.Labels,

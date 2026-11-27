@@ -21,6 +21,7 @@ type Container struct {
 	ID          string            // 完整 ID；上层展示时自行截短
 	Name        string            // 容器名（已去掉运行时添加的前导斜杠）
 	Image       string            // 镜像引用
+	ImageID     string            // 不随标签迁移而变化的镜像内容 ID
 	State       string            // running / exited / paused / created / restarting / dead
 	Status      string            // 人类可读状态文本
 	Ports       []Port            // 端口映射

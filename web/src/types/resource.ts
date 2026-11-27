@@ -19,6 +19,10 @@ export type ImageInfo = {
   id: string
   /** 仓库名:标签列表；同一个镜像 ID 可能有多个标签 */
   tags: string[]
+  /** 无标签时仍可显示的仓库名 */
+  repositories?: string[]
+  /** 旧 Agent 或查询失败时为 null/缺失，不能当作未引用 */
+  container_names?: string[] | null
   /** 大小（字节），展示时换算成 MB/GB */
   size: number
   /** 创建时间（Unix 秒） */

@@ -132,7 +132,7 @@ test('镜像清理只挑悬空且无容器引用的镜像，带标签的一律�
   // 已打标签但无引用的镜像不是垃圾——那是下次部署要用的
   assert.match(
     imageView,
-    /const cleanableImages = computed\(\(\) =>\s*items\.value\.filter\(\(i\) =>\s*i\.tags\.length === 0 && i\.containers === 0\s*\)\s*\)/
+    /const cleanableImages = computed\(\(\) =>\s*items\.value\.filter\(\(i\) =>\s*i\.tags\.length === 0 && i\.container_names\?\.length === 0\s*\)\s*\)/
   )
   assert.match(imageView, /已打标签但没有容器引用的镜像\*\*不是垃圾\*\*/)
   assert.match(imageView, /清理悬空（\{\{ cleanableImages\.length \}\}）/)
@@ -181,4 +181,10 @@ test('批量操作期间禁用其它批量入口，防止连点重复删除', ()
   for (const source of [volumeView, networkView, imageView]) {
     assert.match(source, /:disabled="[^"]*bulk\.busy\.value/)
   }
+})
+
+test('镜像名称与引用容器分开展示，旧 Agent 不误报未引用', () => {
+  assert.match(imageView, /row.tags.length > 0 \? row.tags : \(row.repositories \?\? \[\]\)/)
+  assert.match(imageView, /if \(names == null\) return '引用状态未知'/)
+  assert.match(imageView, /names.slice\(0, 2\).map\(\(name\)/)
 })

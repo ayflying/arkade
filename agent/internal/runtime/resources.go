@@ -8,11 +8,13 @@ package runtime
 
 // Image 是运行时的镜像视图。
 type Image struct {
-	ID       string   // 完整 ID（sha256:xxx）；展示时由上层截短
-	Tags     []string // 可能为空（悬空镜像）
-	Size     int64    // 字节数
-	Created  int64    // Unix 秒
-	Dangling bool     // 悬空镜像
+	ID             string   // 完整 ID（sha256:xxx）；展示时由上层截短
+	Tags           []string // 可能为空（悬空镜像）
+	Size           int64    // 字节数
+	Created        int64    // Unix 秒
+	Dangling       bool     // 无标签且无容器引用
+	Repositories   []string // 无标签时可展示的已知仓库
+	ContainerNames []string // nil 表示无法确认引用，空数组表示无引用
 }
 
 // Network 是网络视图。
